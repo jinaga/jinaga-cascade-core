@@ -44,7 +44,7 @@ pipeline.onStateChange(state => {
 
 ## Development
 
-This library is developed as part of the Cascade monorepo. See the main repository for development setup.
+This library is developed as part of the Cascade monorepo (`jinaga/cascade`). See the main repository for development setup.
 
 ## License
 
