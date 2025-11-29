@@ -1,0 +1,29 @@
+{
+  "name": "jinaga-cascade-core",
+  "version": "0.1.0",
+  "description": "Incremental, event-driven data pipeline system for Jinaga Cascade",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "data-pipeline",
+    "incremental-processing",
+    "reactive",
+    "data-transformation"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+
