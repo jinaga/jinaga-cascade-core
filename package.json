@@ -11,7 +11,10 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:types": "tsd --files \"src/test/**/*.test-d.ts\"",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -21,8 +24,17 @@
     "data-transformation"
   ],
   "license": "MIT",
+  "dependencies": {
+    "@stablelib/base64": "^1.0.1",
+    "@stablelib/sha512": "^1.0.1",
+    "@stablelib/utf8": "^1.0.2"
+  },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.5",
+    "tsd": "^0.33.0",
     "typescript": "^5.0.0"
   }
 }
