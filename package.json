@@ -9,13 +9,13 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc --watch",
-    "typecheck": "tsc --noEmit",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "test:types": "tsd --files \"src/test/**/*.test-d.ts\"",
+    "build": "node ../../node_modules/typescript/bin/tsc",
+    "watch": "node ../../node_modules/typescript/bin/tsc --watch",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc --noEmit",
+    "test": "node ../../node_modules/.bin/jest",
+    "test:watch": "node ../../node_modules/.bin/jest --watch",
+    "test:coverage": "node ../../node_modules/.bin/jest --coverage",
+    "test:types": "node ../../node_modules/.bin/tsd --files \"src/test/**/*.test-d.ts\"",
     "clean": "rm -rf dist"
   },
   "keywords": [
