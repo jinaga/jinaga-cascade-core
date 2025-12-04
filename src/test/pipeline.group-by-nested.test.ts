@@ -259,4 +259,235 @@ describe('pipeline groupBy nested', () => {
         expect(output[0].cities[0].towns[0].buildings[0].building).toBe('Tower');
         expect(output[0].cities[0].towns[0].buildings[1].building).toBe('Plaza');
     });
+
+    it('should handle nested groupBy with scoped .in() pattern used by desktop app', () => {
+        // This test reproduces the pattern used by the desktop app's pipelineRunner:
+        // .groupBy(['state'], 'byState')
+        // .in('byState').groupBy(['city'], 'byCity')
+        // 
+        // This creates a different handler registration order than consecutive groupBy calls
+        const [pipeline, getOutput] = createTestPipeline(() => 
+            createPipeline<{ state: string, city: string, town: string, population: number }>()
+                .groupBy(['state'], 'byState')
+                .in('byState').groupBy(['city'], 'byCity')
+        );
+
+        // Add rows incrementally as the CSV parser would
+        pipeline.add("row-0", { state: 'TX', city: 'Dallas', town: 'Plano', population: 1000000 });
+        pipeline.add("row-1", { state: 'TX', city: 'Houston', town: 'Houston', population: 5000000 });
+        pipeline.add("row-2", { state: 'OK', city: 'Tulsa', town: 'Tulsa', population: 3000000 });
+        
+        const output = getOutput();
+        expect(output.length).toBe(2);
+        
+        const txState = output.find(s => s.state === 'TX');
+        expect(txState).toBeDefined();
+        expect(txState?.byState).toHaveLength(2);
+    });
+
+    it('should handle three-level nested groupBy with scoped .in() pattern', () => {
+        // This is the deeper nesting pattern that may trigger the ordering bug:
+        // First groupBy creates byState array
+        // Second groupBy (scoped to byState) creates byCity within each state
+        // Third groupBy (scoped to byState.byCity) creates byTown within each city
+        const [pipeline, getOutput] = createTestPipeline(() => 
+            createPipeline<{ state: string, city: string, town: string, building: string, floors: number }>()
+                .groupBy(['state'], 'byState')
+                .in('byState').groupBy(['city'], 'byCity')
+                .in('byState', 'byCity').groupBy(['town'], 'byTown')
+        );
+
+        // Add first row - creates all three levels
+        pipeline.add("row-0", { state: 'TX', city: 'Dallas', town: 'Plano', building: 'Tower', floors: 10 });
+        
+        const output = getOutput();
+        expect(output.length).toBe(1);
+        expect(output[0].state).toBe('TX');
+        expect(output[0].byState).toHaveLength(1);
+        expect(output[0].byState[0].city).toBe('Dallas');
+        expect(output[0].byState[0].byCity).toHaveLength(1);
+        expect(output[0].byState[0].byCity[0].town).toBe('Plano');
+        expect(output[0].byState[0].byCity[0].byTown).toHaveLength(1);
+        expect(output[0].byState[0].byCity[0].byTown[0].building).toBe('Tower');
+    });
+
+    it('should handle incremental rows creating new nested groups in existing parents with .in() pattern', () => {
+        // This test specifically targets the scenario where:
+        // 1. A parent group already exists
+        // 2. A new row creates a new child group within that parent
+        // 3. The child's item handler might fire before proper state updates
+        const [pipeline, getOutput] = createTestPipeline(() => 
+            createPipeline<{ state: string, city: string, town: string, population: number }>()
+                .groupBy(['state'], 'byState')
+                .in('byState').groupBy(['city'], 'byCity')
+                .in('byState', 'byCity').groupBy(['town'], 'byTown')
+        );
+
+        // Row 1: Creates TX -> Dallas -> Plano hierarchy
+        pipeline.add("row-0", { state: 'TX', city: 'Dallas', town: 'Plano', population: 1000000 });
+        
+        // Row 2: Same state, same city, new town - should add town to existing city
+        pipeline.add("row-1", { state: 'TX', city: 'Dallas', town: 'Richardson', population: 2000000 });
+        
+        // Row 3: Same state, NEW city, new town - this triggers creation of new city group
+        // within existing state, which may cause the ordering issue
+        pipeline.add("row-2", { state: 'TX', city: 'Houston', town: 'Houston', population: 5000000 });
+        
+        // Row 4: NEW state - this creates entirely new state -> city -> town hierarchy
+        pipeline.add("row-3", { state: 'OK', city: 'Tulsa', town: 'Tulsa', population: 3000000 });
+        
+        const output = getOutput();
+        expect(output.length).toBe(2);
+        
+        const txState = output.find(s => s.state === 'TX');
+        expect(txState).toBeDefined();
+        expect(txState?.byState).toHaveLength(2);
+        
+        const dallas = txState?.byState.find((c: any) => c.city === 'Dallas');
+        expect(dallas).toBeDefined();
+        expect(dallas?.byCity).toHaveLength(2);
+        
+        const houston = txState?.byState.find((c: any) => c.city === 'Houston');
+        expect(houston).toBeDefined();
+        expect(houston?.byCity).toHaveLength(1);
+    });
+
+    it('should handle four levels of consecutive groupBy at same scope', () => {
+        // This tests the isBelowItemLevel interceptor with deep nesting
+        // Using consecutive groupBy calls (NOT using .in()) which triggers
+        // the interceptor pattern for deeper paths
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ a: string, b: string, c: string, d: string, value: number }>()
+                .groupBy(['a', 'b', 'c', 'd'], 'leaves')
+                .groupBy(['a', 'b', 'c'], 'level3')
+                .groupBy(['a', 'b'], 'level2')
+                .groupBy(['a'], 'level1')
+        );
+
+        // Add data that creates the full hierarchy
+        pipeline.add("row-0", { a: 'A1', b: 'B1', c: 'C1', d: 'D1', value: 1 });
+        pipeline.add("row-1", { a: 'A1', b: 'B1', c: 'C1', d: 'D2', value: 2 });
+        pipeline.add("row-2", { a: 'A1', b: 'B1', c: 'C2', d: 'D1', value: 3 });
+        pipeline.add("row-3", { a: 'A1', b: 'B2', c: 'C1', d: 'D1', value: 4 });
+        pipeline.add("row-4", { a: 'A2', b: 'B1', c: 'C1', d: 'D1', value: 5 });
+
+        const output = getOutput();
+        expect(output.length).toBe(2);
+        
+        const a1 = output.find(x => x.a === 'A1');
+        expect(a1?.level1).toHaveLength(2); // B1, B2
+        
+        // Navigate to A1 -> B1 -> level2
+        const a1b1 = a1?.level1.find((x: any) => x.b === 'B1');
+        expect(a1b1?.level2).toHaveLength(2); // C1, C2
+        
+        // Navigate to A1 -> B1 -> C1 -> level3
+        const a1b1c1 = a1b1?.level2.find((x: any) => x.c === 'C1');
+        expect(a1b1c1?.level3).toHaveLength(2); // D1, D2
+    });
+
+    it('should handle interleaved data creating new groups at different levels', () => {
+        // This test adds data in a specific order that might expose ordering issues:
+        // - First create a deep hierarchy
+        // - Then add data that creates new groups at intermediate levels
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ region: string, country: string, city: string, store: string }>()
+                .groupBy(['region', 'country', 'city'], 'stores')
+                .groupBy(['region', 'country'], 'cities')
+                .groupBy(['region'], 'countries')
+        );
+
+        // Create first full hierarchy: Americas -> USA -> NYC -> Store1
+        pipeline.add("row-0", { region: 'Americas', country: 'USA', city: 'NYC', store: 'Store1' });
+        
+        // Add to existing deepest level: Americas -> USA -> NYC -> Store2
+        pipeline.add("row-1", { region: 'Americas', country: 'USA', city: 'NYC', store: 'Store2' });
+        
+        // Create new at second level: Americas -> USA -> LA -> Store3
+        pipeline.add("row-2", { region: 'Americas', country: 'USA', city: 'LA', store: 'Store3' });
+        
+        // Create new at first level: Americas -> Canada -> Toronto -> Store4
+        pipeline.add("row-3", { region: 'Americas', country: 'Canada', city: 'Toronto', store: 'Store4' });
+        
+        // Create entirely new region: Europe -> UK -> London -> Store5
+        pipeline.add("row-4", { region: 'Europe', country: 'UK', city: 'London', store: 'Store5' });
+        
+        // Go back to first region, add new country: Americas -> Mexico -> CDMX -> Store6
+        pipeline.add("row-5", { region: 'Americas', country: 'Mexico', city: 'CDMX', store: 'Store6' });
+
+        const output = getOutput();
+        expect(output.length).toBe(2);
+        
+        const americas = output.find(r => r.region === 'Americas');
+        expect(americas?.countries).toHaveLength(3); // USA, Canada, Mexico
+        
+        const usa = americas?.countries.find((c: any) => c.country === 'USA');
+        expect(usa?.cities).toHaveLength(2); // NYC, LA
+        
+        const nyc = usa?.cities.find((city: any) => city.city === 'NYC');
+        expect(nyc?.stores).toHaveLength(2); // Store1, Store2
+    });
+
+    it('should handle rapid additions that create many groups simultaneously', () => {
+        // Stress test: add many rows quickly creating various group combinations
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ cat: string, subcat: string, item: string }>()
+                .groupBy(['cat', 'subcat'], 'items')
+                .groupBy(['cat'], 'subcats')
+        );
+
+        // Generate test data with many combinations
+        const categories = ['A', 'B', 'C', 'D'];
+        const subcategories = ['X', 'Y', 'Z'];
+        
+        let rowIndex = 0;
+        // Add items in a pattern that jumps between categories
+        for (let i = 0; i < 3; i++) {
+            for (const cat of categories) {
+                for (const subcat of subcategories) {
+                    pipeline.add(`row-${rowIndex}`, {
+                        cat,
+                        subcat,
+                        item: `Item-${cat}-${subcat}-${i}`
+                    });
+                    rowIndex++;
+                }
+            }
+        }
+
+        const output = getOutput();
+        expect(output.length).toBe(4); // 4 categories
+        
+        for (const category of output) {
+            expect(category.subcats).toHaveLength(3); // 3 subcategories each
+            for (const subcat of category.subcats) {
+                expect(subcat.items).toHaveLength(3); // 3 items each
+            }
+        }
+    });
+
+    it('should handle chained .in() calls (desktop app pattern)', () => {
+        // The desktop app builds scopes by calling .in() multiple times in a loop:
+        // for (const segment of scopePath) {
+        //   scopedBuilder = scopedBuilder.in(segment);
+        // }
+        // This test verifies that chained .in() calls work correctly
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ a: string, b: string, c: string, value: number }>()
+                .groupBy(['a'], 'level1')
+                .in('level1').groupBy(['b'], 'level2')
+                .in('level1').in('level2').groupBy(['c'], 'level3')
+        );
+
+        pipeline.add("row-0", { a: 'A1', b: 'B1', c: 'C1', value: 1 });
+        pipeline.add("row-1", { a: 'A1', b: 'B1', c: 'C2', value: 2 });
+        pipeline.add("row-2", { a: 'A1', b: 'B2', c: 'C1', value: 3 });
+
+        const output = getOutput();
+        expect(output.length).toBe(1);
+        expect(output[0].a).toBe('A1');
+        expect(output[0].level1).toHaveLength(2); // B1, B2
+        expect(output[0].level1[0].level2).toHaveLength(2); // C1, C2 under B1
+        expect(output[0].level1[1].level2).toHaveLength(1); // C1 under B2
+    });
 });

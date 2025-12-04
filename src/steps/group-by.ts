@@ -10,10 +10,13 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
     itemRemovedHandlers: RemovedHandler[] = [];
 
     itemKeyToGroupKey: Map<string, string> = new Map<string, string>();
+    // Maps composite key (parent path + group key) to item keys - tracks groups per parent context
     groupKeyToItemKeys: Map<string, Set<string>> = new Map<string, Set<string>>();
     
     // Maps item key to its parent key path for correct emission
     itemKeyToParentKeyPath: Map<string, string[]> = new Map<string, string[]>();
+    // Maps item key to its composite key for removal
+    itemKeyToCompositeKey: Map<string, string> = new Map<string, string>();
 
     constructor(
         private input: Step,
@@ -193,6 +196,15 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         return pathSegments.length > itemSegmentPath.length && pathStartsWith(pathSegments, itemSegmentPath);
     }
 
+    /**
+     * Creates a composite key that uniquely identifies a group within its parent context.
+     * This ensures that the same grouping value (e.g., c: 'C1') creates separate groups
+     * when they appear under different parent paths (e.g., B1 vs B2).
+     */
+    private getCompositeGroupKey(parentKeyPath: string[], groupKey: string): string {
+        return JSON.stringify([...parentKeyPath, groupKey]);
+    }
+
     private handleAdded(keyPath: string[], itemKey: string, immutableProps: ImmutableProps) {
         // keyPath is the runtime key path at the scope level - store it for emissions
         const parentKeyPath = keyPath;
@@ -208,17 +220,21 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         // Compute the group key from the extracted values
         const groupKey = computeGroupKey(groupingValues, this.groupingProperties.map(prop => prop.toString()));
         
+        // Create composite key that includes parent context for proper group tracking
+        const compositeKey = this.getCompositeGroupKey(parentKeyPath, groupKey);
+        
         // Store item-to-group mapping
         this.itemKeyToGroupKey.set(itemKey, groupKey);
+        this.itemKeyToCompositeKey.set(itemKey, compositeKey);
         
-        // Add item key to group's set
-        const isNewGroup = !this.groupKeyToItemKeys.has(groupKey);
+        // Add item key to group's set - use composite key to track per-parent groups
+        const isNewGroup = !this.groupKeyToItemKeys.has(compositeKey);
         if (isNewGroup) {
-            this.groupKeyToItemKeys.set(groupKey, new Set<string>());
+            this.groupKeyToItemKeys.set(compositeKey, new Set<string>());
             // Notify the group handlers of the new group object at the parent key path
-                this.groupAddedHandlers.forEach(handler => handler(parentKeyPath, groupKey, groupingValues));
+            this.groupAddedHandlers.forEach(handler => handler(parentKeyPath, groupKey, groupingValues));
         }
-        this.groupKeyToItemKeys.get(groupKey)!.add(itemKey);
+        this.groupKeyToItemKeys.get(compositeKey)!.add(itemKey);
         
         // Extract the non-grouping properties from the object
         let nonGroupingProps: ImmutableProps = {};
@@ -235,9 +251,10 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         // Get the parent key path for this item key
         const parentKeyPath = this.itemKeyToParentKeyPath.get(itemKey) || keyPath;
         
-        // Look up group key
+        // Look up group key and composite key
         const groupKey = this.itemKeyToGroupKey.get(itemKey);
-        if (groupKey === undefined) {
+        const compositeKey = this.itemKeyToCompositeKey.get(itemKey);
+        if (groupKey === undefined || compositeKey === undefined) {
             throw new Error(`GroupByStep: item with key "${itemKey}" not found`);
         }
         
@@ -255,9 +272,10 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         // Remove item key from tracking
         this.itemKeyToGroupKey.delete(itemKey);
         this.itemKeyToParentKeyPath.delete(itemKey);
+        this.itemKeyToCompositeKey.delete(itemKey);
         
-        // Remove item key from group's set
-        const itemKeys = this.groupKeyToItemKeys.get(groupKey);
+        // Remove item key from group's set - use composite key for per-parent tracking
+        const itemKeys = this.groupKeyToItemKeys.get(compositeKey);
         if (itemKeys) {
             itemKeys.delete(itemKey);
             
@@ -275,7 +293,7 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
                 this.groupRemovedHandlers.forEach(handler => handler(parentKeyPath, groupKey, groupingValues));
                 
                 // Clean up tracking
-                this.groupKeyToItemKeys.delete(groupKey);
+                this.groupKeyToItemKeys.delete(compositeKey);
             }
         }
     }
