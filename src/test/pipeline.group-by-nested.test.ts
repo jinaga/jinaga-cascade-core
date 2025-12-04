@@ -490,4 +490,245 @@ describe('pipeline groupBy nested', () => {
         expect(output[0].level1[0].level2).toHaveLength(2); // C1, C2 under B1
         expect(output[0].level1[1].level2).toHaveLength(1); // C1 under B2
     });
+
+    it('should handle two-level groupBy with completely different properties', () => {
+        // This test replicates the exact user scenario from the bug report:
+        // - Data has fields: userHash, round, allocation, createdAt, receivedAt
+        // - First groupBy: `userHash` → `rounts` (at root level)
+        // - Second groupBy: `round` → `allocations` (inside rounts)
+        //
+        // The KEY DIFFERENCE from other tests: the first and second groupBy use
+        // COMPLETELY DIFFERENT properties (userHash vs round), not overlapping
+        // key hierarchies (like state, city where city includes state).
+        //
+        // Error expected: "Path references unknown item when setting state"
+        type UserAllocationRow = {
+            userHash: string;
+            round: number;
+            allocation: string;
+            createdAt: string;
+            receivedAt: string;
+        };
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<UserAllocationRow>()
+                .groupBy(['userHash'], 'rounts')
+                .in('rounts').groupBy(['round'], 'allocations')
+        );
+
+        // Add rows incrementally as the CSV parser would
+        // Row 1: Creates userHash group, then round group within it
+        pipeline.add("row-0", {
+            userHash: 'hash1',
+            round: 1,
+            allocation: '[0,0,0,0,10000,0]',
+            createdAt: '2025-06-25T23:59:56.688Z',
+            receivedAt: '2025-06-25T23:59:56.874Z'
+        });
+
+        // Row 2: Same userHash, different round - creates new round group in existing userHash
+        pipeline.add("row-1", {
+            userHash: 'hash1',
+            round: 2,
+            allocation: '[0,0,0,0,20000,0]',
+            createdAt: '2025-06-26T00:00:00.000Z',
+            receivedAt: '2025-06-26T00:00:00.100Z'
+        });
+
+        // Row 3: Different userHash - creates new userHash group with new round group
+        pipeline.add("row-2", {
+            userHash: 'hash2',
+            round: 1,
+            allocation: '[0,0,0,0,15000,0]',
+            createdAt: '2025-06-25T23:59:57.000Z',
+            receivedAt: '2025-06-25T23:59:57.200Z'
+        });
+
+        const output = getOutput();
+        expect(output.length).toBe(2);
+
+        const hash1 = output.find(u => u.userHash === 'hash1');
+        expect(hash1).toBeDefined();
+        expect(hash1?.rounts).toHaveLength(2);
+
+        const hash1Round1 = hash1?.rounts.find((r: any) => r.round === 1);
+        expect(hash1Round1).toBeDefined();
+        expect(hash1Round1?.allocations).toHaveLength(1);
+
+        const hash1Round2 = hash1?.rounts.find((r: any) => r.round === 2);
+        expect(hash1Round2).toBeDefined();
+        expect(hash1Round2?.allocations).toHaveLength(1);
+
+        const hash2 = output.find(u => u.userHash === 'hash2');
+        expect(hash2).toBeDefined();
+        expect(hash2?.rounts).toHaveLength(1);
+    });
+
+    it('should handle two-level groupBy with string values (CSV input simulation)', () => {
+        // This test simulates CSV input where ALL values are strings
+        // This matches exactly what the desktop app's pipelineRunner receives
+        // The groupBy operations use different properties at each level:
+        // Level 1: userHash (string)
+        // Level 2: round (string, not number!)
+        //
+        // Error expected: "Path references unknown item when setting state"
+        type CsvRow = Record<string, string>;
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<CsvRow>()
+                .groupBy(['userHash'], 'rounts')
+                .in('rounts').groupBy(['round'], 'allocations')
+        );
+
+        // Simulate CSV streaming - each row arrives individually
+        // Row 1: Creates userHash='hash1' group, then round='1' group within it
+        pipeline.add("row-0", {
+            userHash: 'hash1',
+            round: '1',  // String, not number!
+            allocation: '[0,0,0,0,10000,0]',
+            createdAt: '2025-06-25T23:59:56.688Z',
+            receivedAt: '2025-06-25T23:59:56.874Z'
+        });
+
+        // Row 2: Same userHash, different round (as string) - creates new round group
+        pipeline.add("row-1", {
+            userHash: 'hash1',
+            round: '2',  // Different round
+            allocation: '[0,0,0,0,20000,0]',
+            createdAt: '2025-06-26T00:00:00.000Z',
+            receivedAt: '2025-06-26T00:00:00.100Z'
+        });
+
+        // Row 3: Different userHash - creates new userHash group with new round group
+        pipeline.add("row-2", {
+            userHash: 'hash2',
+            round: '1',
+            allocation: '[0,0,0,0,15000,0]',
+            createdAt: '2025-06-25T23:59:57.000Z',
+            receivedAt: '2025-06-25T23:59:57.200Z'
+        });
+
+        const output = getOutput();
+        expect(output.length).toBe(2);
+
+        const hash1 = output.find((u: any) => u.userHash === 'hash1');
+        expect(hash1).toBeDefined();
+        expect(hash1?.rounts).toHaveLength(2);
+
+        const hash1Round1 = hash1?.rounts.find((r: any) => r.round === '1');
+        expect(hash1Round1).toBeDefined();
+        expect(hash1Round1?.allocations).toHaveLength(1);
+
+        const hash2 = output.find((u: any) => u.userHash === 'hash2');
+        expect(hash2).toBeDefined();
+        expect(hash2?.rounts).toHaveLength(1);
+    });
+
+    it('should handle chained .in() calls building scope iteratively (desktop app pattern)', () => {
+        // The desktop app builds scope by calling .in() in a loop:
+        // let scopedBuilder = builder;
+        // for (const segment of step.scopePath) {
+        //   scopedBuilder = scopedBuilder.in(segment);
+        // }
+        // This test verifies this pattern works correctly
+        type CsvRow = Record<string, string>;
+        
+        const [pipeline, getOutput] = createTestPipeline(() => {
+            // Simulate the desktop app's step building pattern
+            let builder: any = createPipeline<CsvRow>()
+                .groupBy(['userHash'], 'rounts');
+            
+            // Step 2: iterate through scopePath=['rounts']
+            let scopedBuilder = builder;
+            for (const segment of ['rounts']) {
+                scopedBuilder = scopedBuilder.in(segment);
+            }
+            return scopedBuilder.groupBy(['round'], 'allocations');
+        });
+
+        // Add rows
+        pipeline.add("row-0", { userHash: 'hash1', round: '1', value: '100' });
+        pipeline.add("row-1", { userHash: 'hash1', round: '2', value: '200' });
+        pipeline.add("row-2", { userHash: 'hash2', round: '1', value: '300' });
+
+        const output = getOutput() as any[];
+        expect(output.length).toBe(2);
+        expect(output.find((u: any) => u.userHash === 'hash1')?.rounts).toHaveLength(2);
+    });
+
+    it('should handle multiple items in same nested group (rapid sequential adds)', () => {
+        // This tests the scenario where multiple rows with the SAME grouping values
+        // are added rapidly. Each row should be added to the existing nested group.
+        // Error possible: "Path references unknown item when setting state" if
+        // handler ordering causes items to be added before their parent group exists.
+        type CsvRow = Record<string, string>;
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<CsvRow>()
+                .groupBy(['userHash'], 'rounts')
+                .in('rounts').groupBy(['round'], 'allocations')
+        );
+
+        // Add multiple rows with SAME userHash and SAME round
+        // This should create one userHash group with one round group containing multiple items
+        pipeline.add("row-0", {
+            userHash: 'hash1',
+            round: '1',
+            allocation: '[0,0,0,0,10000,0]',
+            createdAt: '2025-06-25T23:59:56.688Z'
+        });
+        pipeline.add("row-1", {
+            userHash: 'hash1',
+            round: '1',  // SAME round
+            allocation: '[0,0,0,0,20000,0]',
+            createdAt: '2025-06-25T23:59:57.000Z'
+        });
+        pipeline.add("row-2", {
+            userHash: 'hash1',
+            round: '1',  // SAME round again
+            allocation: '[0,0,0,0,30000,0]',
+            createdAt: '2025-06-25T23:59:58.000Z'
+        });
+
+        const output = getOutput();
+        expect(output.length).toBe(1);
+        expect(output[0].userHash).toBe('hash1');
+        expect(output[0].rounts).toHaveLength(1);
+        expect(output[0].rounts[0].round).toBe('1');
+        expect(output[0].rounts[0].allocations).toHaveLength(3);
+    });
+
+    it('should handle interleaved rows creating nested groups in different order', () => {
+        // This tests a more complex data pattern where rows arrive in a specific order
+        // that may expose handler chain timing issues:
+        // 1. hash1/round1 - creates both levels
+        // 2. hash2/round1 - creates new top level, reuses round value
+        // 3. hash1/round2 - reuses top level, creates new nested
+        // 4. hash2/round2 - reuses top level, creates new nested
+        type CsvRow = Record<string, string>;
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<CsvRow>()
+                .groupBy(['userHash'], 'rounts')
+                .in('rounts').groupBy(['round'], 'allocations')
+        );
+
+        // Interleaved pattern
+        pipeline.add("row-0", { userHash: 'hash1', round: '1', value: 'A' });
+        pipeline.add("row-1", { userHash: 'hash2', round: '1', value: 'B' });
+        pipeline.add("row-2", { userHash: 'hash1', round: '2', value: 'C' });
+        pipeline.add("row-3", { userHash: 'hash2', round: '2', value: 'D' });
+        pipeline.add("row-4", { userHash: 'hash1', round: '1', value: 'E' });  // Back to existing
+
+        const output = getOutput();
+        expect(output.length).toBe(2);
+
+        const hash1 = output.find((u: any) => u.userHash === 'hash1');
+        expect(hash1?.rounts).toHaveLength(2);
+        const hash1Round1 = hash1?.rounts.find((r: any) => r.round === '1');
+        expect(hash1Round1?.allocations).toHaveLength(2);  // row-0 and row-4
+
+        const hash2 = output.find((u: any) => u.userHash === 'hash2');
+        expect(hash2?.rounts).toHaveLength(2);
+    });
 });
