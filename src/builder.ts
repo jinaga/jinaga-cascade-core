@@ -708,7 +708,12 @@ function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], key
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
             // Parent doesn't exist - item may have been removed already or never added
-            // This can happen when batching operations, so we silently skip
+            // This can happen when batching operations, so we log a warning and skip
+            console.warn(
+                `Warning: Attempted to remove key "${key}" at segment path [${segmentPath.join(
+                    "."
+                )}] with parent key "${parentKey}", but parent was not found in state.`
+            );
             return state;
         }
         const existingItem = state[existingItemIndex];
