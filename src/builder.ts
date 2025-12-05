@@ -742,7 +742,11 @@ function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPa
         const existingItemIndex = keyToIndex.get(key);
         if (existingItemIndex === undefined) {
             // Item doesn't exist - may have been removed already or never added
-            // This can happen when batching operations, so we silently skip
+            // This can happen when batching operations, so we log a warning and skip
+            console.warn(
+                `Warning: Attempted to modify missing item in KeyedArray. ` +
+                `Key: ${key}, Path: [${segmentPath.join('.')}]`
+            );
             return state;
         }
         const existingItem = state[existingItemIndex];
