@@ -778,6 +778,11 @@ function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPa
         if (existingItemIndex === undefined) {
             // Parent doesn't exist - item may have been removed already or never added
             // This can happen when batching operations, so we silently skip
+            console.warn(
+                `Warning: Parent item with key '${parentKey}' not found when modifying nested state at segment path [${segmentPath.join(
+                    "."
+                )}] and key path [${keyPath.join(".")}]. Modification skipped.`
+            );
             return state;
         }
         const existingItem = state[existingItemIndex];
