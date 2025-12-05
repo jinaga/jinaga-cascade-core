@@ -14,13 +14,27 @@ export type KeyedArray<T> = { key: string, value: T }[];
 export type Transform<T> = (state: T) => T;
 
 /**
+ * Type-safe storage for batched updaters associated with pipelines.
+ * Uses WeakMap to avoid memory leaks and maintain type safety.
+ */
+const pipelineUpdaters = new WeakMap<Pipeline<any>, BatchedStateUpdater<any>>();
+
+/**
+ * Operation type for batched updates.
+ */
+type BatchedOperation = 
+    | { type: 'add', segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps }
+    | { type: 'remove', segmentPath: string[], keyPath: string[], key: string }
+    | { type: 'modify', segmentPath: string[], keyPath: string[], key: string, name: string, value: any };
+
+/**
  * Batched state updater that collects multiple changes and applies them together.
  * This reduces O(N) operations by batching changes and using efficient data structures.
+ * 
+ * Operations are preserved in the order they were queued to maintain temporal dependencies.
  */
 class BatchedStateUpdater<T> {
-    private pendingAdds: Array<{ segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps }> = [];
-    private pendingRemoves: Array<{ segmentPath: string[], keyPath: string[], key: string }> = [];
-    private pendingModifies: Array<{ segmentPath: string[], keyPath: string[], key: string, name: string, value: any }> = [];
+    private pendingOperations: BatchedOperation[] = [];
     private batchSize: number;
     private flushTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly flushDelayMs: number = 16; // ~60fps for UI updates
@@ -35,23 +49,23 @@ class BatchedStateUpdater<T> {
     }
 
     add(segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
-        this.pendingAdds.push({ segmentPath, keyPath, key, immutableProps });
+        this.pendingOperations.push({ type: 'add', segmentPath, keyPath, key, immutableProps });
         this.scheduleFlush();
     }
 
     remove(segmentPath: string[], keyPath: string[], key: string): void {
-        this.pendingRemoves.push({ segmentPath, keyPath, key });
+        this.pendingOperations.push({ type: 'remove', segmentPath, keyPath, key });
         this.scheduleFlush();
     }
 
     modify(segmentPath: string[], keyPath: string[], key: string, name: string, value: any): void {
-        this.pendingModifies.push({ segmentPath, keyPath, key, name, value });
+        this.pendingOperations.push({ type: 'modify', segmentPath, keyPath, key, name, value });
         this.scheduleFlush();
     }
 
     private scheduleFlush(): void {
         // Flush immediately if batch size reached
-        if (this.pendingAdds.length + this.pendingRemoves.length + this.pendingModifies.length >= this.batchSize) {
+        if (this.pendingOperations.length >= this.batchSize) {
             this.flush();
             return;
         }
@@ -71,36 +85,37 @@ class BatchedStateUpdater<T> {
             this.flushTimer = null;
         }
 
-        if (this.pendingAdds.length === 0 && this.pendingRemoves.length === 0 && this.pendingModifies.length === 0) {
+        if (this.pendingOperations.length === 0) {
             return;
         }
 
-        // Apply all pending changes in a single state update
+        // Apply all pending changes in a single state update, preserving order
+        // This maintains temporal dependencies between operations
         this.setState(state => {
             let result = state;
 
-            // Apply adds first (so items exist before we try to remove or modify them)
-            for (const { segmentPath, keyPath, key, immutableProps } of this.pendingAdds) {
-                result = addToKeyedArray(result, segmentPath, keyPath, key, immutableProps);
-            }
-
-            // Apply removes after adds (items may have been added in this batch)
-            for (const { segmentPath, keyPath, key } of this.pendingRemoves) {
-                result = removeFromKeyedArray(result, segmentPath, keyPath, key);
-            }
-
-            // Apply modifies last (they may modify items added in this batch)
-            for (const { segmentPath, keyPath, key, name, value } of this.pendingModifies) {
-                result = modifyInKeyedArray(result, segmentPath, keyPath, key, name, value);
+            // Process operations in the order they were queued to preserve temporal dependencies
+            // Note: Map creation for lookups is O(N) per operation, but batching reduces
+            // the number of state updates from O(N) to O(N/batchSize), providing overall O(N) complexity
+            for (const op of this.pendingOperations) {
+                switch (op.type) {
+                    case 'add':
+                        result = addToKeyedArray(result, op.segmentPath, op.keyPath, op.key, op.immutableProps);
+                        break;
+                    case 'remove':
+                        result = removeFromKeyedArray(result, op.segmentPath, op.keyPath, op.key);
+                        break;
+                    case 'modify':
+                        result = modifyInKeyedArray(result, op.segmentPath, op.keyPath, op.key, op.name, op.value);
+                        break;
+                }
             }
 
             return result as KeyedArray<T>;
         });
 
-        // Clear pending changes
-        this.pendingAdds = [];
-        this.pendingRemoves = [];
-        this.pendingModifies = [];
+        // Clear pending operations
+        this.pendingOperations = [];
     }
 
     /**
@@ -109,6 +124,19 @@ class BatchedStateUpdater<T> {
      */
     forceFlush(): void {
         this.flush();
+    }
+
+    /**
+     * Dispose of this updater, cleaning up any pending timers.
+     * Call this when the pipeline is no longer needed to prevent memory leaks.
+     */
+    dispose(): void {
+        if (this.flushTimer !== null) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = null;
+        }
+        // Clear pending operations to allow garbage collection
+        this.pendingOperations = [];
     }
 }
 
@@ -628,9 +656,8 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
             });
         });
         
-        // Store the batched updater on the pipeline so it can be flushed when needed
-        // We'll attach it to the input pipeline as a non-standard property
-        (this.input as any).__batchedUpdater = batchedUpdater;
+        // Store the batched updater in WeakMap for type-safe access
+        pipelineUpdaters.set(this.input, batchedUpdater);
         
         return this.input;
     }
@@ -640,14 +667,36 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
      * Call this before reading results to ensure state is up-to-date.
      */
     static flushBatchedUpdates(pipeline: Pipeline<any>): void {
-        const batchedUpdater = (pipeline as any).__batchedUpdater as BatchedStateUpdater<any> | undefined;
+        const batchedUpdater = pipelineUpdaters.get(pipeline);
         if (batchedUpdater) {
             batchedUpdater.forceFlush();
         }
     }
+
+    /**
+     * Disposes of the batched updater for a pipeline, cleaning up resources.
+     * Call this when a pipeline is no longer needed to prevent memory leaks.
+     */
+    static disposeBatchedUpdates(pipeline: Pipeline<any>): void {
+        const batchedUpdater = pipelineUpdaters.get(pipeline);
+        if (batchedUpdater) {
+            batchedUpdater.dispose();
+            pipelineUpdaters.delete(pipeline);
+        }
+    }
 }
 
-function addToKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): KeyedArray<any> {
+/**
+ * Creates a Map from keyed array for O(1) lookups.
+ * This Map can be reused for multiple operations on the same array level.
+ */
+function createKeyToIndexMap(state: KeyedArray<any>): Map<string, number> {
+    const keyToIndex = new Map<string, number>();
+    state.forEach((item, index) => keyToIndex.set(item.key, index));
+    return keyToIndex;
+}
+
+function addToKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps, keyToIndexMap?: Map<string, number>): KeyedArray<any> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when setting state");
@@ -661,9 +710,9 @@ function addToKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath:
         const parentKey = keyPath[0];
         const segment = segmentPath[0];
         
-        // Use Map for O(1) lookup instead of findIndex O(N)
-        const keyToIndex = new Map<string, number>();
-        state.forEach((item, index) => keyToIndex.set(item.key, index));
+        // Use provided Map or create one for O(1) lookup
+        // Note: Map creation is O(N), but batching reduces the number of state updates
+        const keyToIndex = keyToIndexMap || createKeyToIndexMap(state);
         
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
@@ -687,7 +736,7 @@ function addToKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath:
     }
 }
 
-function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string): KeyedArray<any> {
+function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, keyToIndexMap?: Map<string, number>): KeyedArray<any> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when removing from state");
@@ -701,9 +750,9 @@ function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], key
         const parentKey = keyPath[0];
         const segment = segmentPath[0];
         
-        // Use Map for O(1) lookup instead of findIndex O(N)
-        const keyToIndex = new Map<string, number>();
-        state.forEach((item, index) => keyToIndex.set(item.key, index));
+        // Use provided Map or create one for O(1) lookup
+        // Note: Map creation is O(N), but batching reduces the number of state updates
+        const keyToIndex = keyToIndexMap || createKeyToIndexMap(state);
         
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
@@ -734,15 +783,15 @@ function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], key
     }
 }
 
-function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, name: string, value: any): KeyedArray<any> {
+function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, name: string, value: any, keyToIndexMap?: Map<string, number>): KeyedArray<any> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when modifying state");
         }
         
-        // Use Map for O(1) lookup instead of findIndex O(N)
-        const keyToIndex = new Map<string, number>();
-        state.forEach((item, index) => keyToIndex.set(item.key, index));
+        // Use provided Map or create one for O(1) lookup
+        // Note: Map creation is O(N), but batching reduces the number of state updates
+        const keyToIndex = keyToIndexMap || createKeyToIndexMap(state);
         
         const existingItemIndex = keyToIndex.get(key);
         if (existingItemIndex === undefined) {
@@ -775,14 +824,14 @@ function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPa
         const parentKey = keyPath[0];
         const segment = segmentPath[0];
         
-        // Use Map for O(1) lookup instead of findIndex O(N)
-        const keyToIndex = new Map<string, number>();
-        state.forEach((item, index) => keyToIndex.set(item.key, index));
+        // Use provided Map or create one for O(1) lookup
+        // Note: Map creation is O(N), but batching reduces the number of state updates
+        const keyToIndex = keyToIndexMap || createKeyToIndexMap(state);
         
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
             // Parent doesn't exist - item may have been removed already or never added
-            // This can happen when batching operations, so we silently skip
+            // This can happen when batching operations, so we log a warning and skip
             console.warn(
                 `Warning: Parent item with key '${parentKey}' not found when modifying nested state at segment path [${segmentPath.join(
                     "."
