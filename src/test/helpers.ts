@@ -27,7 +27,12 @@ export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, an
     const [ getState, setState ] = simulateState<KeyedArray<OutputType>>([]);
     const typeDescriptor = builder.getTypeDescriptor();
     const pipeline = builder.build(setState, typeDescriptor);
-    const getOutput = (): OutputType[] => extract(getState(), typeDescriptor);
+    const getOutput = (): OutputType[] => {
+        // Flush any pending batched updates before reading state
+        // This ensures all changes are applied before test assertions
+        PipelineBuilder.flushBatchedUpdates(pipeline);
+        return extract(getState(), typeDescriptor);
+    };
     return [pipeline, getOutput];
 }
 

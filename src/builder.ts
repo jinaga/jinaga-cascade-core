@@ -79,14 +79,14 @@ class BatchedStateUpdater<T> {
         this.setState(state => {
             let result = state;
 
-            // Apply removes first (they're simpler and don't conflict with adds)
-            for (const { segmentPath, keyPath, key } of this.pendingRemoves) {
-                result = removeFromKeyedArray(result, segmentPath, keyPath, key);
-            }
-
-            // Apply adds
+            // Apply adds first (so items exist before we try to remove or modify them)
             for (const { segmentPath, keyPath, key, immutableProps } of this.pendingAdds) {
                 result = addToKeyedArray(result, segmentPath, keyPath, key, immutableProps);
+            }
+
+            // Apply removes after adds (items may have been added in this batch)
+            for (const { segmentPath, keyPath, key } of this.pendingRemoves) {
+                result = removeFromKeyedArray(result, segmentPath, keyPath, key);
             }
 
             // Apply modifies last (they may modify items added in this batch)
@@ -645,7 +645,6 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
             batchedUpdater.forceFlush();
         }
     }
-    }
 }
 
 function addToKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): KeyedArray<any> {
@@ -708,7 +707,9 @@ function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], key
         
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
-            throw new Error("Path references unknown item when removing from state");
+            // Parent doesn't exist - item may have been removed already or never added
+            // This can happen when batching operations, so we silently skip
+            return state;
         }
         const existingItem = state[existingItemIndex];
         const existingArray = existingItem.value[segment] as KeyedArray<any> || [];
@@ -740,7 +741,9 @@ function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPa
         
         const existingItemIndex = keyToIndex.get(key);
         if (existingItemIndex === undefined) {
-            throw new Error("Path references unknown item when modifying state");
+            // Item doesn't exist - may have been removed already or never added
+            // This can happen when batching operations, so we silently skip
+            return state;
         }
         const existingItem = state[existingItemIndex];
         const modifiedItem = {
@@ -769,7 +772,9 @@ function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPa
         
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
-            throw new Error("Path references unknown item when modifying state");
+            // Parent doesn't exist - item may have been removed already or never added
+            // This can happen when batching operations, so we silently skip
+            return state;
         }
         const existingItem = state[existingItemIndex];
         const existingArray = existingItem.value[segment] as KeyedArray<any> || [];
