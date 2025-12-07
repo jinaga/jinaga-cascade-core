@@ -13,7 +13,12 @@ export function canonicalizeGroupingProperties(obj: {}, groupingProperties: stri
     return JSON.stringify(keyObject);
 }
 
-function computeHash(str: string): string {
+/**
+ * Computes a SHA512 hash of the input string and returns it as Base64.
+ * @param str - The string to hash
+ * @returns Base64-encoded SHA512 hash
+ */
+export function computeHash(str: string): string {
     const utf8Bytes = utf8Encode(str);
     const hashBytes = sha512Hash(utf8Bytes);
     return base64Encode(hashBytes);
