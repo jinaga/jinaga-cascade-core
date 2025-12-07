@@ -5,9 +5,15 @@ export interface Pipeline<T> {
 
 export interface TypeDescriptor {
     arrays: ArrayDescriptor[];
+    objects?: ObjectDescriptor[];
 }
 
 export interface ArrayDescriptor {
+    name: string;
+    type: TypeDescriptor;
+}
+
+export interface ObjectDescriptor {
     name: string;
     type: TypeDescriptor;
 }

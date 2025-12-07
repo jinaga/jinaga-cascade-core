@@ -82,7 +82,82 @@ export class PickByMinMaxStep<
     }
     
     getTypeDescriptor(): TypeDescriptor {
-        return this.input.getTypeDescriptor();
+        const inputDescriptor = this.input.getTypeDescriptor();
+        
+        // Navigate through the segment path to find the source array's item type
+        // The segmentPath is the path to the array we're picking from
+        // e.g., ['items'] for root level, or ['cities', 'venues'] for nested
+        let currentDescriptor = inputDescriptor;
+        for (let i = 0; i < this.segmentPath.length - 1; i++) {
+            const segment = this.segmentPath[i];
+            const array = currentDescriptor.arrays.find(a => a.name === segment);
+            if (array) {
+                currentDescriptor = array.type;
+            }
+        }
+        
+        // Find the target array at the final level
+        const arrayName = this.segmentPath[this.segmentPath.length - 1];
+        const sourceArray = currentDescriptor.arrays.find(a => a.name === arrayName);
+        
+        // Add the object property to the type descriptor at the appropriate level
+        // The picked object lives at the parent level (segmentPath without the last element)
+        if (this.segmentPath.length === 1) {
+            // Root level: add object to root descriptor
+            return {
+                ...inputDescriptor,
+                objects: [
+                    ...(inputDescriptor.objects || []),
+                    {
+                        name: this.propertyName,
+                        type: sourceArray?.type || { arrays: [] }
+                    }
+                ]
+            };
+        } else {
+            // Nested level: need to add object at the parent path level
+            // Clone the descriptor tree and add the object at the correct level
+            return this.addObjectAtPath(inputDescriptor, this.segmentPath.slice(0, -1), {
+                name: this.propertyName,
+                type: sourceArray?.type || { arrays: [] }
+            });
+        }
+    }
+    
+    /**
+     * Recursively clones the type descriptor and adds an object descriptor at the specified path.
+     */
+    private addObjectAtPath(
+        descriptor: TypeDescriptor, 
+        path: string[], 
+        objectDesc: { name: string; type: TypeDescriptor }
+    ): TypeDescriptor {
+        if (path.length === 0) {
+            // Add object at this level
+            return {
+                ...descriptor,
+                objects: [
+                    ...(descriptor.objects || []),
+                    objectDesc
+                ]
+            };
+        }
+        
+        // Navigate deeper: find the array and recurse
+        const [first, ...rest] = path;
+        return {
+            ...descriptor,
+            arrays: descriptor.arrays.map(arr => {
+                if (arr.name === first) {
+                    return {
+                        ...arr,
+                        type: this.addObjectAtPath(arr.type, rest, objectDesc)
+                    };
+                }
+                return arr;
+            }),
+            objects: descriptor.objects
+        };
     }
     
     onAdded(pathSegments: string[], handler: AddedHandler): void {
