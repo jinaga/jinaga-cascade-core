@@ -613,24 +613,362 @@ describe('pipeline mutable properties', () => {
     });
 
     describe('aggregate over mutable properties', () => {
-        it('should update aggregate when mutable property of aggregated item changes', () => {
-            const [pipeline, getOutput] = createTestPipeline(() => 
-                createPipeline<{ category: string; items: Array<{ name: string; price: number }> }>()
-                    .sum('items', 'price', 'totalPrice', ['price'])
-            );
+        /**
+         * Scenario 5 from design document Section 3.3:
+         * When aggregating over mutable properties:
+         * 1. The aggregate step should register `onModified` listeners for mutable properties of aggregated items
+         * 2. When an item's mutable property changes, the aggregate should update incrementally
+         * 3. For commutative aggregates (sum, count), the update formula is: `newAggregate = oldAggregate - oldValue + newValue`
+         *
+         * Flow:
+         * 1. Category has items with prices [100, 200, 300] → `totalPrice = 600`
+         * 2. Item's price changes from 200 to 250
+         * 3. `SumStep` receives `onModified('price', 200, 250)` for that item
+         * 4. Step updates aggregate: `600 - 200 + 250 = 650`
+         * 5. Emits `onModified('totalPrice', 600, 650)` to downstream steps
+         */
+        describe('sum aggregate with mutable item properties', () => {
+            it('should update sum when item effectivePrice changes due to discount change', () => {
+                // Test Scenario: Sum aggregate updates when item's summed property changes
+                //
+                // Pipeline structure:
+                // 1. Input: items with productId, basePrice
+                // 2. GroupBy productId (creates groups with single items for simplicity)
+                // 3. Sum basePrice -> total (this is the root-level aggregate)
+                // 4. DefineProperty: discount (based on mutable total, e.g., bulk discount)
+                // 5. DefineProperty: effectivePrice = basePrice - discount (depends on mutable 'discount')
+                // 6. Second grouping level: aggregate effectivePrice
+                //
+                // For simplicity, let's use a more direct approach:
+                // Items have a computed effectivePrice that depends on a mutable discount property
+                // When discount changes (via aggregate update), effectivePrice changes
+                // The aggregate over effectivePrice should update incrementally
+                
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ orderId: string; productId: string; basePrice: number }>()
+                        // Group by productId
+                        .groupBy(['productId'], 'orders')
+                        // Sum basePrice to get total spent on this product
+                        .sum('orders', 'basePrice', 'totalSpent')
+                        // Define discount based on totalSpent (mutable property)
+                        // Discount is 10% if total > 200, otherwise 0
+                        .defineProperty('discountRate', item => item.totalSpent > 200 ? 0.1 : 0, ['totalSpent'])
+                );
 
-            // Add category with items
-            pipeline.add('cat1', { 
-                category: 'Electronics', 
-                items: [{ name: 'TV', price: 500 }, { name: 'Radio', price: 100 }] 
-            } as any);
+                // Add orders - first order for product A (not enough for discount)
+                pipeline.add('order1', { orderId: 'O1', productId: 'productA', basePrice: 100 });
+                
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].productId).toBe('productA');
+                expect(output[0].totalSpent).toBe(100);
+                expect(output[0].discountRate).toBe(0); // No discount yet
 
-            let output = getOutput();
-            // Note: This test requires full mutable properties implementation for aggregates
-            // The aggregate should be 600 initially
-            expect(output.length).toBeGreaterThan(0);
-            // Full implementation would register for 'price' changes at item level
-            // and update aggregate incrementally when prices change
+                // Add second order - now total > 200, discount should apply
+                pipeline.add('order2', { orderId: 'O2', productId: 'productA', basePrice: 150 });
+                
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].productId).toBe('productA');
+                expect(output[0].totalSpent).toBe(250);
+                expect(output[0].discountRate).toBe(0.1); // 10% discount now applied
+            });
+
+            it('should update sum aggregate when nested item mutable property changes', () => {
+                // Test Scenario: Sum aggregate updates when item's summed property changes
+                //
+                // This test creates a more complex scenario:
+                // 1. Products grouped by category
+                // 2. Each product has orders grouped by productId
+                // 3. Sum orders to get productTotal (mutable)
+                // 4. Define adjustedPrice based on productTotal (mutable dependency)
+                // 5. Sum adjustedPrice at category level - this should update when adjustedPrice changes
+                //
+                // The key test: when productTotal changes, adjustedPrice changes,
+                // and the category-level sum of adjustedPrice should update incrementally
+                
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ categoryId: string; productId: string; orderId: string; amount: number }>()
+                        // First group by category
+                        .groupBy(['categoryId'], 'products')
+                        // Then within each category, group by product
+                        .in('products').groupBy(['productId'], 'orders')
+                        // Sum orders for each product
+                        .in('products').sum('orders', 'amount', 'productTotal')
+                        // Define adjusted price based on productTotal
+                        // If productTotal > 100, adjusted = productTotal * 1.1, else productTotal
+                        .in('products').defineProperty('adjustedTotal', item =>
+                            item.productTotal > 100 ? item.productTotal * 1.1 : item.productTotal,
+                            ['productTotal']
+                        )
+                        // Sum adjustedTotal at category level
+                        // This is where handleItemPropertyChanged should be called when adjustedTotal changes
+                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                );
+
+                // Add first order - product A in category X, amount 50
+                pipeline.add('o1', { categoryId: 'catX', productId: 'prodA', orderId: 'o1', amount: 50 });
+                
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].categoryId).toBe('catX');
+                // productTotal = 50, adjustedTotal = 50 (no markup), categoryTotal = 50
+                expect(output[0].categoryTotal).toBe(50);
+
+                // Add second order for same product - now productTotal > 100
+                // productTotal = 150, adjustedTotal = 165 (150 * 1.1)
+                // categoryTotal should update to 165
+                pipeline.add('o2', { categoryId: 'catX', productId: 'prodA', orderId: 'o2', amount: 100 });
+                
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                // The KEY ASSERTION: categoryTotal should be 165 (not 150)
+                // This tests that when adjustedTotal changed from 50 to 165,
+                // the sum aggregate received onModified and updated: oldSum - oldValue + newValue = 50 - 50 + 165 = 165
+                expect(output[0].categoryTotal).toBe(165);
+            });
+
+            it('should update sum correctly with multiple item property changes in sequence', () => {
+                // Test: Sum aggregate updates correctly with multiple item changes
+                //
+                // Multiple products in same category, each with orders
+                // As orders are added, productTotal changes, adjustedTotal changes
+                // categoryTotal should track all these changes correctly
+                
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                        .groupBy(['categoryId'], 'products')
+                        .in('products').groupBy(['productId'], 'orders')
+                        .in('products').sum('orders', 'amount', 'productTotal')
+                        .in('products').defineProperty('adjustedTotal', item =>
+                            item.productTotal > 100 ? item.productTotal * 1.2 : item.productTotal,
+                            ['productTotal']
+                        )
+                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                );
+
+                // Add product A with small amount (no markup)
+                pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 50 });
+                let output = getOutput();
+                expect(output[0].categoryTotal).toBe(50); // 50, no markup
+
+                // Add product B with small amount (no markup)
+                pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 60 });
+                output = getOutput();
+                expect(output[0].categoryTotal).toBe(110); // 50 + 60 = 110
+
+                // Add more to product A, pushing it over threshold
+                // A: 50 + 70 = 120 -> adjusted = 144
+                // B: 60 (no change)
+                // categoryTotal should be: 144 + 60 = 204
+                pipeline.add('o3', { categoryId: 'cat1', productId: 'A', amount: 70 });
+                output = getOutput();
+                expect(output[0].categoryTotal).toBe(204);
+
+                // Add more to product B, pushing it over threshold
+                // A: 144 (adjusted)
+                // B: 60 + 50 = 110 -> adjusted = 132
+                // categoryTotal should be: 144 + 132 = 276
+                pipeline.add('o4', { categoryId: 'cat1', productId: 'B', amount: 50 });
+                output = getOutput();
+                expect(output[0].categoryTotal).toBe(276);
+            });
+
+            it('should handle item removal after property change', () => {
+                // Test: Sum aggregate handles item removal after property change
+                //
+                // Add items, trigger property change, then remove an item
+                // The aggregate should correctly reflect the removal
+                
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                        .groupBy(['categoryId'], 'products')
+                        .in('products').groupBy(['productId'], 'orders')
+                        .in('products').sum('orders', 'amount', 'productTotal')
+                        .in('products').defineProperty('adjustedTotal', item =>
+                            item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
+                            ['productTotal']
+                        )
+                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                );
+
+                // Add two products
+                pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 80 });
+                pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 90 });
+                
+                let output = getOutput();
+                // Both under threshold: 80 + 90 = 170
+                expect(output[0].categoryTotal).toBe(170);
+
+                // Push A over threshold
+                // A: 80 + 50 = 130 -> adjusted = 195
+                // B: 90
+                // Total: 285
+                const order3 = { categoryId: 'cat1', productId: 'A', amount: 50 };
+                pipeline.add('o3', order3);
+                output = getOutput();
+                expect(output[0].categoryTotal).toBe(285);
+
+                // Remove the order that pushed A over threshold
+                // A: 80 (no markup)
+                // B: 90
+                // Total: 170
+                pipeline.remove('o3', order3);
+                output = getOutput();
+                expect(output[0].categoryTotal).toBe(170);
+            });
+
+            it('should cascade aggregate change to downstream filter step', () => {
+                // Test: Aggregate change cascades to downstream steps
+                //
+                // Pipeline: Sum → Filter (where categoryTotal > threshold)
+                // Item property change causes aggregate to cross threshold
+                // Filter should add/remove based on the aggregate change
+                
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                        .groupBy(['categoryId'], 'products')
+                        .in('products').groupBy(['productId'], 'orders')
+                        .in('products').sum('orders', 'amount', 'productTotal')
+                        .in('products').defineProperty('adjustedTotal', item =>
+                            item.productTotal > 50 ? item.productTotal * 2 : item.productTotal,
+                            ['productTotal']
+                        )
+                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                        // Filter: only show categories with total > 200
+                        .filter(cat => cat.categoryTotal > 200, ['categoryTotal'])
+                );
+
+                // Add product with small amount - category won't pass filter
+                pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 30 });
+                
+                let output = getOutput();
+                // 30 < 50, no doubling, categoryTotal = 30, threshold not met
+                expect(output).toHaveLength(0);
+
+                // Add more - still under filter threshold but over doubling threshold
+                // 30 + 40 = 70 > 50, doubled = 140 < 200
+                pipeline.add('o2', { categoryId: 'cat1', productId: 'A', amount: 40 });
+                output = getOutput();
+                expect(output).toHaveLength(0);
+
+                // Add more to push over filter threshold
+                // 70 + 50 = 120 > 50, doubled = 240 > 200
+                pipeline.add('o3', { categoryId: 'cat1', productId: 'A', amount: 50 });
+                output = getOutput();
+                // Should now appear in output
+                expect(output).toHaveLength(1);
+                expect(output[0].categoryId).toBe('cat1');
+                expect(output[0].categoryTotal).toBe(240);
+            });
+
+            it('should handle property change to zero value', () => {
+                // Test: Aggregate handles property change to zero
+                // Edge case: property changes to 0
+                
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                        .groupBy(['categoryId'], 'products')
+                        .in('products').groupBy(['productId'], 'orders')
+                        .in('products').sum('orders', 'amount', 'productTotal')
+                        // Zero out if productTotal > 100
+                        .in('products').defineProperty('adjustedTotal', item =>
+                            item.productTotal > 100 ? 0 : item.productTotal,
+                            ['productTotal']
+                        )
+                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                );
+
+                // Add product under threshold
+                pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 80 });
+                
+                let output = getOutput();
+                expect(output[0].categoryTotal).toBe(80);
+
+                // Push over threshold - adjustedTotal becomes 0
+                // categoryTotal should update: 80 - 80 + 0 = 0
+                pipeline.add('o2', { categoryId: 'cat1', productId: 'A', amount: 30 });
+                output = getOutput();
+                expect(output[0].categoryTotal).toBe(0);
+            });
+
+            it('should handle property change to negative value', () => {
+                // Test: Aggregate handles property change resulting in negative values
+                // Edge case: property can become negative (e.g., fee deducted)
+                
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                        .groupBy(['categoryId'], 'products')
+                        .in('products').groupBy(['productId'], 'orders')
+                        .in('products').sum('orders', 'amount', 'productTotal')
+                        // If productTotal > 100, deduct fee: productTotal - 200
+                        .in('products').defineProperty('netTotal', item =>
+                            item.productTotal > 100 ? item.productTotal - 200 : item.productTotal,
+                            ['productTotal']
+                        )
+                        .sum('products', 'netTotal', 'categoryNet', ['netTotal'])
+                );
+
+                // Add two products under threshold
+                pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 80 });
+                pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 70 });
+                
+                let output = getOutput();
+                // 80 + 70 = 150 total, no fee
+                expect(output[0].categoryNet).toBe(150);
+
+                // Push product A over threshold
+                // A: 80 + 30 = 110 -> netTotal = 110 - 200 = -90
+                // B: 70
+                // categoryNet = -90 + 70 = -20
+                pipeline.add('o3', { categoryId: 'cat1', productId: 'A', amount: 30 });
+                output = getOutput();
+                expect(output[0].categoryNet).toBe(-20);
+            });
+
+            it('should handle multiple products changing simultaneously', () => {
+                // Test: Multiple items changing in same batch should all update correctly
+                //
+                // Add orders to multiple products that all cross threshold at once
+                
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                        .groupBy(['categoryId'], 'products')
+                        .in('products').groupBy(['productId'], 'orders')
+                        .in('products').sum('orders', 'amount', 'productTotal')
+                        .in('products').defineProperty('bonus', item =>
+                            item.productTotal >= 100 ? 50 : 0,
+                            ['productTotal']
+                        )
+                        .sum('products', 'bonus', 'totalBonus', ['bonus'])
+                );
+
+                // Add three products, all under threshold
+                pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 90 });
+                pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 95 });
+                pipeline.add('o3', { categoryId: 'cat1', productId: 'C', amount: 80 });
+                
+                let output = getOutput();
+                // All under threshold, no bonus
+                expect(output[0].totalBonus).toBe(0);
+
+                // Push A over threshold: bonus = 50
+                pipeline.add('o4', { categoryId: 'cat1', productId: 'A', amount: 10 });
+                output = getOutput();
+                expect(output[0].totalBonus).toBe(50);
+
+                // Push B over threshold: bonus = 50 for B
+                // totalBonus = 50 + 50 = 100
+                pipeline.add('o5', { categoryId: 'cat1', productId: 'B', amount: 10 });
+                output = getOutput();
+                expect(output[0].totalBonus).toBe(100);
+
+                // Push C over threshold: bonus = 50 for C
+                // totalBonus = 50 + 50 + 50 = 150
+                pipeline.add('o6', { categoryId: 'cat1', productId: 'C', amount: 20 });
+                output = getOutput();
+                expect(output[0].totalBonus).toBe(150);
+            });
         });
     });
 });

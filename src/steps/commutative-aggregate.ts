@@ -211,25 +211,38 @@ export class CommutativeAggregateStep<
             return;
         }
         
-        // Get the item to recompute its contribution
-        // We need to find the item in our tracking - but we don't track items individually
-        // Instead, we need to get the current item state and recompute
-        // For commutative aggregates, we can compute: newAggregate = oldAggregate - oldItemContribution + newItemContribution
+        // For commutative aggregates, we can update incrementally:
+        // newAggregate = currentAggregate - oldContribution + newContribution
+        //
+        // The config.add and config.subtract operators expect items with properties,
+        // so we create pseudo-items with just the changed property.
+        // This works because sum/count operators extract item[propertyName].
         
-        // However, we don't have the full item here, just the property change
-        // We need to track items or fetch them somehow
-        // For now, let's use a simpler approach: track items by their key path hash
+        // Create pseudo-items with the old and new values
+        const oldItem = { [propertyName]: oldValue } as ImmutableProps;
+        const newItem = { [propertyName]: newValue } as ImmutableProps;
         
-        // Actually, for commutative aggregates, if we're aggregating a mutable property,
-        // the change is straightforward: newAggregate = oldAggregate - oldValue + newValue
-        // But this only works if we're aggregating the mutable property itself
+        // Compute new aggregate: subtract old value, add new value
+        const intermediateAggregate = this.config.subtract(currentAggregate as any, oldItem);
+        const newAggregate = this.config.add(intermediateAggregate, newItem);
         
-        // For now, let's implement a basic version that works when aggregating the mutable property
-        // In the future, we'd need to track items and recompute their contributions
+        // Update stored aggregate
+        this.aggregateValues.set(parentKeyHash, newAggregate);
         
-        // Check if this property is the one being aggregated
-        // If so, update incrementally: newAggregate = oldAggregate - oldValue + newValue
-        // This is a simplified implementation - full version would need item tracking
+        // Emit modification event to downstream handlers
+        if (parentKeyPath.length > 0) {
+            const parentKey = parentKeyPath[parentKeyPath.length - 1];
+            const keyPathToParent = parentKeyPath.slice(0, -1);
+            
+            this.modifiedHandlers.forEach(({ handler }) => {
+                handler(keyPathToParent, parentKey, currentAggregate, newAggregate);
+            });
+        } else {
+            // Parent is at root level
+            this.modifiedHandlers.forEach(({ handler }) => {
+                handler([], '', currentAggregate, newAggregate);
+            });
+        }
     }
     
     /**

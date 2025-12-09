@@ -60,8 +60,8 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
     }
     
     private handleMutablePropertyChange(keyPath: string[], key: string, propertyName: string, oldValue: any, newValue: any): void {
-        const itemKey = keyPath.length === 0 ? key : keyPath[keyPath.length - 1];
-        const itemState = this.itemStates.get(itemKey);
+        // The key parameter is the item key - use it directly for lookup
+        const itemState = this.itemStates.get(key);
         if (!itemState) {
             return; // Item not tracked
         }
@@ -81,15 +81,14 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
         
         // Only emit if the computed value actually changed
         if (oldComputedValue !== newComputedValue) {
-            // Emit onModified for the defined property using the stored keyPath
-            const storedKeyPath = itemState.keyPath;
-            const itemKeyToEmit = storedKeyPath.length > 0 ? storedKeyPath[storedKeyPath.length - 1] : itemKey;
-            const keyPathToEmit = storedKeyPath.length > 0 ? storedKeyPath.slice(0, -1) : [];
+            // Emit onModified for the defined property
+            // keyPath is the path to the parent, key is the item key
+            // This matches the pattern used by other steps (e.g., CommutativeAggregateStep)
             
             // Notify all handlers registered for this property at the scope level
             this.modifiedHandlers.forEach(({ pathSegments, propertyName: propName, handler }) => {
                 if (propName === this.propertyName && pathsMatch(pathSegments, this.scopeSegments)) {
-                    handler(keyPathToEmit, itemKeyToEmit, oldComputedValue, newComputedValue);
+                    handler(keyPath, key, oldComputedValue, newComputedValue);
                 }
             });
         }
