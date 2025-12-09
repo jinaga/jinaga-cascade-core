@@ -766,3 +766,396 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
         });
     });
 });
+
+/**
+ * Tests for auto-detection of mutable properties in AverageAggregate.
+ *
+ * Currently, average() doesn't handle property changes at all - it only
+ * reacts to add/remove events. When the property being averaged is mutable
+ * (e.g., computed by defineProperty or another aggregate), the average should
+ * auto-update when that property changes.
+ *
+ * The average calculation is: sum / count
+ * When a property value changes: newAvg = (oldSum - oldValue + newValue) / count
+ * The count stays the same because no items were added or removed.
+ *
+ * These tests should FAIL until:
+ * 1. average() auto-detects mutable properties from TypeDescriptor
+ * 2. AverageAggregateStep implements handleItemPropertyChanged
+ */
+describe('AverageAggregate auto-detection of mutable properties', () => {
+    
+    describe('auto-update when property is mutable', () => {
+        it('should auto-update average when the property is mutable (without manual param)', () => {
+            // Create pipeline: categories → products → adjustedPrice (mutable)
+            // average('products', 'adjustedPrice', 'avgPrice')  // no mutableProperties param
+            // Products: [10, 20, 30] → avg = 20
+            // Change product from 30 to 60 → avg should update to (10+20+60)/3 = 30
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    // Define adjustedPrice that depends on mutable productTotal
+                    .in('products').defineProperty('adjustedPrice', item =>
+                        item.productTotal,
+                        ['productTotal']
+                    )
+                    // KEY: Average adjustedPrice WITHOUT specifying mutableProperties
+                    // This should auto-detect that adjustedPrice is mutable
+                    .average('products', 'adjustedPrice', 'avgPrice')
+            );
+
+            // Add first order - productTotal = 10, adjustedPrice = 10
+            pipeline.add('o1', { categoryId: 'catX', productId: 'prodA', amount: 10 });
+            
+            let output = getOutput();
+            expect(output).toHaveLength(1);
+            expect(output[0].avgPrice).toBe(10); // Single product, avg = 10
+
+            // Add second product - adjustedPrice = 20
+            pipeline.add('o2', { categoryId: 'catX', productId: 'prodB', amount: 20 });
+            
+            output = getOutput();
+            expect(output[0].avgPrice).toBe(15); // (10+20)/2 = 15
+
+            // Add third product - adjustedPrice = 30
+            pipeline.add('o3', { categoryId: 'catX', productId: 'prodC', amount: 30 });
+            
+            output = getOutput();
+            expect(output[0].avgPrice).toBe(20); // (10+20+30)/3 = 20
+
+            // Now add more to prodC: 30 + 30 = 60
+            // adjustedPrice for prodC changes from 30 to 60
+            // avgPrice should update to (10+20+60)/3 = 30
+            pipeline.add('o4', { categoryId: 'catX', productId: 'prodC', amount: 30 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 30
+            // This will FAIL until auto-detection is implemented because
+            // without tracking property changes, average won't recalculate
+            expect(output[0].avgPrice).toBe(30);
+        });
+
+        it('should correctly update sum without changing count when property changes', () => {
+            // Verify the formula: newAvg = (oldSum - oldValue + newValue) / count
+            // Products: [10, 20, 30] → sum=60, count=3, avg=20
+            // Change 30 to 45 → sum=75, count=3, avg=25
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('products').defineProperty('adjustedPrice', item =>
+                        item.productTotal,
+                        ['productTotal']
+                    )
+                    .average('products', 'adjustedPrice', 'avgPrice')
+            );
+
+            // Setup: Products with values 10, 20, 30
+            pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 10 });
+            pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 20 });
+            pipeline.add('o3', { categoryId: 'cat1', productId: 'C', amount: 30 });
+            
+            let output = getOutput();
+            expect(output[0].avgPrice).toBe(20); // (10+20+30)/3 = 20
+
+            // Change C from 30 to 45 (add 15 more)
+            // sum: 60 - 30 + 45 = 75
+            // count: 3 (unchanged)
+            // avg: 75/3 = 25
+            pipeline.add('o4', { categoryId: 'cat1', productId: 'C', amount: 15 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 25
+            expect(output[0].avgPrice).toBe(25);
+        });
+    });
+
+    describe('edge cases with zero values', () => {
+        it('should handle property change to zero', () => {
+            // Edge case: value becomes 0
+            // Products: [10, 20, 30] → avg = 20
+            // Change 30 to 0 → avg should update to (10+20+0)/3 = 10
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    // Use a formula that can produce zero
+                    .in('products').defineProperty('adjustedPrice', item =>
+                        item.productTotal > 50 ? 0 : item.productTotal,
+                        ['productTotal']
+                    )
+                    .average('products', 'adjustedPrice', 'avgPrice')
+            );
+
+            // Setup: Products with values 10, 20, 30
+            pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 10 });
+            pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 20 });
+            pipeline.add('o3', { categoryId: 'cat1', productId: 'C', amount: 30 });
+            
+            let output = getOutput();
+            expect(output[0].avgPrice).toBe(20); // (10+20+30)/3 = 20
+
+            // Push C over threshold: 30 + 25 = 55 > 50
+            // adjustedPrice for C becomes 0
+            // avgPrice = (10+20+0)/3 = 10
+            pipeline.add('o4', { categoryId: 'cat1', productId: 'C', amount: 25 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 10
+            expect(output[0].avgPrice).toBe(10);
+        });
+
+        it('should handle property change from zero', () => {
+            // Edge case: value starts at 0
+            // Use a formula where items start at 0 and then change
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    // Items are 0 until they reach 50, then they get their actual value
+                    .in('products').defineProperty('adjustedPrice', item =>
+                        item.productTotal >= 50 ? item.productTotal : 0,
+                        ['productTotal']
+                    )
+                    .average('products', 'adjustedPrice', 'avgPrice')
+            );
+
+            // Setup: Products A=60 (>=50 so adjustedPrice=60), B=30 (adjustedPrice=0)
+            pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 60 });
+            pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 30 });
+            
+            let output = getOutput();
+            expect(output[0].avgPrice).toBe(30); // (60+0)/2 = 30
+
+            // Push B over threshold: 30 + 30 = 60 >= 50
+            // adjustedPrice for B changes from 0 to 60
+            // avgPrice = (60+60)/2 = 60
+            pipeline.add('o3', { categoryId: 'cat1', productId: 'B', amount: 30 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 60
+            expect(output[0].avgPrice).toBe(60);
+        });
+    });
+
+    describe('auto-detect at nested path via in()', () => {
+        it('should auto-detect at nested path via in()', () => {
+            // .in('categories').average('products', 'adjustedPrice', 'avgPrice')
+            // adjustedPrice is mutable at products level
+            // avgPrice should auto-update when adjustedPrice changes
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ storeId: string; categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['storeId'], 'categories')
+                    .in('categories').groupBy(['categoryId'], 'products')
+                    .in('categories', 'products').groupBy(['productId'], 'orders')
+                    .in('categories', 'products').sum('orders', 'amount', 'productTotal')
+                    .in('categories', 'products').defineProperty('adjustedPrice', item =>
+                        item.productTotal,
+                        ['productTotal']
+                    )
+                    // Average at the categories level
+                    .in('categories').average('products', 'adjustedPrice', 'avgPrice')
+            );
+
+            // Add products to store S1, category C1
+            pipeline.add('o1', { storeId: 'S1', categoryId: 'C1', productId: 'P1', amount: 10 });
+            pipeline.add('o2', { storeId: 'S1', categoryId: 'C1', productId: 'P2', amount: 20 });
+            
+            let output = getOutput();
+            expect(output).toHaveLength(1);
+            const store = output[0];
+            expect(store.categories).toHaveLength(1);
+            expect(store.categories[0].avgPrice).toBe(15); // (10+20)/2 = 15
+
+            // Push P1 to 40: 10 + 30 = 40
+            // avgPrice = (40+20)/2 = 30
+            pipeline.add('o3', { storeId: 'S1', categoryId: 'C1', productId: 'P1', amount: 30 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 30
+            expect(output[0].categories[0].avgPrice).toBe(30);
+        });
+    });
+
+    describe('multiple value changes', () => {
+        it('should handle multiple value changes in sequence', () => {
+            // Change multiple items one after another
+            // Verify average updates correctly each time
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('products').defineProperty('adjustedPrice', item =>
+                        item.productTotal,
+                        ['productTotal']
+                    )
+                    .average('products', 'adjustedPrice', 'avgPrice')
+            );
+
+            // Setup: Products A=10, B=20, C=30
+            pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 10 });
+            pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 20 });
+            pipeline.add('o3', { categoryId: 'cat1', productId: 'C', amount: 30 });
+            
+            let output = getOutput();
+            expect(output[0].avgPrice).toBe(20); // (10+20+30)/3 = 20
+
+            // Change A: 10 → 40 (add 30)
+            // avg = (40+20+30)/3 = 30
+            pipeline.add('o4', { categoryId: 'cat1', productId: 'A', amount: 30 });
+            
+            output = getOutput();
+            expect(output[0].avgPrice).toBe(30);
+
+            // Change B: 20 → 50 (add 30)
+            // avg = (40+50+30)/3 = 40
+            pipeline.add('o5', { categoryId: 'cat1', productId: 'B', amount: 30 });
+            
+            output = getOutput();
+            expect(output[0].avgPrice).toBe(40);
+
+            // Change C: 30 → 60 (add 30)
+            // avg = (40+50+60)/3 = 50
+            pipeline.add('o6', { categoryId: 'cat1', productId: 'C', amount: 30 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 50 after all changes
+            expect(output[0].avgPrice).toBe(50);
+        });
+
+        it('should handle all items changing to same value', () => {
+            // Edge case: All products end up with same price
+            // Products: [10, 20, 30] → Change each to 25
+            // Final avg should be 25
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    // Normalize all values to 25 once they reach 25
+                    .in('products').defineProperty('normalizedPrice', item =>
+                        item.productTotal >= 25 ? 25 : item.productTotal,
+                        ['productTotal']
+                    )
+                    .average('products', 'normalizedPrice', 'avgPrice')
+            );
+
+            // Setup: Products A=10, B=20, C=30
+            // normalizedPrice: A=10, B=20, C=25 (30>=25)
+            pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 10 });
+            pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 20 });
+            pipeline.add('o3', { categoryId: 'cat1', productId: 'C', amount: 30 });
+            
+            let output = getOutput();
+            // (10+20+25)/3 = 55/3 ≈ 18.33
+            expect(output[0].avgPrice).toBeCloseTo(55/3, 5);
+
+            // Push A to 25: 10 + 15 = 25
+            // normalizedPrice for A becomes 25
+            // avg = (25+20+25)/3 = 70/3 ≈ 23.33
+            pipeline.add('o4', { categoryId: 'cat1', productId: 'A', amount: 15 });
+            
+            output = getOutput();
+            expect(output[0].avgPrice).toBeCloseTo(70/3, 5);
+
+            // Push B to 25: 20 + 5 = 25
+            // normalizedPrice for B becomes 25
+            // avg = (25+25+25)/3 = 25
+            pipeline.add('o5', { categoryId: 'cat1', productId: 'B', amount: 5 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 25
+            expect(output[0].avgPrice).toBe(25);
+        });
+    });
+
+    describe('decimal results', () => {
+        it('should handle decimal results correctly', () => {
+            // Products with values that produce decimal averages
+            // [10, 20] → avg = 15
+            // Change 20 to 21 → avg = 15.5
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('products').defineProperty('adjustedPrice', item =>
+                        item.productTotal,
+                        ['productTotal']
+                    )
+                    .average('products', 'adjustedPrice', 'avgPrice')
+            );
+
+            // Setup: Products A=10, B=20
+            pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 10 });
+            pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 20 });
+            
+            let output = getOutput();
+            expect(output[0].avgPrice).toBe(15); // (10+20)/2 = 15
+
+            // Change B from 20 to 21 (add 1)
+            // avg = (10+21)/2 = 15.5
+            pipeline.add('o3', { categoryId: 'cat1', productId: 'B', amount: 1 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 15.5
+            expect(output[0].avgPrice).toBe(15.5);
+        });
+
+        it('should handle repeating decimal averages', () => {
+            // Products: [10, 10, 10] → avg = 10
+            // Change one to 11 → avg = (10+10+11)/3 = 31/3 ≈ 10.333...
+
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('products').defineProperty('adjustedPrice', item =>
+                        item.productTotal,
+                        ['productTotal']
+                    )
+                    .average('products', 'adjustedPrice', 'avgPrice')
+            );
+
+            // Setup: Products A=10, B=10, C=10
+            pipeline.add('o1', { categoryId: 'cat1', productId: 'A', amount: 10 });
+            pipeline.add('o2', { categoryId: 'cat1', productId: 'B', amount: 10 });
+            pipeline.add('o3', { categoryId: 'cat1', productId: 'C', amount: 10 });
+            
+            let output = getOutput();
+            expect(output[0].avgPrice).toBe(10); // (10+10+10)/3 = 10
+
+            // Change C from 10 to 11 (add 1)
+            // avg = (10+10+11)/3 = 31/3 ≈ 10.333...
+            pipeline.add('o4', { categoryId: 'cat1', productId: 'C', amount: 1 });
+            
+            output = getOutput();
+            
+            // KEY ASSERTION: avgPrice should be 31/3
+            expect(output[0].avgPrice).toBeCloseTo(31/3, 5);
+        });
+    });
+});
