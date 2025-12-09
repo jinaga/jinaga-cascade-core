@@ -19,6 +19,28 @@ export interface ObjectDescriptor {
     type: TypeDescriptor;
 }
 
+/**
+ * Get the mutable properties of items within an array at the specified path.
+ * Navigates through the TypeDescriptor following the segment path and returns
+ * the mutableProperties of the final array's item type.
+ *
+ * @param descriptor - The root TypeDescriptor to start navigation from
+ * @param segmentPath - Array of segment names to navigate (e.g., ['orders'] or ['categories', 'products'])
+ * @returns Array of mutable property names, or empty array if path is invalid
+ */
+export function getMutablePropertiesOfArrayItems(
+    descriptor: TypeDescriptor,
+    segmentPath: string[]
+): string[] {
+    let current = descriptor;
+    for (const segment of segmentPath) {
+        const arrayDesc = current.arrays.find(a => a.name === segment);
+        if (!arrayDesc) return [];
+        current = arrayDesc.type;
+    }
+    return current.mutableProperties || [];
+}
+
 export type ImmutableProps = {
     [key: string]: any;
 };

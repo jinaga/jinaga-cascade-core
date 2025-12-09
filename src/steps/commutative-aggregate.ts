@@ -1,4 +1,4 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline';
+import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
 
 /**
  * Operator called when an item is added to the aggregated array.
@@ -81,12 +81,16 @@ export class CommutativeAggregateStep<
         handler: ModifiedHandler;
     }> = [];
     
+    /** Whether the property being aggregated is mutable (auto-detected) */
+    private isPropertyMutable: boolean = false;
+    
     constructor(
         private input: Step,
         private segmentPath: TPath,
         private propertyName: TPropertyName,
         private config: CommutativeAggregateConfig<ImmutableProps, TAggregate>,
-        private mutableProperties: string[] = []
+        private mutableProperties: string[] = [],
+        private propertyToAggregate?: string
     ) {
         // Register with input step to receive item add/remove events at the target array level
         this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
@@ -97,9 +101,26 @@ export class CommutativeAggregateStep<
             this.handleItemRemoved(keyPath, itemKey, immutableProps);
         });
         
+        // Auto-detect mutable properties from TypeDescriptor if propertyToAggregate is specified
+        // and no explicit mutableProperties were provided
+        let effectiveMutableProperties = mutableProperties;
+        if (propertyToAggregate && mutableProperties.length === 0) {
+            // Check if the property to aggregate is mutable in the TypeDescriptor
+            // Note: DefinePropertyStep and CommutativeAggregateStep add mutable properties at the root level,
+            // not at the nested array level, so we check root-level mutableProperties
+            const inputDescriptor = input.getTypeDescriptor();
+            const rootMutableProperties = inputDescriptor.mutableProperties || [];
+            if (rootMutableProperties.includes(propertyToAggregate)) {
+                effectiveMutableProperties = [propertyToAggregate];
+                this.isPropertyMutable = true;
+            }
+        } else if (mutableProperties.length > 0 && propertyToAggregate && mutableProperties.includes(propertyToAggregate)) {
+            this.isPropertyMutable = true;
+        }
+        
         // Register for mutable property changes at the item level
-        if (mutableProperties.length > 0) {
-            mutableProperties.forEach(propName => {
+        if (effectiveMutableProperties.length > 0) {
+            effectiveMutableProperties.forEach(propName => {
                 this.input.onModified(this.segmentPath, propName, (keyPath, itemKey, oldValue, newValue) => {
                     this.handleItemPropertyChanged(keyPath, itemKey, propName, oldValue, newValue);
                 });
@@ -171,6 +192,21 @@ export class CommutativeAggregateStep<
         const currentCount = this.itemCounts.get(parentKeyHash) ?? 0;
         this.itemCounts.set(parentKeyHash, currentCount + 1);
         
+        // If the property being aggregated is mutable, the value won't be available yet in onAdded.
+        // The initial value will come via onModified from the upstream step.
+        // In this case, skip aggregation here and let handleItemPropertyChanged handle it.
+        if (this.isPropertyMutable && this.propertyToAggregate) {
+            const propValue = item[this.propertyToAggregate];
+            if (propValue === undefined) {
+                // Property not available yet - wait for onModified
+                // Initialize aggregate to undefined if first item
+                if (!this.aggregateValues.has(parentKeyHash)) {
+                    // Don't set any aggregate yet - wait for onModified
+                }
+                return;
+            }
+        }
+        
         // Compute new aggregate
         const currentAggregate = this.aggregateValues.get(parentKeyHash);
         const newAggregate = this.config.add(currentAggregate, item);
@@ -206,8 +242,33 @@ export class CommutativeAggregateStep<
         
         // Get the current aggregate
         const currentAggregate = this.aggregateValues.get(parentKeyHash);
+        
+        // Handle the case where this is the first value for a mutable property
+        // (oldValue is undefined, no aggregate yet)
+        if (currentAggregate === undefined && oldValue === undefined) {
+            // This is the initial value for the property - treat as a fresh add
+            const newItem = { [propertyName]: newValue } as ImmutableProps;
+            const newAggregate = this.config.add(undefined, newItem);
+            this.aggregateValues.set(parentKeyHash, newAggregate);
+            
+            // Emit modification event
+            if (parentKeyPath.length > 0) {
+                const parentKey = parentKeyPath[parentKeyPath.length - 1];
+                const keyPathToParent = parentKeyPath.slice(0, -1);
+                
+                this.modifiedHandlers.forEach(({ handler }) => {
+                    handler(keyPathToParent, parentKey, undefined, newAggregate);
+                });
+            } else {
+                this.modifiedHandlers.forEach(({ handler }) => {
+                    handler([], '', undefined, newAggregate);
+                });
+            }
+            return;
+        }
+        
         if (currentAggregate === undefined) {
-            // No aggregate yet, this shouldn't happen but handle gracefully
+            // No aggregate yet and not a fresh add - this shouldn't happen but handle gracefully
             return;
         }
         
