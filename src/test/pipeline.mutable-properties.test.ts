@@ -4,7 +4,7 @@ import { createTestPipeline } from './helpers';
 describe('pipeline mutable properties', () => {
     describe('onModified signature change', () => {
         it('should pass property name at registration and oldValue/newValue in handler', () => {
-            const [pipeline, getOutput] = createTestPipeline(() => 
+            const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ category: string; total: number }>()
                     .sum('items', 'price', 'total')
             );
@@ -22,24 +22,186 @@ describe('pipeline mutable properties', () => {
         });
     });
 
-    describe('filter with mutable properties', () => {
-        it('should re-evaluate filter when mutable property changes', () => {
-            const [pipeline, getOutput] = createTestPipeline(() => 
-                createPipeline<{ name: string; total: number }>()
-                    .sum('orders', 'amount', 'total')
-                    .filter(item => item.total > 1000, ['total'])
-            );
+    describe('filter with mutable properties - re-evaluation', () => {
+        /**
+         * Scenario from design document Section 3.2 (Scenario 2):
+         * When a mutable property changes, the FilterStep should re-evaluate
+         * whether the item passes the filter. If the filter result changes
+         * from false to true, emit an onAdded event.
+         */
+        describe('when mutable property crosses threshold from below to above', () => {
+            it('should emit onAdded when item starts below threshold and aggregate rises above', () => {
+                // Setup: Create a pipeline with sum aggregate and filter on the mutable totalAmount
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ customerId: string; amount: number }>()
+                        .groupBy(['customerId'], 'orders')
+                        .sum('orders', 'amount', 'totalAmount')
+                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                );
 
-            // Add item with orders that sum to 900 (below threshold)
-            pipeline.add('customer1', { name: 'Alice', orders: [{ amount: 500 }, { amount: 400 }] } as any);
-            
-            let output = getOutput();
-            expect(output).toHaveLength(0); // Below threshold, filtered out
+                // Step 1: Add an order with amount = 50 (below threshold of 100)
+                pipeline.add('order1', { customerId: 'customer1', amount: 50 });
+                
+                // Verify: Customer should NOT appear in output (filtered out because 50 <= 100)
+                let output = getOutput();
+                expect(output).toHaveLength(0);
 
-            // Add order that pushes total over 1000
-            // This should trigger re-evaluation and add customer to output
-            // Note: This requires the sum step to emit onModified, and filter to react
-            // For now, we'll test the basic structure
+                // Step 2: Add another order to same customer, totalAmount becomes 150 (above threshold)
+                pipeline.add('order2', { customerId: 'customer1', amount: 100 });
+                
+                // Expected behavior: FilterStep re-evaluates predicate on mutable property change
+                // Since totalAmount went from 50 to 150, and 150 > 100, the customer should now pass
+                // FilterStep should emit onAdded event, and customer should appear in output
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].customerId).toBe('customer1');
+                expect(output[0].totalAmount).toBe(150);
+            });
+
+            it('should handle multiple groups where one crosses threshold and others do not', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ customerId: string; amount: number }>()
+                        .groupBy(['customerId'], 'orders')
+                        .sum('orders', 'amount', 'totalAmount')
+                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                );
+
+                // Add orders to two different customers, both below threshold
+                pipeline.add('order1', { customerId: 'customerA', amount: 30 });
+                pipeline.add('order2', { customerId: 'customerB', amount: 40 });
+                
+                // Neither customer should appear yet
+                let output = getOutput();
+                expect(output).toHaveLength(0);
+
+                // Only customerA crosses threshold (30 + 80 = 110 > 100)
+                pipeline.add('order3', { customerId: 'customerA', amount: 80 });
+                
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].customerId).toBe('customerA');
+                expect(output[0].totalAmount).toBe(110);
+
+                // customerB still below threshold
+                expect(output.find(c => c.customerId === 'customerB')).toBeUndefined();
+            });
+        });
+
+        /**
+         * Scenario: When a mutable property changes from above to below threshold,
+         * the FilterStep should emit an onRemoved event.
+         */
+        describe('when mutable property crosses threshold from above to below', () => {
+            it('should emit onRemoved when item starts above threshold and aggregate falls below', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ customerId: string; amount: number }>()
+                        .groupBy(['customerId'], 'orders')
+                        .sum('orders', 'amount', 'totalAmount')
+                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                );
+
+                // Add orders that put customer above threshold (150 > 100)
+                const order1 = { customerId: 'customer1', amount: 80 };
+                const order2 = { customerId: 'customer1', amount: 70 };
+                pipeline.add('order1', order1);
+                pipeline.add('order2', order2);
+                
+                // Customer should appear in output (totalAmount = 150)
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].customerId).toBe('customer1');
+                expect(output[0].totalAmount).toBe(150);
+
+                // Remove an order such that totalAmount drops below threshold
+                // 150 - 70 = 80, and 80 <= 100
+                pipeline.remove('order2', order2);
+                
+                // Expected: FilterStep re-evaluates on mutable property change
+                // Since 80 <= 100, predicate fails, emit onRemoved
+                output = getOutput();
+                expect(output).toHaveLength(0);
+            });
+
+            it('should handle removal that keeps item above threshold (no change in filter result)', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ customerId: string; amount: number }>()
+                        .groupBy(['customerId'], 'orders')
+                        .sum('orders', 'amount', 'totalAmount')
+                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                );
+
+                // Add enough orders to stay above threshold after removal
+                const order1 = { customerId: 'customer1', amount: 80 };
+                const order2 = { customerId: 'customer1', amount: 50 };
+                const order3 = { customerId: 'customer1', amount: 120 };
+                pipeline.add('order1', order1);
+                pipeline.add('order2', order2);
+                pipeline.add('order3', order3);
+                
+                // totalAmount = 250 > 100
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].totalAmount).toBe(250);
+
+                // Remove order2 (50), totalAmount becomes 200, still > 100
+                pipeline.remove('order2', order2);
+                
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].totalAmount).toBe(200);
+            });
+        });
+
+        describe('edge cases for filter re-evaluation', () => {
+            it('should handle item that starts exactly at threshold boundary', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ customerId: string; amount: number }>()
+                        .groupBy(['customerId'], 'orders')
+                        .sum('orders', 'amount', 'totalAmount')
+                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                );
+
+                // Add order that puts customer exactly at boundary (100 is NOT > 100)
+                pipeline.add('order1', { customerId: 'customer1', amount: 100 });
+                
+                // Should NOT appear (100 is not > 100)
+                let output = getOutput();
+                expect(output).toHaveLength(0);
+
+                // Add 1 more to cross threshold
+                pipeline.add('order2', { customerId: 'customer1', amount: 1 });
+                
+                // Now 101 > 100, should appear
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].totalAmount).toBe(101);
+            });
+
+            it('should handle rapid additions that cause multiple threshold crossings', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ customerId: string; amount: number }>()
+                        .groupBy(['customerId'], 'orders')
+                        .sum('orders', 'amount', 'totalAmount')
+                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                );
+
+                // Start above threshold
+                pipeline.add('order1', { customerId: 'customer1', amount: 150 });
+                expect(getOutput()).toHaveLength(1);
+
+                // Drop below threshold
+                pipeline.remove('order1', { customerId: 'customer1', amount: 150 });
+                pipeline.add('order2', { customerId: 'customer1', amount: 50 });
+                expect(getOutput()).toHaveLength(0);
+
+                // Rise above threshold again
+                pipeline.add('order3', { customerId: 'customer1', amount: 75 });
+                
+                // 50 + 75 = 125 > 100
+                const output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].totalAmount).toBe(125);
+            });
         });
 
         it('should forward onModified events for properties not in mutableProperties array', () => {
