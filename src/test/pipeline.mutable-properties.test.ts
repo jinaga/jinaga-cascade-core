@@ -703,7 +703,7 @@ describe('pipeline mutable properties', () => {
                         )
                         // Sum adjustedTotal at category level
                         // This is where handleItemPropertyChanged should be called when adjustedTotal changes
-                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                        .sum('products', 'adjustedTotal', 'categoryTotal')
                 );
 
                 // Add first order - product A in category X, amount 50
@@ -744,7 +744,7 @@ describe('pipeline mutable properties', () => {
                             item.productTotal > 100 ? item.productTotal * 1.2 : item.productTotal,
                             ['productTotal']
                         )
-                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                        .sum('products', 'adjustedTotal', 'categoryTotal')
                 );
 
                 // Add product A with small amount (no markup)
@@ -789,7 +789,7 @@ describe('pipeline mutable properties', () => {
                             item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
                             ['productTotal']
                         )
-                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                        .sum('products', 'adjustedTotal', 'categoryTotal')
                 );
 
                 // Add two products
@@ -834,7 +834,7 @@ describe('pipeline mutable properties', () => {
                             item.productTotal > 50 ? item.productTotal * 2 : item.productTotal,
                             ['productTotal']
                         )
-                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                        .sum('products', 'adjustedTotal', 'categoryTotal')
                         // Filter: only show categories with total > 200
                         .filter(cat => cat.categoryTotal > 200, ['categoryTotal'])
                 );
@@ -876,7 +876,7 @@ describe('pipeline mutable properties', () => {
                             item.productTotal > 100 ? 0 : item.productTotal,
                             ['productTotal']
                         )
-                        .sum('products', 'adjustedTotal', 'categoryTotal', ['adjustedTotal'])
+                        .sum('products', 'adjustedTotal', 'categoryTotal')
                 );
 
                 // Add product under threshold
@@ -906,7 +906,7 @@ describe('pipeline mutable properties', () => {
                             item.productTotal > 100 ? item.productTotal - 200 : item.productTotal,
                             ['productTotal']
                         )
-                        .sum('products', 'netTotal', 'categoryNet', ['netTotal'])
+                        .sum('products', 'netTotal', 'categoryNet')
                 );
 
                 // Add two products under threshold
@@ -940,7 +940,7 @@ describe('pipeline mutable properties', () => {
                             item.productTotal >= 100 ? 50 : 0,
                             ['productTotal']
                         )
-                        .sum('products', 'bonus', 'totalBonus', ['bonus'])
+                        .sum('products', 'bonus', 'totalBonus')
                 );
 
                 // Add three products, all under threshold

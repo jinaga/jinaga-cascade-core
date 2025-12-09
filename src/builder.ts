@@ -300,7 +300,7 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
      * @param propertyName - Name of the new aggregate property
      * @param add - Operator called when an item is added
      * @param subtract - Operator called when an item is removed
-     * @param mutableProperties - @deprecated This parameter is deprecated and will be auto-detected. It will be removed in a future version.
+     * @param propertyToAggregate - Optional property name for auto-detection of mutable properties
      *
      * @example
      * // Sum of values across all items for each category
@@ -329,7 +329,6 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
         propertyName: PropName,
         add: AddOperator<NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]>, TAggregate>,
         subtract: SubtractOperator<NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]>, TAggregate>,
-        mutableProperties: string[] = [],
         propertyToAggregate?: string
     ): PipelineBuilder<
         Path extends []
@@ -337,9 +336,6 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<PropName, TAggregate>>>,
         TStart
     > {
-        if (mutableProperties && mutableProperties.length > 0) {
-            console.warn('PipelineBuilder.commutativeAggregate(): mutableProperties parameter is deprecated and will be auto-detected. This parameter will be removed in a future version.');
-        }
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new CommutativeAggregateStep(
             this.lastStep,
@@ -349,7 +345,6 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
                 add: add as AddOperator<ImmutableProps, any>,
                 subtract: subtract as SubtractOperator<ImmutableProps, any>
             },
-            mutableProperties,
             propertyToAggregate
         );
         return new PipelineBuilder(this.input, newStep) as any;
@@ -362,7 +357,6 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
      * @param arrayName - Name of the array to sum
      * @param propertyName - Name of the numeric property to sum
      * @param outputProperty - Name of the new aggregate property
-     * @param mutableProperties - @deprecated This parameter is deprecated and will be auto-detected. It will be removed in a future version.
      *
      * @example
      * // Sum of prices across all items for each category
@@ -374,17 +368,13 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
     >(
         arrayName: ArrayName,
         propertyName: keyof NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> & string,
-        outputProperty: TPropName,
-        mutableProperties: string[] = []
+        outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
         TStart
     > {
-        if (mutableProperties && mutableProperties.length > 0) {
-            console.warn('PipelineBuilder.sum(): mutableProperties parameter is deprecated and will be auto-detected. This parameter will be removed in a future version.');
-        }
         return this.commutativeAggregate(
             arrayName,
             outputProperty,
@@ -398,7 +388,6 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
                 const numValue = (value === null || value === undefined) ? 0 : Number(value);
                 return acc - numValue;
             },
-            mutableProperties,
             propertyName as string  // Pass property name for auto-detection
         );
     }

@@ -89,7 +89,6 @@ export class CommutativeAggregateStep<
         private segmentPath: TPath,
         private propertyName: TPropertyName,
         private config: CommutativeAggregateConfig<ImmutableProps, TAggregate>,
-        private mutableProperties: string[] = [],
         private propertyToAggregate?: string
     ) {
         // Register with input step to receive item add/remove events at the target array level
@@ -102,9 +101,8 @@ export class CommutativeAggregateStep<
         });
         
         // Auto-detect mutable properties from TypeDescriptor if propertyToAggregate is specified
-        // and no explicit mutableProperties were provided
-        let effectiveMutableProperties = mutableProperties;
-        if (propertyToAggregate && mutableProperties.length === 0) {
+        let effectiveMutableProperties: string[] = [];
+        if (propertyToAggregate) {
             // Check if the property to aggregate is mutable in the TypeDescriptor
             // Note: DefinePropertyStep and CommutativeAggregateStep add mutable properties at the root level,
             // not at the nested array level, so we check root-level mutableProperties
@@ -114,8 +112,6 @@ export class CommutativeAggregateStep<
                 effectiveMutableProperties = [propertyToAggregate];
                 this.isPropertyMutable = true;
             }
-        } else if (mutableProperties.length > 0 && propertyToAggregate && mutableProperties.includes(propertyToAggregate)) {
-            this.isPropertyMutable = true;
         }
         
         // Register for mutable property changes at the item level
