@@ -1703,4 +1703,305 @@ describe('Multi-level auto-detection integration', () => {
         // grandTotal: 250 + 100 = 350
         expect(output[0].grandTotal).toBe(350);
     });
+
+    it('should cascade updates through sum → pickByMin pipeline', () => {
+        // Categories have products with productTotal (sum of orders)
+        // cheapestProduct = pickByMin(products, productTotal)  [should auto-detect productTotal is mutable]
+        //
+        // When an order is added to a product:
+        // 1. productTotal updates
+        // 2. cheapestProduct may change if this product's total is now higher than another
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                .groupBy(['categoryId'], 'products')
+                .in('products').groupBy(['productId'], 'orders')
+                .in('products').sum('orders', 'amount', 'productTotal')
+                // pickByMin should auto-detect that productTotal is mutable
+                .pickByMin('products', 'productTotal', 'cheapestProduct')
+        );
+
+        // Add products: A=$10 (cheapest), B=$20, C=$30
+        pipeline.add('o1', { categoryId: 'C1', productId: 'A', amount: 10 });
+        pipeline.add('o2', { categoryId: 'C1', productId: 'B', amount: 20 });
+        pipeline.add('o3', { categoryId: 'C1', productId: 'C', amount: 30 });
+        
+        let output = getOutput();
+        expect(output).toHaveLength(1);
+        // cheapestProduct should be A ($10)
+        expect(output[0].cheapestProduct?.productId).toBe('A');
+        expect(output[0].cheapestProduct?.productTotal).toBe(10);
+
+        // Add more to A: 10 + 15 = 25
+        // Now B ($20) is the cheapest
+        pipeline.add('o4', { categoryId: 'C1', productId: 'A', amount: 15 });
+        
+        output = getOutput();
+        
+        // KEY ASSERTION: cheapestProduct should auto-update to B ($20)
+        expect(output[0].cheapestProduct?.productId).toBe('B');
+        expect(output[0].cheapestProduct?.productTotal).toBe(20);
+
+        // Add more to B: 20 + 15 = 35
+        // Now A ($25) is the cheapest again
+        pipeline.add('o5', { categoryId: 'C1', productId: 'B', amount: 15 });
+        
+        output = getOutput();
+        
+        expect(output[0].cheapestProduct?.productId).toBe('A');
+        expect(output[0].cheapestProduct?.productTotal).toBe(25);
+    });
+
+    it('should cascade updates through sum → min → defineProperty pipeline', () => {
+        // Products have productTotal (mutable from sum)
+        // lowestPrice = min(products, productTotal)  [should auto-detect]
+        // status = defineProperty based on lowestPrice  [requires manual mutableProperties]
+        //
+        // Verify the cascade works with mixed auto-detect and manual
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                .groupBy(['categoryId'], 'products')
+                .in('products').groupBy(['productId'], 'orders')
+                .in('products').sum('orders', 'amount', 'productTotal')
+                // min should auto-detect that productTotal is mutable
+                .min('products', 'productTotal', 'lowestPrice')
+                // defineProperty with manual mutableProperties for lowestPrice
+                .defineProperty('priceStatus', item =>
+                    (item.lowestPrice ?? 0) < 20 ? 'bargain' : 'normal',
+                    ['lowestPrice']
+                )
+        );
+
+        // Add products: A=$10 (lowest), B=$20
+        pipeline.add('o1', { categoryId: 'C1', productId: 'A', amount: 10 });
+        pipeline.add('o2', { categoryId: 'C1', productId: 'B', amount: 20 });
+        
+        let output = getOutput();
+        expect(output).toHaveLength(1);
+        expect(output[0].lowestPrice).toBe(10);
+        expect(output[0].priceStatus).toBe('bargain'); // 10 < 20
+
+        // Push A higher: 10 + 15 = 25
+        // Now B ($20) is lowest
+        pipeline.add('o3', { categoryId: 'C1', productId: 'A', amount: 15 });
+        
+        output = getOutput();
+        
+        // KEY ASSERTIONS: min should auto-update, defineProperty should cascade
+        expect(output[0].lowestPrice).toBe(20);
+        expect(output[0].priceStatus).toBe('normal'); // 20 >= 20
+    });
+
+    it('should handle deeply nested paths correctly', () => {
+        // Regions → Countries → Cities → Stores → Sales
+        // storeSales = sum(sales, amount)
+        // citySales = sum(stores, storeSales)
+        // countrySales = sum(cities, citySales)
+        // regionSales = sum(countries, countrySales)
+        //
+        // Change one sale amount at deepest level
+        // All levels should cascade update
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ regionId: string; countryId: string; cityId: string; storeId: string; amount: number }>()
+                // Level 1: Group by region
+                .groupBy(['regionId'], 'countries')
+                // Level 2: Group by country within region
+                .in('countries').groupBy(['countryId'], 'cities')
+                // Level 3: Group by city within country
+                .in('countries', 'cities').groupBy(['cityId'], 'stores')
+                // Level 4: Group by store within city
+                .in('countries', 'cities', 'stores').groupBy(['storeId'], 'sales')
+                // Aggregate at store level
+                .in('countries', 'cities', 'stores').sum('sales', 'amount', 'storeSales')
+                // Aggregate at city level - auto-detect storeSales is mutable
+                .in('countries', 'cities').sum('stores', 'storeSales', 'citySales')
+                // Aggregate at country level - auto-detect citySales is mutable
+                .in('countries').sum('cities', 'citySales', 'countrySales')
+                // Aggregate at region level - auto-detect countrySales is mutable
+                .sum('countries', 'countrySales', 'regionSales')
+        );
+
+        // Add sale: Region1/US/NYC/Store1 = $100
+        pipeline.add('s1', { regionId: 'Americas', countryId: 'US', cityId: 'NYC', storeId: 'S1', amount: 100 });
+        
+        let output = getOutput();
+        expect(output).toHaveLength(1);
+        expect(output[0].regionSales).toBe(100);
+        
+        // Verify all intermediate values
+        expect(output[0].countries[0].countrySales).toBe(100);
+        expect(output[0].countries[0].cities[0].citySales).toBe(100);
+        expect(output[0].countries[0].cities[0].stores[0].storeSales).toBe(100);
+
+        // Add another sale to same store
+        pipeline.add('s2', { regionId: 'Americas', countryId: 'US', cityId: 'NYC', storeId: 'S1', amount: 50 });
+        
+        output = getOutput();
+        
+        // KEY ASSERTIONS: All levels should cascade update
+        expect(output[0].countries[0].cities[0].stores[0].storeSales).toBe(150);
+        expect(output[0].countries[0].cities[0].citySales).toBe(150);
+        expect(output[0].countries[0].countrySales).toBe(150);
+        expect(output[0].regionSales).toBe(150);
+
+        // Add to different store in same city
+        pipeline.add('s3', { regionId: 'Americas', countryId: 'US', cityId: 'NYC', storeId: 'S2', amount: 75 });
+        
+        output = getOutput();
+        
+        // storeSales: S1=150, S2=75; citySales=225, countrySales=225, regionSales=225
+        expect(output[0].countries[0].cities[0].citySales).toBe(225);
+        expect(output[0].countries[0].countrySales).toBe(225);
+        expect(output[0].regionSales).toBe(225);
+
+        // Add to different city in same country
+        pipeline.add('s4', { regionId: 'Americas', countryId: 'US', cityId: 'LA', storeId: 'S3', amount: 100 });
+        
+        output = getOutput();
+        
+        // NYC=225, LA=100; countrySales=325, regionSales=325
+        expect(output[0].countries[0].countrySales).toBe(325);
+        expect(output[0].regionSales).toBe(325);
+
+        // Add to first store again - cascade through all 4 levels
+        pipeline.add('s5', { regionId: 'Americas', countryId: 'US', cityId: 'NYC', storeId: 'S1', amount: 25 });
+        
+        output = getOutput();
+        
+        // S1: 150 + 25 = 175; NYC: 175 + 75 = 250; US: 250 + 100 = 350
+        expect(output[0].countries[0].cities[0].stores[0].storeSales).toBe(175);
+        expect(output[0].countries[0].cities[0].citySales).toBe(250);
+        expect(output[0].countries[0].countrySales).toBe(350);
+        expect(output[0].regionSales).toBe(350);
+    });
+
+    it('should handle multiple independent aggregates updating simultaneously', () => {
+        // Category has:
+        // - products with adjustedPrice (mutable via defineProperty)
+        // - categoryMin = min(products, adjustedPrice)
+        // - categoryMax = max(products, adjustedPrice) 
+        // - categorySum = sum(products, adjustedPrice)
+        // - categoryAvg = average(products, adjustedPrice)
+        //
+        // When adjustedPrice changes:
+        // All aggregates should update correctly
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                .groupBy(['categoryId'], 'products')
+                .in('products').groupBy(['productId'], 'orders')
+                .in('products').sum('orders', 'amount', 'productTotal')
+                // Define adjustedPrice as simply productTotal (mutable)
+                .in('products').defineProperty('adjustedPrice', item => item.productTotal, ['productTotal'])
+                // Multiple aggregates all auto-detecting adjustedPrice is mutable
+                .min('products', 'adjustedPrice', 'categoryMin')
+                .max('products', 'adjustedPrice', 'categoryMax')
+                .sum('products', 'adjustedPrice', 'categorySum')
+                .average('products', 'adjustedPrice', 'categoryAvg')
+        );
+
+        // Add products: A=$10, B=$20, C=$30
+        pipeline.add('o1', { categoryId: 'C1', productId: 'A', amount: 10 });
+        pipeline.add('o2', { categoryId: 'C1', productId: 'B', amount: 20 });
+        pipeline.add('o3', { categoryId: 'C1', productId: 'C', amount: 30 });
+        
+        let output = getOutput();
+        expect(output).toHaveLength(1);
+        expect(output[0].categoryMin).toBe(10);
+        expect(output[0].categoryMax).toBe(30);
+        expect(output[0].categorySum).toBe(60);
+        expect(output[0].categoryAvg).toBe(20);
+
+        // Push A higher: 10 + 15 = 25
+        // min should change from A to B
+        // max stays at C
+        // sum: 60 - 10 + 25 = 75
+        // avg: 75 / 3 = 25
+        pipeline.add('o4', { categoryId: 'C1', productId: 'A', amount: 15 });
+        
+        output = getOutput();
+        
+        // KEY ASSERTIONS: All aggregates should update correctly
+        expect(output[0].categoryMin).toBe(20); // B is now min
+        expect(output[0].categoryMax).toBe(30); // C is still max
+        expect(output[0].categorySum).toBe(75);
+        expect(output[0].categoryAvg).toBe(25);
+
+        // Push C higher: 30 + 20 = 50
+        // min stays B
+        // max stays C (but value changed)
+        // sum: 75 - 30 + 50 = 95
+        // avg: 95 / 3 ≈ 31.67
+        pipeline.add('o5', { categoryId: 'C1', productId: 'C', amount: 20 });
+        
+        output = getOutput();
+        
+        expect(output[0].categoryMin).toBe(20);
+        expect(output[0].categoryMax).toBe(50);
+        expect(output[0].categorySum).toBe(95);
+        expect(output[0].categoryAvg).toBeCloseTo(95/3, 5);
+    });
+
+    it('should handle mixed aggregate types in a complex pipeline', () => {
+        // Complex scenario:
+        // 1. Orders have items with price
+        // 2. orderTotal = sum(items, price)
+        // 3. Customers have orders
+        // 4. customerTotal = sum(orders, orderTotal)
+        // 5. cheapestCustomerOrder = pickByMin(orders, orderTotal)
+        // 6. avgOrderValue = average(orders, orderTotal)
+        //
+        // Add an item to an order:
+        // All derived values should update
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ customerId: string; orderId: string; price: number }>()
+                .groupBy(['customerId'], 'orders')
+                .in('orders').groupBy(['orderId'], 'items')
+                .in('orders').sum('items', 'price', 'orderTotal')
+                // All these should auto-detect orderTotal is mutable
+                .sum('orders', 'orderTotal', 'customerTotal')
+                .pickByMin('orders', 'orderTotal', 'cheapestOrder')
+                .average('orders', 'orderTotal', 'avgOrderValue')
+        );
+
+        // Add items: Customer C1, Order O1=$50, Order O2=$100
+        pipeline.add('i1', { customerId: 'C1', orderId: 'O1', price: 50 });
+        pipeline.add('i2', { customerId: 'C1', orderId: 'O2', price: 100 });
+        
+        let output = getOutput();
+        expect(output).toHaveLength(1);
+        expect(output[0].customerTotal).toBe(150);
+        expect(output[0].cheapestOrder?.orderId).toBe('O1');
+        expect(output[0].cheapestOrder?.orderTotal).toBe(50);
+        expect(output[0].avgOrderValue).toBe(75);
+
+        // Add item to O1: 50 + 75 = 125
+        // O1 is now MORE than O2, so cheapest changes to O2
+        pipeline.add('i3', { customerId: 'C1', orderId: 'O1', price: 75 });
+        
+        output = getOutput();
+        
+        // KEY ASSERTIONS
+        // customerTotal: 125 + 100 = 225
+        expect(output[0].customerTotal).toBe(225);
+        // cheapestOrder: O2 ($100) is now cheaper than O1 ($125)
+        expect(output[0].cheapestOrder?.orderId).toBe('O2');
+        expect(output[0].cheapestOrder?.orderTotal).toBe(100);
+        // avgOrderValue: 225 / 2 = 112.5
+        expect(output[0].avgOrderValue).toBe(112.5);
+
+        // Add item to O2: 100 + 50 = 150
+        // O1=$125 is now cheapest again
+        pipeline.add('i4', { customerId: 'C1', orderId: 'O2', price: 50 });
+        
+        output = getOutput();
+        
+        expect(output[0].customerTotal).toBe(275);
+        expect(output[0].cheapestOrder?.orderId).toBe('O1');
+        expect(output[0].cheapestOrder?.orderTotal).toBe(125);
+        expect(output[0].avgOrderValue).toBe(137.5);
+    });
 });
