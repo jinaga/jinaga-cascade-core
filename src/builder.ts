@@ -206,6 +206,21 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
         private scopeSegments: Path = [] as unknown as Path
     ) {}
 
+    /**
+     * Adds a computed property to each item at the current path.
+     *
+     * @param propertyName - The name for the new property
+     * @param compute - Function that computes the property value from the item
+     * @param mutableProperties - Properties that when changed should trigger recomputation.
+     *   NOTE: Unlike aggregate methods (sum, count, min, max, average), defineProperty
+     *   requires explicit mutableProperties because the dependencies cannot be automatically
+     *   inferred from the compute function. The function is opaque - we can't know which
+     *   properties it accesses without executing or analyzing it.
+     *
+     * @example
+     * // Recompute 'status' when 'total' changes
+     * .defineProperty('status', item => item.total > 100 ? 'Gold' : 'Bronze', ['total'])
+     */
     defineProperty<K extends string, U>(propertyName: K, compute: (item: NavigateToPath<T, Path>) => U, mutableProperties: string[] = []): PipelineBuilder<
         Path extends []
             ? Expand<T & Record<K, U>>
@@ -253,6 +268,27 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
         );
         return new PipelineBuilder(this.input, newStep) as any;
     }
+
+    /*
+     * API Design Decision: Mutable Property Detection
+     * ===============================================
+     *
+     * Aggregate methods (sum, count, min, max, average, pickByMin, pickByMax):
+     *   - AUTO-DETECT mutableProperties from TypeDescriptor
+     *   - The property being aggregated is explicitly passed (e.g., 'price' in sum)
+     *   - We can check if that property is in TypeDescriptor.mutableProperties
+     *   - User doesn't need to specify ['price'] - it's inferred
+     *
+     * Function-based methods (defineProperty, filter):
+     *   - REQUIRE manual mutableProperties parameter
+     *   - The compute/predicate function is opaque - we can't introspect which
+     *     properties it accesses without static analysis or runtime tracking
+     *   - User must explicitly declare dependencies
+     *
+     * This split provides the best developer experience while maintaining correctness:
+     *   - Common case (aggregates): Zero-config, just works
+     *   - Complex case (custom functions): Explicit but necessary
+     */
 
     /**
      * Computes an aggregate value over items in a nested array.
@@ -615,24 +651,18 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
     }
 
     /**
-     * Filters items based on a predicate function.
-     * Only items that pass the predicate will be included in the output.
+     * Filters items in an array based on a predicate function.
      *
-     * This is a stateless implementation - no item storage required because:
-     * 1. Items are immutable
-     * 2. RemovedHandler receives immutableProps
-     * 3. Predicate re-evaluation is deterministic
-     *
-     * @param predicate - Function that returns true for items to include
-     * @returns A PipelineBuilder with the same type (filtering doesn't change shape)
+     * @param predicate - Function that returns true for items to keep
+     * @param mutableProperties - Properties that when changed should re-evaluate the filter.
+     *   NOTE: Unlike aggregate methods (sum, count, min, max, average), filter requires
+     *   explicit mutableProperties because the dependencies cannot be automatically
+     *   inferred from the predicate function. The function is opaque - we can't know
+     *   which properties it accesses without executing or analyzing it.
      *
      * @example
-     * // Filter to only include items with price > 50
-     * .filter(item => item.price > 50)
-     *
-     * @example
-     * // Filter nested items within a scoped path
-     * .in('employees').filter(emp => emp.salary >= 50000)
+     * // Re-filter when 'isActive' changes
+     * .filter(item => item.isActive && item.count > 0, ['isActive', 'count'])
      */
     filter(
         predicate: (item: NavigateToPath<T, Path>) => boolean,
