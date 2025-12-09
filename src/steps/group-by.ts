@@ -148,14 +148,14 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         }
     }
 
-    onModified(pathSegments: string[], handler: (keyPath: string[], key: string, name: string, value: any) => void): void {
+    onModified(pathSegments: string[], propertyName: string, handler: (keyPath: string[], key: string, oldValue: any, newValue: any) => void): void {
         if (this.isAtGroupLevel(pathSegments)) {
             // The group level is immutable
         } else if (this.isAtItemLevel(pathSegments) || this.isBelowItemLevel(pathSegments)) {
             // Shift the path appropriately
             const scopeAndArraySegments = [...this.scopeSegments, this.arrayName];
             const shiftedSegments = pathSegments.slice(scopeAndArraySegments.length);
-            this.input.onModified([...this.scopeSegments, ...shiftedSegments], (notifiedKeyPath, itemKey, name, value) => {
+            this.input.onModified([...this.scopeSegments, ...shiftedSegments], propertyName, (notifiedKeyPath, itemKey, oldValue, newValue) => {
                 const itemKeyAtScope = notifiedKeyPath[this.scopeSegments.length];
                 const groupKey = this.itemKeyToGroupKey.get(itemKeyAtScope);
                 if (groupKey === undefined) {
@@ -166,10 +166,10 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
                     groupKey,
                     ...notifiedKeyPath.slice(this.scopeSegments.length)
                 ];
-                handler(modifiedKeyPath, itemKey, name, value);
+                handler(modifiedKeyPath, itemKey, oldValue, newValue);
             });
         } else {
-            this.input.onModified(pathSegments, handler);
+            this.input.onModified(pathSegments, propertyName, handler);
         }
     }
 

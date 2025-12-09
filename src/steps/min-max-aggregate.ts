@@ -26,8 +26,12 @@ export class MinMaxAggregateStep<
     /** Handlers for modified events at various levels */
     private modifiedHandlers: Array<{
         pathSegments: string[];
+        propertyName: string;
         handler: ModifiedHandler;
     }> = [];
+    
+    /** Maps parent key path hash to current aggregate value (for oldValue tracking) */
+    private aggregateValues: Map<string, number | undefined> = new Map();
     
     constructor(
         private input: Step,
@@ -47,7 +51,16 @@ export class MinMaxAggregateStep<
     }
     
     getTypeDescriptor(): TypeDescriptor {
-        return this.input.getTypeDescriptor();
+        const inputDescriptor = this.input.getTypeDescriptor();
+        // Mark the aggregate property as mutable
+        const mutableProperties = inputDescriptor.mutableProperties || [];
+        if (!mutableProperties.includes(this.propertyName)) {
+            return {
+                ...inputDescriptor,
+                mutableProperties: [...mutableProperties, this.propertyName]
+            };
+        }
+        return inputDescriptor;
     }
     
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -58,17 +71,18 @@ export class MinMaxAggregateStep<
         this.input.onRemoved(pathSegments, handler);
     }
     
-    onModified(pathSegments: string[], handler: ModifiedHandler): void {
-        if (this.isParentPath(pathSegments)) {
-            // Handler wants modification events at parent level
+    onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
+        if (this.isParentPath(pathSegments) && propertyName === this.propertyName) {
+            // Handler wants modification events at parent level for this aggregate property
             // This is the channel for receiving aggregate values
             this.modifiedHandlers.push({
                 pathSegments,
+                propertyName,
                 handler
             });
         }
         // Always pass through to input for other property modifications
-        this.input.onModified(pathSegments, handler);
+        this.input.onModified(pathSegments, propertyName, handler);
     }
     
     /**
@@ -106,7 +120,9 @@ export class MinMaxAggregateStep<
         
         // Compute new aggregate using the provided function
         const values = this.valueStore.get(parentKeyHash) || [];
+        const oldAggregate = this.aggregateValues.get(parentKeyHash);
         const newAggregate = values.length > 0 ? this.aggregateFn(values) : undefined;
+        this.aggregateValues.set(parentKeyHash, newAggregate);
         
         // Emit modification event
         if (parentKeyPath.length > 0) {
@@ -114,12 +130,12 @@ export class MinMaxAggregateStep<
             const keyPathToParent = parentKeyPath.slice(0, -1);
             
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, this.propertyName, newAggregate);
+                handler(keyPathToParent, parentKey, oldAggregate, newAggregate);
             });
         } else {
             // Parent is at root level
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', this.propertyName, newAggregate);
+                handler([], '', oldAggregate, newAggregate);
             });
         }
     }
@@ -153,7 +169,14 @@ export class MinMaxAggregateStep<
         
         // Compute new aggregate using the provided function
         const values = this.valueStore.get(parentKeyHash) || [];
+        const oldAggregate = this.aggregateValues.get(parentKeyHash);
         const newAggregate = values.length > 0 ? this.aggregateFn(values) : undefined;
+        
+        if (values.length === 0) {
+            this.aggregateValues.delete(parentKeyHash);
+        } else {
+            this.aggregateValues.set(parentKeyHash, newAggregate);
+        }
         
         // Emit modification event
         if (parentKeyPath.length > 0) {
@@ -161,11 +184,11 @@ export class MinMaxAggregateStep<
             const keyPathToParent = parentKeyPath.slice(0, -1);
             
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, this.propertyName, newAggregate);
+                handler(keyPathToParent, parentKey, oldAggregate, newAggregate);
             });
         } else {
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', this.propertyName, newAggregate);
+                handler([], '', oldAggregate, newAggregate);
             });
         }
     }

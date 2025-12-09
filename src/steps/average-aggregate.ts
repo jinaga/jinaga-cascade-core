@@ -34,8 +34,12 @@ export class AverageAggregateStep<
     /** Handlers for modified events at various levels */
     private modifiedHandlers: Array<{
         pathSegments: string[];
+        propertyName: string;
         handler: ModifiedHandler;
     }> = [];
+    
+    /** Maps parent key path hash to current average value (for oldValue tracking) */
+    private aggregateValues: Map<string, number | undefined> = new Map();
     
     constructor(
         private input: Step,
@@ -54,7 +58,16 @@ export class AverageAggregateStep<
     }
     
     getTypeDescriptor(): TypeDescriptor {
-        return this.input.getTypeDescriptor();
+        const inputDescriptor = this.input.getTypeDescriptor();
+        // Mark the aggregate property as mutable
+        const mutableProperties = inputDescriptor.mutableProperties || [];
+        if (!mutableProperties.includes(this.propertyName)) {
+            return {
+                ...inputDescriptor,
+                mutableProperties: [...mutableProperties, this.propertyName]
+            };
+        }
+        return inputDescriptor;
     }
     
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -65,17 +78,18 @@ export class AverageAggregateStep<
         this.input.onRemoved(pathSegments, handler);
     }
     
-    onModified(pathSegments: string[], handler: ModifiedHandler): void {
-        if (this.isParentPath(pathSegments)) {
-            // Handler wants modification events at parent level
+    onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
+        if (this.isParentPath(pathSegments) && propertyName === this.propertyName) {
+            // Handler wants modification events at parent level for this aggregate property
             // This is the channel for receiving aggregate values
             this.modifiedHandlers.push({
                 pathSegments,
+                propertyName,
                 handler
             });
         }
         // Always pass through to input for other property modifications
-        this.input.onModified(pathSegments, handler);
+        this.input.onModified(pathSegments, propertyName, handler);
     }
     
     /**
@@ -114,7 +128,9 @@ export class AverageAggregateStep<
         
         // Compute new average
         const state = this.averageStates.get(parentKeyHash);
+        const oldAverage = this.aggregateValues.get(parentKeyHash);
         const newAverage = (state && state.count > 0) ? state.sum / state.count : undefined;
+        this.aggregateValues.set(parentKeyHash, newAverage);
         
         // Emit modification event
         if (parentKeyPath.length > 0) {
@@ -122,12 +138,12 @@ export class AverageAggregateStep<
             const keyPathToParent = parentKeyPath.slice(0, -1);
             
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, this.propertyName, newAverage);
+                handler(keyPathToParent, parentKey, oldAverage, newAverage);
             });
         } else {
             // Parent is at root level
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', this.propertyName, newAverage);
+                handler([], '', oldAverage, newAverage);
             });
         }
     }
@@ -160,7 +176,14 @@ export class AverageAggregateStep<
         
         // Compute new average
         const state = this.averageStates.get(parentKeyHash);
+        const oldAverage = this.aggregateValues.get(parentKeyHash);
         const newAverage = (state && state.count > 0) ? state.sum / state.count : undefined;
+        
+        if (!state || state.count === 0) {
+            this.aggregateValues.delete(parentKeyHash);
+        } else {
+            this.aggregateValues.set(parentKeyHash, newAverage);
+        }
         
         // Emit modification event
         if (parentKeyPath.length > 0) {
@@ -168,11 +191,11 @@ export class AverageAggregateStep<
             const keyPathToParent = parentKeyPath.slice(0, -1);
             
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, this.propertyName, newAverage);
+                handler(keyPathToParent, parentKey, oldAverage, newAverage);
             });
         } else {
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', this.propertyName, newAverage);
+                handler([], '', oldAverage, newAverage);
             });
         }
     }

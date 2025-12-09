@@ -6,6 +6,7 @@ export interface Pipeline<T> {
 export interface TypeDescriptor {
     arrays: ArrayDescriptor[];
     objects?: ObjectDescriptor[];
+    mutableProperties?: string[];  // Names of properties that can change
 }
 
 export interface ArrayDescriptor {
@@ -26,7 +27,7 @@ export type AddedHandler = (keyPath: string[], key: string, immutableProps: Immu
 
 export type RemovedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
 
-export type ModifiedHandler = (keyPath: string[], key: string, name: string, value: any) => void;
+export type ModifiedHandler = (keyPath: string[], key: string, oldValue: any, newValue: any) => void;
 
 export function getPathSegmentsFromDescriptor(descriptor: TypeDescriptor): string[][] {
     // Include the path to the root of the descriptor
@@ -45,6 +46,6 @@ export interface Step {
     getTypeDescriptor(): TypeDescriptor;
     onAdded(pathSegments: string[], handler: AddedHandler): void;
     onRemoved(pathSegments: string[], handler: RemovedHandler): void;
-    onModified(pathSegments: string[], handler: ModifiedHandler): void;
+    onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;
 }
 

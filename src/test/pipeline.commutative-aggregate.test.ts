@@ -26,9 +26,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ path: string[]; key: string; name: string; value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ path: [...path], key, name, value });
+            const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ path: [...path], key, oldValue, newValue });
             });
             
             // Trigger add via the input pipeline
@@ -37,8 +37,7 @@ describe('CommutativeAggregateStep', () => {
             
             // Verify aggregate was emitted via onModified
             expect(modifiedEvents.length).toBe(1);
-            expect(modifiedEvents[0].name).toBe('totalPrice');
-            expect(modifiedEvents[0].value).toBe(500);
+            expect(modifiedEvents[0].newValue).toBe(500);
         });
 
         it('should emit immutable props via onAdded WITHOUT aggregate', () => {
@@ -87,9 +86,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -99,9 +98,9 @@ describe('CommutativeAggregateStep', () => {
             
             // Verify aggregates: 500, then 1700, then 2000
             expect(modifiedEvents.length).toBe(3);
-            expect(modifiedEvents[0].value).toBe(500);
-            expect(modifiedEvents[1].value).toBe(1700);
-            expect(modifiedEvents[2].value).toBe(2000);
+            expect(modifiedEvents[0].newValue).toBe(500);
+            expect(modifiedEvents[1].newValue).toBe(1700);
+            expect(modifiedEvents[2].newValue).toBe(2000);
         });
     });
 
@@ -121,9 +120,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as {
@@ -136,13 +135,15 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.add('item1', item1);
             inputPipeline.add('item2', item2);
             
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(1700);
+            expect(modifiedEvents.length).toBeGreaterThan(0);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(1700);
             
             // Remove item1 (price: 500)
             inputPipeline.remove('item1', item1);
             
             // Verify aggregate reduced
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(1200);
+            expect(modifiedEvents.length).toBeGreaterThan(1);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(1200);
         });
 
         it('should emit onModified when item is removed', () => {
@@ -160,9 +161,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ name: string; value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ name, value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as {
@@ -180,8 +181,7 @@ describe('CommutativeAggregateStep', () => {
             
             // A new modified event should be emitted
             expect(modifiedEvents.length).toBe(countBeforeRemove + 1);
-            expect(modifiedEvents[modifiedEvents.length - 1].name).toBe('total');
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(200);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(200);
         });
 
         it('should handle removal of all items', () => {
@@ -199,9 +199,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as {
@@ -218,7 +218,8 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.remove('item2', item2);
             
             // Final aggregate should be 0
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(0);
+            expect(modifiedEvents.length).toBeGreaterThan(0);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(0);
         });
     });
 
@@ -238,9 +239,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ key: string; value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ key, value });
+            const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ key, oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -252,11 +253,11 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.add('item4', { category: 'Clothing', itemName: 'Pants', price: 80 });
             
             // Verify Electronics aggregate: 500 + 1200 = 1700
-            const lastElectronics = modifiedEvents.find(e => e.value === 1700);
+            const lastElectronics = modifiedEvents.find(e => e.newValue === 1700);
             expect(lastElectronics).toBeDefined();
             
             // Verify Clothing aggregate: 50 + 80 = 130
-            const lastClothing = modifiedEvents.find(e => e.value === 130);
+            const lastClothing = modifiedEvents.find(e => e.newValue === 130);
             expect(lastClothing).toBeDefined();
         });
 
@@ -275,9 +276,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ key: string; value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ key, value });
+            const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'totalSalary', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ key, oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as {
@@ -298,7 +299,7 @@ describe('CommutativeAggregateStep', () => {
             
             // Check Sales total is unchanged (80000)
             // Check Engineering total is now 120000
-            const allValues = modifiedEvents.map(e => e.value);
+            const allValues = modifiedEvents.map(e => e.newValue);
             
             // 80000 should still be present (Sales unchanged)
             expect(allValues).toContain(80000);
@@ -326,9 +327,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ path: string[]; key: string; name: string; value: number }> = [];
-            aggregateStep.onModified(['cities'], (path, key, name, value) => {
-                modifiedEvents.push({ path: [...path], key, name, value });
+            const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified(['cities'], 'totalCapacity', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ path: [...path], key, oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -338,8 +339,7 @@ describe('CommutativeAggregateStep', () => {
             
             // Verify aggregate updates for Dallas city
             expect(modifiedEvents.length).toBeGreaterThan(0);
-            expect(modifiedEvents[modifiedEvents.length - 1].name).toBe('totalCapacity');
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(70000);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(70000);
         });
 
         it('should maintain separate aggregates for each nested parent', () => {
@@ -358,9 +358,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ path: string[]; key: string; value: number }> = [];
-            aggregateStep.onModified(['cities'], (path, key, name, value) => {
-                modifiedEvents.push({ path: [...path], key, value });
+            const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified(['cities'], 'venueCount', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ path: [...path], key, oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -373,9 +373,9 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.add('v3', { state: 'TX', city: 'Houston', venue: 'Center', capacity: 18000 });
             
             // Verify Dallas reaches count 2
-            expect(modifiedEvents.some(e => e.value === 2)).toBe(true);
+            expect(modifiedEvents.some(e => e.newValue === 2)).toBe(true);
             // Verify Houston reaches count 1
-            expect(modifiedEvents.some(e => e.value === 1)).toBe(true);
+            expect(modifiedEvents.some(e => e.newValue === 1)).toBe(true);
         });
     });
 
@@ -402,9 +402,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'sum', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -412,7 +412,8 @@ describe('CommutativeAggregateStep', () => {
             
             // Verify that the add function received undefined for first item
             expect(receivedUndefined).toBe(true);
-            expect(modifiedEvents[0].value).toBe(10);
+            expect(modifiedEvents.length).toBeGreaterThan(0);
+            expect(modifiedEvents[0].newValue).toBe(10);
         });
 
         it('should receive undefined for first item of each new parent', () => {
@@ -437,7 +438,7 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            aggregateStep.onModified([], () => {});
+            aggregateStep.onModified([], 'totalPrice', () => {});
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
             
@@ -491,9 +492,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: Stats }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value: value as Stats });
+            const modifiedEvents: Array<{ oldValue: Stats | undefined; newValue: Stats }> = [];
+            aggregateStep.onModified([], 'stats', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as Stats | undefined, newValue: newValue as Stats });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -501,7 +502,8 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.add('item2', { category: 'A', value: 30 });
             inputPipeline.add('item3', { category: 'A', value: 20 });
             
-            const lastStats = modifiedEvents[modifiedEvents.length - 1].value;
+            expect(modifiedEvents.length).toBeGreaterThan(0);
+            const lastStats = modifiedEvents[modifiedEvents.length - 1].newValue;
             expect(lastStats.min).toBe(10);
             expect(lastStats.max).toBe(30);
             expect(lastStats.sum).toBe(60);
@@ -523,9 +525,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as {
@@ -536,11 +538,13 @@ describe('CommutativeAggregateStep', () => {
             const item1 = { category: 'A', value: 42 };
             inputPipeline.add('item1', item1);
             
-            expect(modifiedEvents[0].value).toBe(42);
+            expect(modifiedEvents.length).toBeGreaterThan(0);
+            expect(modifiedEvents[0].newValue).toBe(42);
             
             inputPipeline.remove('item1', item1);
             
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(0);
+            expect(modifiedEvents.length).toBeGreaterThan(1);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(0);
         });
 
         it('should handle zero values correctly', () => {
@@ -558,9 +562,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -569,9 +573,10 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.add('item2', { category: 'A', value: 100 });
             inputPipeline.add('item3', { category: 'A', value: 0 });
             
-            expect(modifiedEvents[0].value).toBe(0);
-            expect(modifiedEvents[1].value).toBe(100);
-            expect(modifiedEvents[2].value).toBe(100);
+            expect(modifiedEvents.length).toBeGreaterThanOrEqual(3);
+            expect(modifiedEvents[0].newValue).toBe(0);
+            expect(modifiedEvents[1].newValue).toBe(100);
+            expect(modifiedEvents[2].newValue).toBe(100);
         });
 
         it('should handle negative values correctly', () => {
@@ -589,9 +594,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as {
@@ -604,11 +609,13 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.add('item1', item1);
             inputPipeline.add('item2', item2);
             
-            expect(modifiedEvents[0].value).toBe(100);
-            expect(modifiedEvents[1].value).toBe(70);
+            expect(modifiedEvents.length).toBeGreaterThanOrEqual(2);
+            expect(modifiedEvents[0].newValue).toBe(100);
+            expect(modifiedEvents[1].newValue).toBe(70);
             
             inputPipeline.remove('item2', item2);
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(100);
+            expect(modifiedEvents.length).toBeGreaterThan(2);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(100);
         });
     });
 
@@ -659,14 +666,15 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedNames: string[] = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedNames.push(name);
+            aggregateStep.onModified([], 'myCustomAggregate', (path, key, oldValue, newValue) => {
+                modifiedNames.push('myCustomAggregate'); // Property name is known at registration time
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
             inputPipeline.add('item1', { category: 'A', value: 10 });
             
-            expect(modifiedNames).toContain('myCustomAggregate');
+            expect(modifiedNames.length).toBeGreaterThan(0);
+            expect(modifiedNames[0]).toBe('myCustomAggregate');
         });
 
         it('should maintain event separation with multiple aggregates (if chained)', () => {
@@ -686,14 +694,14 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const addedEvents: Array<{ props: ImmutableProps }> = [];
-            const modifiedEvents: Array<{ name: string; value: number }> = [];
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
             
             aggregateStep.onAdded([], (path, key, props) => {
                 addedEvents.push({ props: { ...props } });
             });
             
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ name, value });
+            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -711,11 +719,11 @@ describe('CommutativeAggregateStep', () => {
             
             // All modifiedEvents should have the aggregate property name
             modifiedEvents.forEach(e => {
-                expect(e.name).toBe('totalPrice');
             });
             
             // Verify final aggregate value
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(500);
+            expect(modifiedEvents.length).toBeGreaterThan(0);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(500);
         });
     });
 
@@ -828,9 +836,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ value: number }> = [];
-            aggregateStep.onModified([], (path, key, name, value) => {
-                modifiedEvents.push({ value });
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'count', (path, key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue, newValue });
             });
             
             const inputPipeline = builder['input'] as {
@@ -845,13 +853,15 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.add('item2', item2);
             inputPipeline.add('item3', item3);
             
-            expect(modifiedEvents[0].value).toBe(1);
-            expect(modifiedEvents[1].value).toBe(2);
-            expect(modifiedEvents[2].value).toBe(3);
+            expect(modifiedEvents.length).toBeGreaterThanOrEqual(3);
+            expect(modifiedEvents[0].newValue).toBe(1);
+            expect(modifiedEvents[1].newValue).toBe(2);
+            expect(modifiedEvents[2].newValue).toBe(3);
             
             inputPipeline.remove('item2', item2);
             
-            expect(modifiedEvents[modifiedEvents.length - 1].value).toBe(2);
+            expect(modifiedEvents.length).toBeGreaterThan(3);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(2);
         });
     });
 

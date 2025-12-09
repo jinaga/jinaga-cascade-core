@@ -58,8 +58,8 @@ class BatchedStateUpdater<T> {
         this.scheduleFlush();
     }
 
-    modify(segmentPath: string[], keyPath: string[], key: string, name: string, value: any): void {
-        this.pendingOperations.push({ type: 'modify', segmentPath, keyPath, key, name, value });
+    modify(segmentPath: string[], keyPath: string[], key: string, propertyName: string, newValue: any): void {
+        this.pendingOperations.push({ type: 'modify', segmentPath, keyPath, key, name: propertyName, value: newValue });
         this.scheduleFlush();
     }
 
@@ -206,7 +206,7 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
         private scopeSegments: Path = [] as unknown as Path
     ) {}
 
-    defineProperty<K extends string, U>(propertyName: K, compute: (item: NavigateToPath<T, Path>) => U): PipelineBuilder<
+    defineProperty<K extends string, U>(propertyName: K, compute: (item: NavigateToPath<T, Path>) => U, mutableProperties: string[] = []): PipelineBuilder<
         Path extends []
             ? Expand<T & Record<K, U>>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<K, U>>>,
@@ -216,7 +216,8 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
             this.lastStep,
             propertyName,
             compute as (item: unknown) => U,
-            this.scopeSegments as string[]
+            this.scopeSegments as string[],
+            mutableProperties
         );
         return new PipelineBuilder(this.input, newStep) as any;
     }
@@ -290,7 +291,8 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
         arrayName: ArrayName,
         propertyName: PropName,
         add: AddOperator<NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]>, TAggregate>,
-        subtract: SubtractOperator<NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]>, TAggregate>
+        subtract: SubtractOperator<NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]>, TAggregate>,
+        mutableProperties: string[] = []
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], PropName, TAggregate>
@@ -305,7 +307,8 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
             { 
                 add: add as AddOperator<ImmutableProps, any>, 
                 subtract: subtract as SubtractOperator<ImmutableProps, any> 
-            }
+            },
+            mutableProperties
         );
         return new PipelineBuilder(this.input, newStep) as any;
     }
@@ -328,7 +331,8 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
     >(
         arrayName: ArrayName,
         propertyName: keyof NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> & string,
-        outputProperty: TPropName
+        outputProperty: TPropName,
+        mutableProperties: string[] = []
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number>
@@ -347,7 +351,8 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
                 const value = (item as any)[propertyName];
                 const numValue = (value === null || value === undefined) ? 0 : Number(value);
                 return acc - numValue;
-            }
+            },
+            mutableProperties
         );
     }
     
@@ -619,12 +624,14 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
      * .in('employees').filter(emp => emp.salary >= 50000)
      */
     filter(
-        predicate: (item: NavigateToPath<T, Path>) => boolean
+        predicate: (item: NavigateToPath<T, Path>) => boolean,
+        mutableProperties: string[] = []
     ): PipelineBuilder<T, TStart, Path> {
         const newStep = new FilterStep<NavigateToPath<T, Path>>(
             this.lastStep,
             predicate as (item: unknown) => boolean,
-            this.scopeSegments as string[]
+            this.scopeSegments as string[],
+            mutableProperties
         );
         return new PipelineBuilder(this.input, newStep, this.scopeSegments) as any;
     }
@@ -651,9 +658,30 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
                 batchedUpdater.remove(segmentPath, keyPath, key);
             });
             
-            this.lastStep.onModified(segmentPath, (keyPath, key, name, value) => {
-                batchedUpdater.modify(segmentPath, keyPath, key, name, value);
-            });
+            // Register for mutable properties
+            // Get mutable properties from the final type descriptor
+            const mutableProperties = typeDescriptor.mutableProperties || [];
+            
+            if (mutableProperties.length > 0) {
+                // Register for each mutable property at this path level
+                // Note: Aggregates emit modifications at the parent level of their array,
+                // so we register at both the current path and parent paths
+                mutableProperties.forEach(propertyName => {
+                    // Register at current path level
+                    this.lastStep.onModified(segmentPath, propertyName, (keyPath, key, oldValue, newValue) => {
+                        batchedUpdater.modify(segmentPath, keyPath, key, propertyName, newValue);
+                    });
+                    
+                    // Also register at parent level (for aggregates that emit at parent level)
+                    if (segmentPath.length > 0) {
+                        const parentPath = segmentPath.slice(0, -1);
+                        this.lastStep.onModified(parentPath, propertyName, (keyPath, key, oldValue, newValue) => {
+                            batchedUpdater.modify(parentPath, keyPath, key, propertyName, newValue);
+                        });
+                    }
+                });
+            }
+            // If no mutable properties, modifications won't be tracked (this is expected for immutable-only pipelines)
         });
         
         // Store the batched updater in WeakMap for type-safe access

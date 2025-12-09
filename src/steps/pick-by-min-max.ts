@@ -61,8 +61,12 @@ export class PickByMinMaxStep<
     /** Handlers for modified events at various levels */
     private modifiedHandlers: Array<{
         pathSegments: string[];
+        propertyName: string;
         handler: ModifiedHandler;
     }> = [];
+    
+    /** Maps parent key path hash to current picked item (for oldValue tracking) */
+    private pickedItemValues: Map<string, ImmutableProps | undefined> = new Map();
     
     constructor(
         private input: Step,
@@ -100,6 +104,12 @@ export class PickByMinMaxStep<
         const arrayName = this.segmentPath[this.segmentPath.length - 1];
         const sourceArray = currentDescriptor.arrays.find(a => a.name === arrayName);
         
+        // Mark the picked object property as mutable (it can change when items are added/removed)
+        const mutableProperties = inputDescriptor.mutableProperties || [];
+        const updatedMutableProperties = mutableProperties.includes(this.propertyName) 
+            ? mutableProperties 
+            : [...mutableProperties, this.propertyName];
+        
         // Add the object property to the type descriptor at the appropriate level
         // The picked object lives at the parent level (segmentPath without the last element)
         if (this.segmentPath.length === 1) {
@@ -112,15 +122,20 @@ export class PickByMinMaxStep<
                         name: this.propertyName,
                         type: sourceArray?.type || { arrays: [] }
                     }
-                ]
+                ],
+                mutableProperties: updatedMutableProperties
             };
         } else {
             // Nested level: need to add object at the parent path level
             // Clone the descriptor tree and add the object at the correct level
-            return this.addObjectAtPath(inputDescriptor, this.segmentPath.slice(0, -1), {
+            const result = this.addObjectAtPath(inputDescriptor, this.segmentPath.slice(0, -1), {
                 name: this.propertyName,
                 type: sourceArray?.type || { arrays: [] }
             });
+            return {
+                ...result,
+                mutableProperties: updatedMutableProperties
+            };
         }
     }
     
@@ -168,17 +183,18 @@ export class PickByMinMaxStep<
         this.input.onRemoved(pathSegments, handler);
     }
     
-    onModified(pathSegments: string[], handler: ModifiedHandler): void {
-        if (this.isParentPath(pathSegments)) {
-            // Handler wants modification events at parent level
+    onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
+        if (this.isParentPath(pathSegments) && propertyName === this.propertyName) {
+            // Handler wants modification events at parent level for this picked object property
             // This is the channel for receiving picked object
             this.modifiedHandlers.push({
                 pathSegments,
+                propertyName,
                 handler
             });
         }
         // Always pass through to input for other property modifications
-        this.input.onModified(pathSegments, handler);
+        this.input.onModified(pathSegments, propertyName, handler);
     }
     
     /**
@@ -329,17 +345,26 @@ export class PickByMinMaxStep<
      * Emits a modification event for the picked object.
      */
     private emitModification(parentKeyPath: string[], pickedItem: ImmutableProps | undefined): void {
+        const parentKeyHash = computeKeyPathHash(parentKeyPath);
+        const oldPickedItem = this.pickedItemValues.get(parentKeyHash);
+        
+        if (pickedItem === undefined) {
+            this.pickedItemValues.delete(parentKeyHash);
+        } else {
+            this.pickedItemValues.set(parentKeyHash, pickedItem);
+        }
+        
         if (parentKeyPath.length > 0) {
             const parentKey = parentKeyPath[parentKeyPath.length - 1];
             const keyPathToParent = parentKeyPath.slice(0, -1);
             
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, this.propertyName, pickedItem);
+                handler(keyPathToParent, parentKey, oldPickedItem, pickedItem);
             });
         } else {
             // Parent is at root level
             this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', this.propertyName, pickedItem);
+                handler([], '', oldPickedItem, pickedItem);
             });
         }
     }

@@ -70,7 +70,10 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         remainingSegments: string[]
     ): TypeDescriptor {
         if (remainingSegments.length === 0) {
-            return descriptor;
+            return {
+                ...descriptor,
+                mutableProperties: descriptor.mutableProperties
+            };
         }
         
         const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
@@ -78,7 +81,8 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         if (remainingSegmentsAfter.length === 0) {
             // This is the target array - remove it from the descriptor
             return {
-                arrays: descriptor.arrays.filter(a => a.name !== currentSegment)
+                arrays: descriptor.arrays.filter(a => a.name !== currentSegment),
+                mutableProperties: descriptor.mutableProperties
             };
         }
         
@@ -92,7 +96,8 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
                     };
                 }
                 return arrayDesc;
-            })
+            }),
+            mutableProperties: descriptor.mutableProperties
         };
     }
     
@@ -126,14 +131,14 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         this.input.onRemoved(pathSegments, handler);
     }
 
-    onModified(pathSegments: string[], handler: ModifiedHandler): void {
+    onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
         if (this.isArrayProperty) {
             // Array behavior: suppress events at or below the array path segments
             if (this.isAtOrBelowTargetArray(pathSegments)) {
                 return;
             }
         }
-        this.input.onModified(pathSegments, handler);
+        this.input.onModified(pathSegments, propertyName, handler);
     }
     
     private isAtScopeSegments(pathSegments: string[]): boolean {
