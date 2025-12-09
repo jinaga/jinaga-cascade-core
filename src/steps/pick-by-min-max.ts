@@ -68,6 +68,19 @@ export class PickByMinMaxStep<
     /** Maps parent key path hash to current picked item (for oldValue tracking) */
     private pickedItemValues: Map<string, ImmutableProps | undefined> = new Map();
     
+    /** Whether the comparison property is mutable (auto-detected) */
+    private isPropertyMutable: boolean = false;
+    
+    /** All mutable properties at root level */
+    private allMutableProperties: string[] = [];
+    
+    /** Maps parent key path hash to Map<itemKeyHash, { value, immutableProps, mutableProps }> for tracking individual item values */
+    private itemData: Map<string, Map<string, {
+        value: number | string | undefined;
+        immutableProps: ImmutableProps;
+        mutableProps: Record<string, unknown>;
+    }>> = new Map();
+    
     constructor(
         private input: Step,
         private segmentPath: TPath,
@@ -75,6 +88,14 @@ export class PickByMinMaxStep<
         private comparisonProperty: string,
         private compareFn: (value1: number | string, value2: number | string) => boolean
     ) {
+        // Auto-detect if comparison property is mutable from TypeDescriptor
+        const inputDescriptor = input.getTypeDescriptor();
+        const rootMutableProperties = inputDescriptor.mutableProperties || [];
+        this.allMutableProperties = rootMutableProperties;
+        if (rootMutableProperties.includes(comparisonProperty)) {
+            this.isPropertyMutable = true;
+        }
+        
         // Register with input step to receive item add/remove events at the target array level
         this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
             this.handleItemAdded(keyPath, itemKey, immutableProps);
@@ -83,6 +104,16 @@ export class PickByMinMaxStep<
         this.input.onRemoved(this.segmentPath, (keyPath, itemKey, immutableProps) => {
             this.handleItemRemoved(keyPath, itemKey, immutableProps);
         });
+        
+        // Register for property changes if comparison property is mutable
+        if (this.isPropertyMutable) {
+            // Subscribe to all mutable properties so we can track their values
+            for (const mutableProp of rootMutableProperties) {
+                this.input.onModified(this.segmentPath, mutableProp, (keyPath: string[], itemKey: string, oldValue: unknown, newValue: unknown) => {
+                    this.handleMutablePropertyChanged(keyPath, itemKey, mutableProp, newValue);
+                });
+            }
+        }
     }
     
     getTypeDescriptor(): TypeDescriptor {
@@ -225,6 +256,28 @@ export class PickByMinMaxStep<
         
         // Extract comparison value (ignore null/undefined)
         const value = item[this.comparisonProperty];
+        
+        // If mutable property, track in itemData and use recalculation
+        if (this.isPropertyMutable) {
+            if (!this.itemData.has(parentKeyHash)) {
+                this.itemData.set(parentKeyHash, new Map());
+            }
+            const comparisonValue: number | string | undefined =
+                (value === null || value === undefined)
+                    ? undefined
+                    : (isNumeric(value) ? Number(value) : String(value));
+            this.itemData.get(parentKeyHash)!.set(itemKeyHash, {
+                value: comparisonValue,
+                immutableProps: item,
+                mutableProps: {}
+            });
+            
+            // Recalculate pick using all tracked items
+            this.recalculatePickFromItemData(parentKeyPath, parentKeyHash);
+            return;
+        }
+        
+        // Immutable property handling (original logic)
         if (value === null || value === undefined) {
             // Ignore null/undefined values
             // If we don't have a picked item yet, emit undefined
@@ -257,6 +310,95 @@ export class PickByMinMaxStep<
     }
     
     /**
+     * Handle when any mutable property of an item changes
+     */
+    private handleMutablePropertyChanged(keyPath: string[], itemKey: string, property: string, newValue: unknown): void {
+        const parentKeyPath = keyPath;
+        const parentKeyHash = computeKeyPathHash(parentKeyPath);
+        const itemKeyPath = [...keyPath, itemKey];
+        const itemKeyHash = computeKeyPathHash(itemKeyPath);
+        
+        // Get itemData map for this parent
+        const itemDataMap = this.itemData.get(parentKeyHash);
+        if (!itemDataMap) {
+            return; // No items tracked for this parent
+        }
+        
+        // Get the item's data
+        const data = itemDataMap.get(itemKeyHash);
+        if (!data) {
+            return; // Item not tracked
+        }
+        
+        // Store the mutable property value
+        if (newValue !== null && newValue !== undefined) {
+            data.mutableProps[property] = newValue;
+        }
+        
+        // If this is the comparison property, update the comparison value
+        if (property === this.comparisonProperty) {
+            const newComparisonValue: number | string | undefined =
+                (newValue === null || newValue === undefined)
+                    ? undefined
+                    : (isNumeric(newValue) ? Number(newValue) : String(newValue));
+            data.value = newComparisonValue;
+        }
+        
+        // Recalculate pick
+        this.recalculatePickFromItemData(parentKeyPath, parentKeyHash);
+    }
+    
+    /**
+     * Recalculates the picked item using the itemData map (for mutable properties)
+     */
+    private recalculatePickFromItemData(parentKeyPath: string[], parentKeyHash: string): void {
+        const itemDataMap = this.itemData.get(parentKeyHash);
+        if (!itemDataMap || itemDataMap.size === 0) {
+            // No items, clear pick
+            this.pickedItemStore.delete(parentKeyHash);
+            this.comparisonValueStore.delete(parentKeyHash);
+            this.emitModification(parentKeyPath, undefined);
+            return;
+        }
+        
+        // Find the best item (min or max depending on mode)
+        let bestKeyHash: string | null = null;
+        let bestValue: number | string | null = null;
+        let bestProps: ImmutableProps | null = null;
+        let bestMutableProps: Record<string, unknown> | null = null;
+        
+        for (const [keyHash, data] of itemDataMap) {
+            if (data.value === undefined) continue;
+            
+            const isBetter = bestValue === null || this.compareFn(data.value, bestValue);
+            
+            if (isBetter) {
+                bestKeyHash = keyHash;
+                bestValue = data.value;
+                bestProps = data.immutableProps;
+                bestMutableProps = data.mutableProps;
+            }
+        }
+        
+        if (bestKeyHash === null || bestProps === null || bestMutableProps === null) {
+            // No items with valid values
+            this.pickedItemStore.delete(parentKeyHash);
+            this.comparisonValueStore.delete(parentKeyHash);
+            this.emitModification(parentKeyPath, undefined);
+        } else {
+            // Update picked item - merge the immutable props, all mutable props, and comparison value
+            const pickedItemWithValue = {
+                ...bestProps,
+                ...bestMutableProps,
+                [this.comparisonProperty]: bestValue
+            };
+            this.pickedItemStore.set(parentKeyHash, pickedItemWithValue);
+            this.comparisonValueStore.set(parentKeyHash, bestValue!);
+            this.emitModification(parentKeyPath, pickedItemWithValue);
+        }
+    }
+    
+    /**
      * Handle when an item is removed from the target array
      */
     private handleItemRemoved(keyPath: string[], itemKey: string, item: ImmutableProps): void {
@@ -268,6 +410,20 @@ export class PickByMinMaxStep<
         // Remove from tracking (needed for recalculation)
         this.itemStore.delete(itemKeyHash);
         
+        // If mutable property, remove from itemData and recalculate
+        if (this.isPropertyMutable) {
+            const itemDataMap = this.itemData.get(parentKeyHash);
+            if (itemDataMap) {
+                itemDataMap.delete(itemKeyHash);
+                if (itemDataMap.size === 0) {
+                    this.itemData.delete(parentKeyHash);
+                }
+            }
+            this.recalculatePickFromItemData(parentKeyPath, parentKeyHash);
+            return;
+        }
+        
+        // Immutable property handling (original logic)
         // Check if the removed item was the current picked item
         const currentPickedItem = this.pickedItemStore.get(parentKeyHash);
         const isRemovedItemPicked = currentPickedItem && this.itemsEqual(item, currentPickedItem);
