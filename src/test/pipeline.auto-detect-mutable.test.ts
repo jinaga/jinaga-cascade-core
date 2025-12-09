@@ -1610,3 +1610,97 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
         });
     });
 });
+/**
+ * Integration tests for multi-level auto-detection scenarios.
+ * These tests verify that auto-detection works correctly across complex multi-level pipelines.
+ */
+describe('Multi-level auto-detection integration', () => {
+    
+    it('should cascade updates through sum → sum pipeline', () => {
+        // Products have orders, each order has price
+        // productTotal = sum(orders.amount)    [mutable]
+        // categoryTotal = sum(products.productTotal)  [should auto-detect productTotal is mutable]
+        // grandTotal = sum(categories.categoryTotal)   [should auto-detect categoryTotal is mutable]
+        //
+        // When an order amount changes:
+        // 1. productTotal updates
+        // 2. categoryTotal updates (auto-detected)
+        // 3. grandTotal updates (auto-detected)
+
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ regionId: string; categoryId: string; productId: string; amount: number }>()
+                // Level 1: Group by region
+                .groupBy(['regionId'], 'categories')
+                // Level 2: Group by category within region
+                .in('categories').groupBy(['categoryId'], 'products')
+                // Level 3: Group by product within category
+                .in('categories', 'products').groupBy(['productId'], 'orders')
+                // Aggregate at product level: productTotal = sum(orders.amount) [MUTABLE]
+                .in('categories', 'products').sum('orders', 'amount', 'productTotal')
+                // Aggregate at category level: categoryTotal = sum(products.productTotal) [AUTO-DETECT]
+                .in('categories').sum('products', 'productTotal', 'categoryTotal')
+                // Aggregate at region level: grandTotal = sum(categories.categoryTotal) [AUTO-DETECT]
+                .sum('categories', 'categoryTotal', 'grandTotal')
+        );
+
+        // Add order to region R1, category C1, product P1
+        pipeline.add('o1', { regionId: 'R1', categoryId: 'C1', productId: 'P1', amount: 100 });
+        
+        let output = getOutput();
+        expect(output).toHaveLength(1);
+        expect(output[0].grandTotal).toBe(100);
+        
+        // Verify intermediate values
+        expect(output[0].categories[0].categoryTotal).toBe(100);
+        expect(output[0].categories[0].products[0].productTotal).toBe(100);
+
+        // Add another order to SAME product - productTotal should increase
+        pipeline.add('o2', { regionId: 'R1', categoryId: 'C1', productId: 'P1', amount: 50 });
+        
+        output = getOutput();
+        
+        // KEY ASSERTIONS: All levels should cascade update
+        // productTotal: 100 + 50 = 150
+        expect(output[0].categories[0].products[0].productTotal).toBe(150);
+        // categoryTotal: should auto-detect productTotal is mutable and update to 150
+        expect(output[0].categories[0].categoryTotal).toBe(150);
+        // grandTotal: should auto-detect categoryTotal is mutable and update to 150
+        expect(output[0].grandTotal).toBe(150);
+
+        // Add order to DIFFERENT product in same category
+        pipeline.add('o3', { regionId: 'R1', categoryId: 'C1', productId: 'P2', amount: 75 });
+        
+        output = getOutput();
+        
+        // P1: 150, P2: 75
+        expect(output[0].categories[0].products).toHaveLength(2);
+        // categoryTotal: 150 + 75 = 225
+        expect(output[0].categories[0].categoryTotal).toBe(225);
+        // grandTotal: 225
+        expect(output[0].grandTotal).toBe(225);
+
+        // Add order to DIFFERENT category
+        pipeline.add('o4', { regionId: 'R1', categoryId: 'C2', productId: 'P3', amount: 100 });
+        
+        output = getOutput();
+        
+        // C1: 225, C2: 100
+        expect(output[0].categories).toHaveLength(2);
+        // grandTotal: 225 + 100 = 325
+        expect(output[0].grandTotal).toBe(325);
+
+        // Now add more to P1 - this cascades through all levels
+        pipeline.add('o5', { regionId: 'R1', categoryId: 'C1', productId: 'P1', amount: 25 });
+        
+        output = getOutput();
+        
+        // P1: 150 + 25 = 175
+        const c1 = output[0].categories.find(c => c.categoryId === 'C1');
+        const p1 = c1?.products.find(p => p.productId === 'P1');
+        expect(p1?.productTotal).toBe(175);
+        // C1: 175 + 75 = 250
+        expect(c1?.categoryTotal).toBe(250);
+        // grandTotal: 250 + 100 = 350
+        expect(output[0].grandTotal).toBe(350);
+    });
+});
