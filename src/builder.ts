@@ -659,8 +659,10 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
             });
             
             // Register for mutable properties
-            // Get mutable properties from the final type descriptor
-            const mutableProperties = typeDescriptor.mutableProperties || [];
+            // Collect all mutable properties from the entire type descriptor tree
+            // This handles cases where aggregates add mutable properties at root level
+            // even when they semantically belong at nested levels
+            const mutableProperties = collectAllMutableProperties(typeDescriptor);
             
             if (mutableProperties.length > 0) {
                 // Register for each mutable property at this path level
@@ -712,6 +714,27 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
             pipelineUpdaters.delete(pipeline);
         }
     }
+}
+
+/**
+ * Collects all mutable properties from the entire type descriptor tree.
+ * Returns a flat array of all mutable property names found at any level.
+ */
+function collectAllMutableProperties(descriptor: TypeDescriptor): string[] {
+    const mutableProps = new Set<string>();
+    
+    // Add mutable properties at this level
+    if (descriptor.mutableProperties) {
+        descriptor.mutableProperties.forEach(prop => mutableProps.add(prop));
+    }
+    
+    // Recursively collect from nested arrays
+    for (const arrayDesc of descriptor.arrays) {
+        const nestedProps = collectAllMutableProperties(arrayDesc.type);
+        nestedProps.forEach(prop => mutableProps.add(prop));
+    }
+    
+    return Array.from(mutableProps);
 }
 
 /**

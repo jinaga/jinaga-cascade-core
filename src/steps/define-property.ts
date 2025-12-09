@@ -1,12 +1,23 @@
-import type { ImmutableProps, Step } from '../pipeline';
+import type { ImmutableProps, ModifiedHandler, Step } from '../pipeline';
 import { type TypeDescriptor } from '../pipeline';
 import { pathsMatch } from '../util/path';
 
 export class DefinePropertyStep<T, K extends string, U> implements Step {
-    // Track items and their mutable property values
-    private itemStates: Map<string, { immutableProps: ImmutableProps; mutableValues: Map<string, any> }> = new Map();
+    // Track items and their mutable property values + computed property value
+    private itemStates: Map<string, {
+        immutableProps: ImmutableProps;
+        mutableValues: Map<string, any>;
+        computedValue: U;
+        keyPath: string[];
+    }> = new Map();
     // Track downstream handlers for emitting recomputed properties
     private addedHandlers: Array<{ pathSegments: string[]; handler: (keyPath: string[], key: string, immutableProps: ImmutableProps) => void }> = [];
+    // Track handlers for onModified events on the defined property
+    private modifiedHandlers: Array<{
+        pathSegments: string[];
+        propertyName: string;
+        handler: ModifiedHandler;
+    }> = [];
     
     constructor(
         private input: Step,
@@ -26,7 +37,18 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
     }
     
     getTypeDescriptor(): TypeDescriptor {
-        return this.input.getTypeDescriptor();
+        const inputDescriptor = this.input.getTypeDescriptor();
+        // If this property depends on mutable properties, mark it as mutable too
+        if (this.mutableProperties.length > 0) {
+            const existingMutableProps = inputDescriptor.mutableProperties || [];
+            if (!existingMutableProps.includes(this.propertyName)) {
+                return {
+                    ...inputDescriptor,
+                    mutableProperties: [...existingMutableProps, this.propertyName]
+                };
+            }
+        }
+        return inputDescriptor;
     }
     
     private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, any>): T {
@@ -51,19 +73,26 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
         const composedItem = this.composeItem(itemState.immutableProps, itemState.mutableValues);
         const newComputedValue = this.compute(composedItem);
         
-        // Get old computed value (we'd need to track this, but for now emit the change)
-        // Emit onModified for the defined property
-        const parentKeyPath = keyPath.length > 0 ? keyPath.slice(0, -1) : [];
-        const parentKey = keyPath.length > 0 ? keyPath[keyPath.length - 1] : key;
+        // Get old computed value and check if it changed
+        const oldComputedValue = itemState.computedValue;
         
-        // Find handlers registered for this property at this path
-        this.addedHandlers.forEach(({ pathSegments, handler }) => {
-            if (pathsMatch(pathSegments, this.scopeSegments)) {
-                // This handler is at our scope level - we need to emit onModified
-                // But we don't have direct access to onModified handlers
-                // For now, we'll need to track them separately
-            }
-        });
+        // Update stored computed value
+        itemState.computedValue = newComputedValue;
+        
+        // Only emit if the computed value actually changed
+        if (oldComputedValue !== newComputedValue) {
+            // Emit onModified for the defined property using the stored keyPath
+            const storedKeyPath = itemState.keyPath;
+            const itemKeyToEmit = storedKeyPath.length > 0 ? storedKeyPath[storedKeyPath.length - 1] : itemKey;
+            const keyPathToEmit = storedKeyPath.length > 0 ? storedKeyPath.slice(0, -1) : [];
+            
+            // Notify all handlers registered for this property at the scope level
+            this.modifiedHandlers.forEach(({ pathSegments, propertyName: propName, handler }) => {
+                if (propName === this.propertyName && pathsMatch(pathSegments, this.scopeSegments)) {
+                    handler(keyPathToEmit, itemKeyToEmit, oldComputedValue, newComputedValue);
+                }
+            });
+        }
     }
     
     onAdded(pathSegments: string[], handler: (keyPath: string[], key: string, immutableProps: ImmutableProps) => void): void {
@@ -79,12 +108,12 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
                     mutableValues.set(propName, immutableProps[propName]);
                 }
                 
-                // Store item state
-                this.itemStates.set(key, { immutableProps, mutableValues });
-                
                 // Compose item and compute property
                 const composedItem = this.composeItem(immutableProps, mutableValues);
                 const computedValue = this.compute(composedItem);
+                
+                // Store item state including computed value and keyPath
+                this.itemStates.set(key, { immutableProps, mutableValues, computedValue, keyPath });
                 
                 handler(keyPath, key, { ...immutableProps, [this.propertyName]: computedValue } as T & Record<K, U>);
             });
@@ -116,22 +145,15 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
     }
 
     onModified(pathSegments: string[], propertyName: string, handler: (keyPath: string[], key: string, oldValue: any, newValue: any) => void): void {
-        // Forward modifications for properties not in mutableProperties array
-        if (!this.mutableProperties.includes(propertyName)) {
-            this.input.onModified(pathSegments, propertyName, handler);
-        } else {
-            // For mutable properties we track, we handle them internally
-            // but still need to forward to downstream steps
-            this.input.onModified(pathSegments, propertyName, handler);
+        // If handler is requesting modifications to the defined property at our scope
+        if (propertyName === this.propertyName && pathsMatch(pathSegments, this.scopeSegments)) {
+            // Store this handler to call when the computed property changes
+            this.modifiedHandlers.push({ pathSegments, propertyName, handler });
+            return;
         }
         
-        // Also register for modifications to the defined property itself
-        if (propertyName === this.propertyName && pathsMatch(pathSegments, this.scopeSegments)) {
-            // Handler wants modifications to the defined property
-            // We'll need to track these and emit when we recompute
-            // For now, forward to input (though input won't have this property)
-            this.input.onModified(pathSegments, propertyName, handler);
-        }
+        // Forward all other modification requests to input
+        this.input.onModified(pathSegments, propertyName, handler);
     }
     
     private isAtScopeSegments(pathSegments: string[]): boolean {

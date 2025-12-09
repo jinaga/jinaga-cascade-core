@@ -232,16 +232,383 @@ describe('pipeline mutable properties', () => {
         });
     });
 
-    describe('groupBy with mutable properties', () => {
-        it('should re-group items when mutable grouping property changes', () => {
-            const [pipeline, getOutput] = createTestPipeline(() => 
-                createPipeline<{ name: string; total: number }>()
-                    .sum('orders', 'amount', 'total')
-                    .groupBy(['total'], 'customers')
-            );
+    describe('groupBy with mutable properties - re-grouping', () => {
+        /**
+         * Scenario from design document Section 3.1:
+         * When a mutable property changes that affects the group key,
+         * the GroupByStep should detect this and move the item between groups.
+         *
+         * Flow:
+         * 1. Setup: Group entities by a bucket computed from their mutable total
+         * 2. Entity starts with total = 100 → grouped into "low" bucket (total < 200)
+         * 3. New entries added → total changes to 300
+         * 4. GroupByStep receives onModified('bucket', 'low', 'medium')
+         * 5. Entity moves from "low" bucket to "medium" bucket
+         * 6. This triggers: onRemoved from old group, onAdded to new group
+         */
+        
+        describe('when mutable property causes group key to change', () => {
+            it('should move item to new group when mutable grouping property changes', () => {
+                // Setup: Create a pipeline that groups by a computed bucket property
+                // The bucket is derived from a mutable 'total' aggregate
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])  // 'total' is a mutable property
+                        .groupBy(['bucket'], 'entities')
+                );
 
-            // This requires detecting mutable properties in groupBy
-            // and handling re-grouping when total changes
+                // Step 1: Add an entry for entity1 with amount 100
+                // total = 100, which is < 200, so bucket = "low"
+                pipeline.add('entry1', { entityId: 'entity1', amount: 100 });
+                
+                let output = getOutput();
+                
+                // Verify: entity1 appears in the "low" bucket
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('low');
+                expect(output[0].entities).toHaveLength(1);
+                expect(output[0].entities[0].entityId).toBe('entity1');
+                expect(output[0].entities[0].total).toBe(100);
+
+                // Step 2: Add another entry for entity1 with amount 200
+                // total becomes 300, which is >= 200 and < 400, so bucket = "medium"
+                pipeline.add('entry2', { entityId: 'entity1', amount: 200 });
+                
+                output = getOutput();
+                
+                // Expected behavior: GroupByStep detects bucket change and re-groups
+                // Entity should move from "low" to "medium" bucket
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('medium');
+                expect(output[0].entities).toHaveLength(1);
+                expect(output[0].entities[0].entityId).toBe('entity1');
+                expect(output[0].entities[0].total).toBe(300);
+                
+                // The "low" bucket should no longer exist (was removed when empty)
+                const lowBucket = output.find(g => g.bucket === 'low');
+                expect(lowBucket).toBeUndefined();
+            });
+
+            it('should create new group when first item moves into it', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])
+                        .groupBy(['bucket'], 'entities')
+                );
+
+                // Start two entities in "low" bucket
+                pipeline.add('entry1', { entityId: 'entity1', amount: 50 });
+                pipeline.add('entry2', { entityId: 'entity2', amount: 75 });
+                
+                let output = getOutput();
+                
+                // Both in "low" bucket
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('low');
+                expect(output[0].entities).toHaveLength(2);
+
+                // Add more to entity1, pushing it to "medium" bucket (50 + 200 = 250)
+                pipeline.add('entry3', { entityId: 'entity1', amount: 200 });
+                
+                output = getOutput();
+                
+                // Expected: Two buckets now exist
+                // "low" bucket with entity2, "medium" bucket with entity1
+                expect(output).toHaveLength(2);
+                
+                const lowBucket = output.find(g => g.bucket === 'low');
+                const mediumBucket = output.find(g => g.bucket === 'medium');
+                
+                expect(lowBucket).toBeDefined();
+                expect(lowBucket?.entities).toHaveLength(1);
+                expect(lowBucket?.entities[0].entityId).toBe('entity2');
+                
+                // New bucket was created for the moved item
+                expect(mediumBucket).toBeDefined();
+                expect(mediumBucket?.entities).toHaveLength(1);
+                expect(mediumBucket?.entities[0].entityId).toBe('entity1');
+                expect(mediumBucket?.entities[0].total).toBe(250);
+            });
+
+            it('should remove group when last item leaves', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])
+                        .groupBy(['bucket'], 'entities')
+                );
+
+                // Start with entity in "low" bucket
+                pipeline.add('entry1', { entityId: 'entity1', amount: 100 });
+                
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('low');
+
+                // Move entity to "medium" bucket (100 + 150 = 250)
+                pipeline.add('entry2', { entityId: 'entity1', amount: 150 });
+                
+                output = getOutput();
+                
+                // Expected: Only "medium" bucket exists, "low" bucket was removed
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('medium');
+                
+                // Verify "low" bucket is gone
+                const lowBucket = output.find(g => g.bucket === 'low');
+                expect(lowBucket).toBeUndefined();
+            });
+
+            it('should keep item in same group if computed key does not change', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])
+                        .groupBy(['bucket'], 'entities')
+                );
+
+                // Entity starts with total = 50 (bucket = "low")
+                pipeline.add('entry1', { entityId: 'entity1', amount: 50 });
+                
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('low');
+                expect(output[0].entities[0].total).toBe(50);
+
+                // Add more, but stay in "low" bucket (50 + 100 = 150, still < 200)
+                pipeline.add('entry2', { entityId: 'entity1', amount: 100 });
+                
+                output = getOutput();
+                
+                // Expected: Still in "low" bucket, no re-grouping occurred
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('low');
+                expect(output[0].entities).toHaveLength(1);
+                expect(output[0].entities[0].entityId).toBe('entity1');
+                expect(output[0].entities[0].total).toBe(150);
+            });
+
+            it('should handle multiple items in same group when one moves', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])
+                        .groupBy(['bucket'], 'entities')
+                );
+
+                // Three entities start in "low" bucket
+                pipeline.add('entry1', { entityId: 'entity1', amount: 50 });
+                pipeline.add('entry2', { entityId: 'entity2', amount: 75 });
+                pipeline.add('entry3', { entityId: 'entity3', amount: 100 });
+                
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('low');
+                expect(output[0].entities).toHaveLength(3);
+
+                // Move entity2 to "medium" bucket (75 + 200 = 275)
+                pipeline.add('entry4', { entityId: 'entity2', amount: 200 });
+                
+                output = getOutput();
+                
+                // Expected: "low" bucket still exists with entity1 and entity3
+                // "medium" bucket created with entity2
+                expect(output).toHaveLength(2);
+                
+                const lowBucket = output.find(g => g.bucket === 'low');
+                const mediumBucket = output.find(g => g.bucket === 'medium');
+                
+                expect(lowBucket).toBeDefined();
+                expect(lowBucket?.entities).toHaveLength(2);
+                expect(lowBucket?.entities.some(e => e.entityId === 'entity1')).toBe(true);
+                expect(lowBucket?.entities.some(e => e.entityId === 'entity3')).toBe(true);
+                
+                expect(mediumBucket).toBeDefined();
+                expect(mediumBucket?.entities).toHaveLength(1);
+                expect(mediumBucket?.entities[0].entityId).toBe('entity2');
+                expect(mediumBucket?.entities[0].total).toBe(275);
+            });
+
+            it('should handle item moving through multiple bucket transitions', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])
+                        .groupBy(['bucket'], 'entities')
+                );
+
+                // Start in "low" bucket
+                pipeline.add('entry1', { entityId: 'entity1', amount: 100 });
+                expect(getOutput()[0].bucket).toBe('low');
+
+                // Move to "medium" bucket (100 + 150 = 250)
+                pipeline.add('entry2', { entityId: 'entity1', amount: 150 });
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('medium');
+
+                // Move to "high" bucket (250 + 200 = 450)
+                pipeline.add('entry3', { entityId: 'entity1', amount: 200 });
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('high');
+                expect(output[0].entities[0].total).toBe(450);
+            });
+
+            it('should handle item moving back to previous bucket on removal', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])
+                        .groupBy(['bucket'], 'entities')
+                );
+
+                // Start and move to "medium" bucket
+                const entry1 = { entityId: 'entity1', amount: 100 };
+                const entry2 = { entityId: 'entity1', amount: 150 };
+                pipeline.add('entry1', entry1);
+                pipeline.add('entry2', entry2);
+                
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('medium');
+                expect(output[0].entities[0].total).toBe(250);
+
+                // Remove entry2, total goes back to 100, should return to "low" bucket
+                pipeline.remove('entry2', entry2);
+                
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('low');
+                expect(output[0].entities[0].total).toBe(100);
+                
+                // Verify "medium" bucket was removed
+                const mediumBucket = output.find(g => g.bucket === 'medium');
+                expect(mediumBucket).toBeUndefined();
+            });
+        });
+
+        describe('edge cases for groupBy re-grouping', () => {
+            it('should handle rapid additions that cause multiple re-groupings', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])
+                        .groupBy(['bucket'], 'entities')
+                );
+
+                // Rapid additions that cross multiple thresholds
+                pipeline.add('entry1', { entityId: 'entity1', amount: 100 }); // low
+                pipeline.add('entry2', { entityId: 'entity1', amount: 100 }); // medium (200)
+                pipeline.add('entry3', { entityId: 'entity1', amount: 200 }); // high (400)
+                
+                const output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('high');
+                expect(output[0].entities[0].total).toBe(400);
+            });
+
+            it('should correctly handle entity at exact bucket boundary', () => {
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .defineProperty('bucket', item => {
+                            if (item.total < 200) return 'low';
+                            if (item.total < 400) return 'medium';
+                            return 'high';
+                        }, ['total'])
+                        .groupBy(['bucket'], 'entities')
+                );
+
+                // Exactly at boundary (200 is not < 200, so it's "medium")
+                pipeline.add('entry1', { entityId: 'entity1', amount: 200 });
+                
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('medium');
+
+                // Add 1 more to stay in medium (201 is still < 400)
+                pipeline.add('entry2', { entityId: 'entity1', amount: 1 });
+                
+                output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].bucket).toBe('medium');
+                expect(output[0].entities[0].total).toBe(201);
+            });
+
+            it('should handle grouping by raw mutable property value', () => {
+                // This test groups directly by the mutable 'total' property
+                // without a defineProperty transformation
+                const [pipeline, getOutput] = createTestPipeline(() =>
+                    createPipeline<{ entityId: string; amount: number }>()
+                        .groupBy(['entityId'], 'entries')
+                        .sum('entries', 'amount', 'total')
+                        .groupBy(['total'], 'entities')
+                );
+
+                // Entity with total = 100
+                pipeline.add('entry1', { entityId: 'entity1', amount: 100 });
+                
+                let output = getOutput();
+                expect(output).toHaveLength(1);
+                expect(output[0].total).toBe(100);
+
+                // Add more, total becomes 250
+                pipeline.add('entry2', { entityId: 'entity1', amount: 150 });
+                
+                output = getOutput();
+                
+                // Expected: Entity moved from total=100 group to total=250 group
+                expect(output).toHaveLength(1);
+                expect(output[0].total).toBe(250);
+                
+                // The old group (total=100) should be removed
+                const oldGroup = output.find(g => g.total === 100);
+                expect(oldGroup).toBeUndefined();
+            });
         });
     });
 
