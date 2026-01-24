@@ -4,10 +4,10 @@ import { encode as utf8Encode } from '@stablelib/utf8';
 
 export function canonicalizeGroupingProperties(obj: object, groupingProperties: string[]): string {
     const sortedProps = [...groupingProperties].sort();
-    const keyObject: Record<string, any> = {};
+    const keyObject: Record<string, unknown> = {};
     for (const prop of sortedProps) {
         if (prop in obj) {
-            keyObject[prop] = (obj as Record<string, any>)[prop];
+            keyObject[prop] = (obj as Record<string, unknown>)[prop];
         }
     }
     return JSON.stringify(keyObject);

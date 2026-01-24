@@ -13,13 +13,16 @@ type ExtractKeyedArrays<T> = T extends KeyedArray<infer U>
       }
     : T;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type BuilderOutputType<T> = T extends PipelineBuilder<infer U, any, any>
     ? ExtractKeyedArrays<U>
     : never;
 
 // Helper function that uses type inference to set up a test pipeline
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, any>>(
     builderFactory: () => TBuilder
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): [Pipeline<any>, () => BuilderOutputType<TBuilder>[]] {
     const builder = builderFactory();
     type OutputType = BuilderOutputType<TBuilder>;
@@ -44,11 +47,14 @@ export function simulateState<T>(initialState: T): [() => T, (transform: Transfo
     ];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function extract(state: KeyedArray<any>, typeDescriptor: TypeDescriptor): any[] {
     return state.map(item => extractItem(item, typeDescriptor));
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractItem(item: { key: string; value: any; }, typeDescriptor: TypeDescriptor): any {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const arrays: any = {};
     for (const arrayDescriptor of typeDescriptor.arrays) {
         const array = item.value[arrayDescriptor.name];
