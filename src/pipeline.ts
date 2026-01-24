@@ -42,14 +42,14 @@ export function getMutablePropertiesOfArrayItems(
 }
 
 export type ImmutableProps = {
-    [key: string]: any;
+    [key: string]: unknown;
 };
 
 export type AddedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
 
 export type RemovedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
 
-export type ModifiedHandler = (keyPath: string[], key: string, oldValue: any, newValue: any) => void;
+export type ModifiedHandler = (keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void;
 
 export function getPathSegmentsFromDescriptor(descriptor: TypeDescriptor): string[][] {
     // Include the path to the root of the descriptor

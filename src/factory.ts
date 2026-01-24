@@ -31,7 +31,7 @@ class InputPipeline<T> implements Pipeline<T>, Step {
         }
     }
 
-    onModified(_path: string[], _propertyName: string, _handler: (path: string[], key: string, oldValue: any, newValue: any) => void): void {
+    onModified(_path: string[], _propertyName: string, _handler: (path: string[], key: string, oldValue: unknown, newValue: unknown) => void): void {
         // No modifications at input level
     }
 }
