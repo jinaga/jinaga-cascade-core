@@ -1,4 +1,4 @@
-import { PipelineBuilder, type KeyedArray } from './builder';
+import { type KeyedArray } from './builder';
 import { createPipeline as createBasePipeline } from './factory';
 
 /**

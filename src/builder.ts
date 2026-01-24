@@ -111,7 +111,7 @@ class BatchedStateUpdater<T> {
                 }
             }
 
-            return result as KeyedArray<T>;
+            return result;
         });
 
         // Clear pending operations
@@ -262,7 +262,7 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
     > {
         const newStep = new GroupByStep<NavigateToPath<T, Path> & {}, K, ArrayName>(
             this.lastStep,
-            groupingProperties as K[],
+            groupingProperties,
             arrayName,
             this.scopeSegments as string[]
         );
@@ -379,16 +379,16 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
             arrayName,
             outputProperty,
             (acc: number | undefined, item: any) => {
-                const value = (item as any)[propertyName];
+                const value = (item)[propertyName];
                 const numValue = (value === null || value === undefined) ? 0 : Number(value);
                 return (acc ?? 0) + numValue;
             },
             (acc: number, item: any) => {
-                const value = (item as any)[propertyName];
+                const value = (item)[propertyName];
                 const numValue = (value === null || value === undefined) ? 0 : Number(value);
                 return acc - numValue;
             },
-            propertyName as string  // Pass property name for auto-detection
+            propertyName  // Pass property name for auto-detection
         );
     }
     

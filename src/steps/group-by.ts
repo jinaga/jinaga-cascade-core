@@ -271,7 +271,7 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         
         // Get the non-grouping properties for item handlers
         const fullImmutableProps = this.itemKeyToImmutableProps.get(itemKey) || {};
-        let nonGroupingProps: ImmutableProps = {};
+        const nonGroupingProps: ImmutableProps = {};
         Object.keys(fullImmutableProps).forEach(prop => {
             if (!this.groupingProperties.includes(prop as K)) {
                 nonGroupingProps[prop] = fullImmutableProps[prop];
@@ -319,7 +319,7 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         this.itemKeyToImmutableProps.set(itemKey, immutableProps);
         
         // Extract the grouping property values from the object
-        let groupingValues: ImmutableProps = {};
+        const groupingValues: ImmutableProps = {};
         Object.keys(immutableProps).forEach(prop => {
             if (this.groupingProperties.includes(prop as K)) {
                 groupingValues[prop] = immutableProps[prop];
@@ -349,7 +349,7 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         this.groupKeyToItemKeys.get(compositeKey)!.add(itemKey);
         
         // Extract the non-grouping properties from the object
-        let nonGroupingProps: ImmutableProps = {};
+        const nonGroupingProps: ImmutableProps = {};
         Object.keys(immutableProps).forEach(prop => {
             if (!this.groupingProperties.includes(prop as K)) {
                 nonGroupingProps[prop] = immutableProps[prop];
@@ -371,7 +371,7 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
         }
         
         // Extract the non-grouping properties from the object for item handlers
-        let nonGroupingProps: ImmutableProps = {};
+        const nonGroupingProps: ImmutableProps = {};
         Object.keys(immutableProps).forEach(prop => {
             if (!this.groupingProperties.includes(prop as K)) {
                 nonGroupingProps[prop] = immutableProps[prop];
@@ -396,7 +396,7 @@ export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends stri
             // Check if group is empty
             if (itemKeys.size === 0) {
                 // Extract the grouping property values from the object for group handlers
-                let groupingValues: ImmutableProps = {};
+                const groupingValues: ImmutableProps = {};
                 Object.keys(immutableProps).forEach(prop => {
                     if (this.groupingProperties.includes(prop as K)) {
                         groupingValues[prop] = immutableProps[prop];

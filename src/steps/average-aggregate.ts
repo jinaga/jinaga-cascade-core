@@ -226,14 +226,14 @@ export class AverageAggregateStep<
         // Update sum and count based on what changed
         if (hadOldValue && hasNewValue) {
             // Value changed: sum = sum - oldValue + newValue (count stays same)
-            state.sum = state.sum - oldNumValue! + newNum;
+            state.sum = state.sum - oldNumValue + newNum;
         } else if (!hadOldValue && hasNewValue) {
             // New value added: increment both sum and count
             state.sum += newNum;
             state.count += 1;
         } else if (hadOldValue && !hasNewValue) {
             // Value removed: decrement both sum and count
-            state.sum -= oldNumValue!;
+            state.sum -= oldNumValue;
             state.count -= 1;
         }
         
