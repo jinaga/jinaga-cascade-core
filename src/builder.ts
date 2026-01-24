@@ -378,13 +378,13 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         return this.commutativeAggregate(
             arrayName,
             outputProperty,
-            (acc: number | undefined, item: any) => {
-                const value = (item)[propertyName];
+            (acc: number | undefined, item: unknown) => {
+                const value = (item as Record<string, unknown>)[propertyName];
                 const numValue = (value === null || value === undefined) ? 0 : Number(value);
                 return (acc ?? 0) + numValue;
             },
-            (acc: number, item: any) => {
-                const value = (item)[propertyName];
+            (acc: number, item: unknown) => {
+                const value = (item as Record<string, unknown>)[propertyName];
                 const numValue = (value === null || value === undefined) ? 0 : Number(value);
                 return acc - numValue;
             },
