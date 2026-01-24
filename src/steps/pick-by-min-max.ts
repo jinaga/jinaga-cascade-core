@@ -10,7 +10,7 @@ function computeKeyPathHash(keyPath: string[]): string {
 /**
  * Determines if a value is numeric.
  */
-function isNumeric(value: any): value is number {
+function isNumeric(value: unknown): value is number {
     if (typeof value === 'number') {
         return !isNaN(value);
     }

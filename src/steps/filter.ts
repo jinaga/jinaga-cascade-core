@@ -6,7 +6,7 @@ import { pathsMatch, pathStartsWith } from '../util/path';
  */
 interface ItemState {
     immutableProps: ImmutableProps;
-    mutableValues: Map<string, any>;
+    mutableValues: Map<string, unknown>;
     keyPath: string[];
     passed: boolean;
 }
@@ -37,7 +37,7 @@ export class FilterStep<T> implements Step {
     // Track pending nested operations for items that don't pass the filter yet
     // key -> Map of pendingPath -> Array of pending operations
     private pendingNestedAdds: Map<string, Array<{ pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps }>> = new Map();
-    private pendingNestedModifications: Map<string, Array<{ pathSegments: string[], propertyName: string, keyPath: string[], key: string, oldValue: any, newValue: any }>> = new Map();
+    private pendingNestedModifications: Map<string, Array<{ pathSegments: string[], propertyName: string, keyPath: string[], key: string, oldValue: unknown, newValue: unknown }>> = new Map();
     
     // Store nested handlers for replaying when parent passes
     private nestedAddedHandlers: Map<string, AddedHandler> = new Map();
@@ -65,15 +65,15 @@ export class FilterStep<T> implements Step {
         return this.input.getTypeDescriptor();
     }
 
-    private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, any>): T {
-        const mutableProps: Record<string, any> = {};
+    private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, unknown>): T {
+        const mutableProps: Record<string, unknown> = {};
         for (const propName of this.mutableProperties) {
             mutableProps[propName] = mutableValues.get(propName);
         }
         return { ...immutableProps, ...mutableProps } as T;
     }
 
-    private evaluatePredicate(immutableProps: ImmutableProps, mutableValues: Map<string, any>): boolean {
+    private evaluatePredicate(immutableProps: ImmutableProps, mutableValues: Map<string, unknown>): boolean {
         const item = this.composeItem(immutableProps, mutableValues);
         return this.predicate(item);
     }
@@ -97,7 +97,7 @@ export class FilterStep<T> implements Step {
                pathStartsWith(pathSegments, this.scopeSegments);
     }
 
-    private handleMutablePropertyChange(_keyPath: string[], key: string, propertyName: string, _oldValue: any, newValue: any): void {
+    private handleMutablePropertyChange(_keyPath: string[], key: string, propertyName: string, _oldValue: unknown, newValue: unknown): void {
         const itemState = this.itemStates.get(key);
         if (!itemState) {
             // Item not tracked (shouldn't happen if properly added first)
@@ -172,7 +172,7 @@ export class FilterStep<T> implements Step {
             this.addedHandler = handler;
             
             this.input.onAdded(pathSegments, (keyPath, key, immutableProps) => {
-                const mutableValues = new Map<string, any>();
+                const mutableValues = new Map<string, unknown>();
                 // Initialize mutable values (they'll be updated via onModified if they change)
                 for (const propName of this.mutableProperties) {
                     mutableValues.set(propName, immutableProps[propName]);

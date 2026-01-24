@@ -232,7 +232,7 @@ export class CommutativeAggregateStep<
     /**
      * Handle when a mutable property of an aggregated item changes
      */
-    private handleItemPropertyChanged(keyPath: string[], _itemKey: string, propertyName: string, oldValue: any, newValue: any): void {
+    private handleItemPropertyChanged(keyPath: string[], _itemKey: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
         
@@ -280,7 +280,7 @@ export class CommutativeAggregateStep<
         const newItem = { [propertyName]: newValue } as ImmutableProps;
         
         // Compute new aggregate: subtract old value, add new value
-        const intermediateAggregate = this.config.subtract(currentAggregate as any, oldItem);
+        const intermediateAggregate = this.config.subtract(currentAggregate, oldItem);
         const newAggregate = this.config.add(intermediateAggregate, newItem);
         
         // Update stored aggregate

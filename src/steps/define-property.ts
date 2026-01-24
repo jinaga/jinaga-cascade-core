@@ -6,7 +6,7 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
     // Track items and their mutable property values + computed property value
     private itemStates: Map<string, {
         immutableProps: ImmutableProps;
-        mutableValues: Map<string, any>;
+        mutableValues: Map<string, unknown>;
         computedValue: U;
         keyPath: string[];
     }> = new Map();
@@ -51,15 +51,15 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
         return inputDescriptor;
     }
     
-    private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, any>): T {
-        const mutableProps: Record<string, any> = {};
+    private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, unknown>): T {
+        const mutableProps: Record<string, unknown> = {};
         for (const propName of this.mutableProperties) {
             mutableProps[propName] = mutableValues.get(propName);
         }
         return { ...immutableProps, ...mutableProps } as T;
     }
     
-    private handleMutablePropertyChange(keyPath: string[], key: string, propertyName: string, _oldValue: any, newValue: any): void {
+    private handleMutablePropertyChange(keyPath: string[], key: string, propertyName: string, _oldValue: unknown, newValue: unknown): void {
         // The key parameter is the item key - use it directly for lookup
         const itemState = this.itemStates.get(key);
         if (!itemState) {
@@ -101,7 +101,7 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
             
             // Apply the property transformation at the scoped level
             this.input.onAdded(pathSegments, (keyPath, key, immutableProps) => {
-                const mutableValues = new Map<string, any>();
+                const mutableValues = new Map<string, unknown>();
                 // Initialize mutable values from immutableProps (they might be there initially)
                 for (const propName of this.mutableProperties) {
                     mutableValues.set(propName, immutableProps[propName]);
@@ -143,7 +143,7 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
         }
     }
 
-    onModified(pathSegments: string[], propertyName: string, handler: (keyPath: string[], key: string, oldValue: any, newValue: any) => void): void {
+    onModified(pathSegments: string[], propertyName: string, handler: (keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void): void {
         // If handler is requesting modifications to the defined property at our scope
         if (propertyName === this.propertyName && pathsMatch(pathSegments, this.scopeSegments)) {
             // Store this handler to call when the computed property changes

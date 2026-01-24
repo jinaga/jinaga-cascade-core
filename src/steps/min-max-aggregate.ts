@@ -181,7 +181,7 @@ export class MinMaxAggregateStep<
     /**
      * Handle when a mutable property of an aggregated item changes
      */
-    private handleItemPropertyChanged(keyPath: string[], itemKey: string, _oldValue: any, newValue: any): void {
+    private handleItemPropertyChanged(keyPath: string[], itemKey: string, _oldValue: unknown, newValue: unknown): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
         
