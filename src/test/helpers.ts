@@ -34,6 +34,7 @@ export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, an
         // Flush any pending batched updates before reading state
         // This ensures all changes are applied before test assertions
         PipelineBuilder.flushBatchedUpdates(pipeline);
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Test helper: extract converts KeyedArray to plain array
         return extract(getState(), typeDescriptor);
     };
     return [pipeline, getOutput];
@@ -47,17 +48,21 @@ export function simulateState<T>(initialState: T): [() => T, (transform: Transfo
     ];
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Extract items from KeyedArray, converting nested KeyedArrays to plain arrays
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test helper: returns dynamic structure based on descriptor
 export function extract(state: KeyedArray<any>, typeDescriptor: TypeDescriptor): any[] {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Test helper: returns extracted values
     return state.map(item => extractItem(item, typeDescriptor));
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test helper: works with dynamic types from descriptors
 function extractItem(item: { key: string; value: any; }, typeDescriptor: TypeDescriptor): any {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test helper: dynamically construct result object
     const arrays: any = {};
     for (const arrayDescriptor of typeDescriptor.arrays) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- Dynamic property access for test helper
         const array = item.value[arrayDescriptor.name];
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument -- Test helper: recursive extraction
         arrays[arrayDescriptor.name] = array ? extract(array, arrayDescriptor.type) : [];
     }
     return { ...item.value, ...arrays };

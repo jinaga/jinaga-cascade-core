@@ -234,7 +234,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             this.scopeSegments as string[],
             mutableProperties
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
 
     dropProperty<K extends keyof NavigateToPath<T, Path>>(propertyName: K): PipelineBuilder<
@@ -248,7 +248,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             propertyName,
             this.scopeSegments as string[]
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
 
     groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
@@ -266,7 +266,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             arrayName,
             this.scopeSegments as string[]
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
 
     /*
@@ -342,12 +342,12 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             fullSegmentPath,
             propertyName,
             {
-                add: add as AddOperator<ImmutableProps, any>,
-                subtract: subtract as SubtractOperator<ImmutableProps, any>
+                add: add as AddOperator<ImmutableProps, TAggregate>,
+                subtract: subtract as SubtractOperator<ImmutableProps, TAggregate>
             },
             propertyToAggregate
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
 
     /**
@@ -456,7 +456,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             propertyName,
             (values) => Math.min(...values)
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
     
     /**
@@ -492,7 +492,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             propertyName,
             (values) => Math.max(...values)
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
     
     /**
@@ -527,7 +527,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             outputProperty,
             propertyName
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
     
     /**
@@ -573,7 +573,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
                 return String(value1) < String(value2);
             }
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
     
     /**
@@ -619,7 +619,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
                 return String(value1) > String(value2);
             }
         );
-        return new PipelineBuilder(this.input, newStep) as any;
+        return new PipelineBuilder(this.input, newStep);
     }
     
     /**
@@ -663,7 +663,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             this.scopeSegments as string[],
             mutableProperties
         );
-        return new PipelineBuilder(this.input, newStep, this.scopeSegments) as any;
+        return new PipelineBuilder(this.input, newStep, this.scopeSegments);
     }
 
     getTypeDescriptor(): TypeDescriptor {
@@ -771,18 +771,18 @@ function collectAllMutableProperties(descriptor: TypeDescriptor): string[] {
  * Creates a Map from keyed array for O(1) lookups.
  * This Map can be reused for multiple operations on the same array level.
  */
-function createKeyToIndexMap(state: KeyedArray<any>): Map<string, number> {
+function createKeyToIndexMap<T>(state: KeyedArray<T>): Map<string, number> {
     const keyToIndex = new Map<string, number>();
     state.forEach((item, index) => keyToIndex.set(item.key, index));
     return keyToIndex;
 }
 
-function addToKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps, keyToIndexMap?: Map<string, number>): KeyedArray<any> {
+function addToKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps, keyToIndexMap?: Map<string, number>): KeyedArray<T> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when setting state");
         }
-        return [...state, { key, value: immutableProps }];
+        return [...state, { key, value: immutableProps as T }];
     }
     else {
         if (keyPath.length === 0) {
@@ -800,14 +800,17 @@ function addToKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath:
             throw new Error("Path references unknown item when setting state");
         }
         const existingItem = state[existingItemIndex];
-        const existingArray = existingItem.value[segment] as KeyedArray<any> || [];
+        // Dynamic property access: segment is used as a property key at runtime
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
+        const value = existingItem.value as Record<string, any>;
+        const existingArray = (value[segment] as KeyedArray<unknown>) || [];
         const modifiedArray = addToKeyedArray(existingArray, segmentPath.slice(1), keyPath.slice(1), key, immutableProps);
         const modifiedItem = {
             key: parentKey,
             value: {
-                ...existingItem.value,
+                ...value,
                 [segmentPath[0]]: modifiedArray
-            }
+            } as T
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -817,7 +820,7 @@ function addToKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath:
     }
 }
 
-function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, keyToIndexMap?: Map<string, number>): KeyedArray<any> {
+function removeFromKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyPath: string[], key: string, keyToIndexMap?: Map<string, number>): KeyedArray<T> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when removing from state");
@@ -847,14 +850,17 @@ function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], key
             return state;
         }
         const existingItem = state[existingItemIndex];
-        const existingArray = existingItem.value[segment] as KeyedArray<any> || [];
+        // Dynamic property access: segment is used as a property key at runtime
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
+        const value = existingItem.value as Record<string, any>;
+        const existingArray = (value[segment] as KeyedArray<unknown>) || [];
         const modifiedArray = removeFromKeyedArray(existingArray, segmentPath.slice(1), keyPath.slice(1), key);
         const modifiedItem = {
             key: parentKey,
             value: {
-                ...existingItem.value,
+                ...value,
                 [segmentPath[0]]: modifiedArray
-            }
+            } as T
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -864,7 +870,7 @@ function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], key
     }
 }
 
-function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown, keyToIndexMap?: Map<string, number>): KeyedArray<any> {
+function modifyInKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown, keyToIndexMap?: Map<string, number>): KeyedArray<T> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when modifying state");
@@ -885,12 +891,14 @@ function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPa
             return state;
         }
         const existingItem = state[existingItemIndex];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
+        const existingValue = existingItem.value as Record<string, any>;
         const modifiedItem = {
             key: key,
             value: {
-                ...existingItem.value,
+                ...existingValue,
                 [name]: value
-            }
+            } as T
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -921,14 +929,17 @@ function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPa
             return state;
         }
         const existingItem = state[existingItemIndex];
-        const existingArray = existingItem.value[segment] as KeyedArray<any> || [];
+        // Dynamic property access: segment is used as a property key at runtime
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
+        const existingValue = existingItem.value as Record<string, any>;
+        const existingArray = (existingValue[segment] as KeyedArray<unknown>) || [];
         const modifiedArray = modifyInKeyedArray(existingArray, segmentPath.slice(1), keyPath.slice(1), key, name, value);
         const modifiedItem = {
             key: parentKey,
             value: {
-                ...existingItem.value,
+                ...existingValue,
                 [segmentPath[0]]: modifiedArray
-            }
+            } as T
         };
         return [
             ...state.slice(0, existingItemIndex),

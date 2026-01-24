@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import { computeGroupKey } from './util/hash';
+import type { KeyedArray } from './builder';
 
 /**
  * Pipeline runner script that processes JSON input through a pipeline
@@ -40,7 +41,7 @@ async function main() {
     try {
         // Read and parse input JSON
         console.log(`Reading input from: ${inputPath}`);
-        const inputData = JSON.parse(fs.readFileSync(inputPath, 'utf-8'));
+        const inputData: unknown = JSON.parse(fs.readFileSync(inputPath, 'utf-8'));
         
         if (!Array.isArray(inputData)) {
             throw new Error('Input JSON must be an array of objects');
@@ -52,19 +53,29 @@ async function main() {
         const { createPipeline } = await import('./example-pipeline');
         
         // Create the pipeline with a state setter
-        let currentState: any[] = [];
-        const setState = (transform: (state: any[]) => any[]) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime JSON data, typed by pipeline
+        let currentState: KeyedArray<any> = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime JSON data, typed by pipeline
+        const setState = (transform: (state: KeyedArray<any>) => KeyedArray<any>) => {
             currentState = transform(currentState);
         };
         
         const pipeline = createPipeline(setState);
         
         // Process each item through the pipeline
-        inputData.forEach((item: any) => {
-            // Generate a unique ID based on all properties of the item
-            const itemId = computeGroupKey(item, Object.keys(item));
+        inputData.forEach((item: unknown) => {
+            // Type guard: ensure item is an object
+            if (typeof item !== 'object' || item === null) {
+                throw new Error('Input array must contain objects');
+            }
             
-            pipeline.add(itemId, item);
+            // Generate a unique ID based on all properties of the item
+            const itemObj = item as Record<string, unknown>;
+            const itemId = computeGroupKey(itemObj, Object.keys(itemObj));
+            
+            // Runtime script: item structure validated by pipeline at runtime
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Runtime JSON data structure
+            pipeline.add(itemId, item as any);
         });
         
         // Write results to output file
