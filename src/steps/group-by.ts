@@ -3,7 +3,7 @@ import { type TypeDescriptor } from '../pipeline';
 import { computeGroupKey } from "../util/hash";
 import { pathsMatch, pathStartsWith } from "../util/path";
 
-export class GroupByStep<T extends {}, K extends keyof T, ArrayName extends string> implements Step {
+export class GroupByStep<T extends object, K extends keyof T, ArrayName extends string> implements Step {
     groupAddedHandlers: AddedHandler[] = [];
     itemAddedHandlers: AddedHandler[] = [];
     groupRemovedHandlers: RemovedHandler[] = [];

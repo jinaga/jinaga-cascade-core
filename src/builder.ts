@@ -199,7 +199,7 @@ type TransformWithAggregate<
  * Removes an array at the specified path from the type.
  */
 
-export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
+export class PipelineBuilder<T extends object, TStart, Path extends string[] = []> {
     constructor(
         private input: Pipeline<TStart>,
         private lastStep: Step,

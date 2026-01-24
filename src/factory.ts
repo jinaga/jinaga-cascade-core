@@ -36,7 +36,7 @@ class InputPipeline<T> implements Pipeline<T>, Step {
     }
 }
 
-export function createPipeline<TStart extends {}>(): PipelineBuilder<TStart, TStart> {
+export function createPipeline<TStart extends object>(): PipelineBuilder<TStart, TStart> {
     const start = new InputPipeline<TStart>();
     return new PipelineBuilder<TStart, TStart>(start, start);
 }
