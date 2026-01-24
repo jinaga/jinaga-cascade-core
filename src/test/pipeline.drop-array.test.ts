@@ -60,7 +60,7 @@ describe('pipeline dropProperty (array behavior)', () => {
     });
 
     it('should handle dropping an array that has no items', () => {
-        const [pipeline, getOutput] = createTestPipeline(() => 
+        const [_pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ category: string, value: number }>()
                 .groupBy(['category'], 'items')
                 .dropProperty('items')
@@ -160,7 +160,7 @@ describe('pipeline dropProperty event suppression (for arrays)', () => {
         // Add items - these won't appear because add events are suppressed
         const item3 = { category: 'B', value: 30 };
         pipeline2.add("item3", item3);
-        let output2 = getOutput2() as Array<{ category?: string; items?: unknown }>;
+        getOutput2(); // Trigger pipeline evaluation
         
         // Remove items - remove events at ['items'] should be suppressed
         // Since the type descriptor doesn't include ['items'], handlers aren't registered
@@ -188,8 +188,6 @@ describe('pipeline dropProperty event suppression (for arrays)', () => {
         const item2 = { category: 'A', value: 20 };
         pipeline.add("item1", item1);
         pipeline.add("item2", item2);
-        
-        let output = getOutput() as Array<{ category?: string; items?: unknown }>;
         
         // Modify items (by removing and re-adding with different values)
         // Modify events at ['items'] should be suppressed

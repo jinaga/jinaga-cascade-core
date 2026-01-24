@@ -37,7 +37,7 @@ describe('pipeline filter', () => {
         });
 
         it('should handle empty input', () => {
-            const [pipeline, getOutput] = createTestPipeline(() => 
+            const [_pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ value: number }>()
                     .filter(item => item.value > 0)
             );

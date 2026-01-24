@@ -28,7 +28,7 @@ describe('CommutativeAggregateStep', () => {
             
             const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
             aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ path: [...path], key, oldValue, newValue });
+                modifiedEvents.push({ path: [...path], key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             // Trigger add via the input pipeline
@@ -87,8 +87,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'totalPrice', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -121,8 +121,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'totalPrice', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as {
@@ -162,8 +162,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as {
@@ -200,8 +200,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as {
@@ -240,8 +240,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ key, oldValue, newValue });
+            aggregateStep.onModified([], 'totalPrice', (_path, key, oldValue, newValue) => {
+                modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -277,8 +277,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalSalary', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ key, oldValue, newValue });
+            aggregateStep.onModified([], 'totalSalary', (_path, key, oldValue, newValue) => {
+                modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as {
@@ -329,7 +329,7 @@ describe('CommutativeAggregateStep', () => {
             
             const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
             aggregateStep.onModified(['cities'], 'totalCapacity', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ path: [...path], key, oldValue, newValue });
+                modifiedEvents.push({ path: [...path], key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -360,7 +360,7 @@ describe('CommutativeAggregateStep', () => {
             
             const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
             aggregateStep.onModified(['cities'], 'venueCount', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ path: [...path], key, oldValue, newValue });
+                modifiedEvents.push({ path: [...path], key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -403,8 +403,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'sum', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'sum', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -493,7 +493,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: Stats | undefined; newValue: Stats }> = [];
-            aggregateStep.onModified([], 'stats', (path, key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'stats', (_path, _key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as Stats | undefined, newValue: newValue as Stats });
             });
             
@@ -526,8 +526,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as {
@@ -563,8 +563,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -595,8 +595,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as {
@@ -636,7 +636,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const addedProps: ImmutableProps[] = [];
-            aggregateStep.onAdded([], (path, key, props) => {
+            aggregateStep.onAdded([], (_path, _key, props) => {
                 addedProps.push({ ...props });
             });
             
@@ -666,7 +666,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedNames: string[] = [];
-            aggregateStep.onModified([], 'myCustomAggregate', (path, key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'myCustomAggregate', (_path, _key, _oldValue, _newValue) => {
                 modifiedNames.push('myCustomAggregate'); // Property name is known at registration time
             });
             
@@ -696,12 +696,12 @@ describe('CommutativeAggregateStep', () => {
             const addedEvents: Array<{ props: ImmutableProps }> = [];
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
             
-            aggregateStep.onAdded([], (path, key, props) => {
+            aggregateStep.onAdded([], (_path, _key, props) => {
                 addedEvents.push({ props: { ...props } });
             });
             
-            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'totalPrice', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
@@ -718,7 +718,7 @@ describe('CommutativeAggregateStep', () => {
             });
             
             // All modifiedEvents should have the aggregate property name
-            modifiedEvents.forEach(e => {
+            modifiedEvents.forEach(_e => {
             });
             
             // Verify final aggregate value
@@ -837,8 +837,8 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'count', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ oldValue, newValue });
+            aggregateStep.onModified([], 'count', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = builder['input'] as {

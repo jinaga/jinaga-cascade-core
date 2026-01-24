@@ -244,7 +244,7 @@ export class PickByMinMaxStep<
             const comparisonValue: number | string | undefined =
                 (value === null || value === undefined)
                     ? undefined
-                    : (isNumeric(value) ? Number(value) : JSON.stringify(value));
+                    : (isNumeric(value) ? Number(value) : (typeof value === 'string' ? value : JSON.stringify(value)));
             this.itemData.get(parentKeyHash)!.set(itemKeyHash, {
                 value: comparisonValue,
                 immutableProps: item,
@@ -266,7 +266,7 @@ export class PickByMinMaxStep<
             return;
         }
         // Determine if numeric or string
-        const comparisonValue: number | string = isNumeric(value) ? Number(value) : JSON.stringify(value);
+        const comparisonValue: number | string = isNumeric(value) ? Number(value) : (typeof value === 'string' ? value : JSON.stringify(value));
         
         
         // Check if this is a new min/max based on comparison function
@@ -431,7 +431,7 @@ export class PickByMinMaxStep<
             if (itemKeyHash.startsWith(parentPrefix)) {
                 const value = item[this.comparisonProperty];
                 if (value !== null && value !== undefined) {
-                    const comparisonValue: number | string = isNumeric(value) ? Number(value) : JSON.stringify(value);
+                    const comparisonValue: number | string = isNumeric(value) ? Number(value) : (typeof value === 'string' ? value : JSON.stringify(value));
                     itemsForParent.push({ item, value: comparisonValue });
                 }
             }

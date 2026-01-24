@@ -9,8 +9,6 @@ describe('pipeline mutable properties', () => {
                     .sum('items', 'price', 'total')
             );
 
-            const modifications: Array<{ propertyName: string; oldValue: any; newValue: any }> = [];
-            
             // Access the step to register for modifications
             // This test verifies the signature change works
             pipeline.add('item1', { category: 'A', price: 100 } as any);
