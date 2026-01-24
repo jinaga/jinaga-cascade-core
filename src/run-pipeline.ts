@@ -90,4 +90,7 @@ async function main() {
     }
 }
 
-main();
+main().catch((error: unknown) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+});
