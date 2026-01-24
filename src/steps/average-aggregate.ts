@@ -24,7 +24,7 @@ interface AverageState {
  * - Handles null/undefined by excluding from both sum and count
  */
 export class AverageAggregateStep<
-    TInput,
+    _TInput,
     TPath extends string[],
     TPropertyName extends string
 > implements Step {

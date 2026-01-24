@@ -165,7 +165,7 @@ type NavigateToArrayItem<T, Path extends string[]> =
  */
 type ReplaceArrayWithAggregate<
     T,
-    ArrayName extends string,
+    _ArrayName extends string,
     PropName extends string,
     TAggregate
 > = Expand<T & Record<PropName, TAggregate>>;
@@ -684,7 +684,7 @@ export class PipelineBuilder<T extends {}, TStart, Path extends string[] = []> {
                 batchedUpdater.add(segmentPath, keyPath, key, immutableProps);
             });
             
-            this.lastStep.onRemoved(segmentPath, (keyPath, key, immutableProps) => {
+            this.lastStep.onRemoved(segmentPath, (keyPath, key, _immutableProps) => {
                 batchedUpdater.remove(segmentPath, keyPath, key);
             });
             

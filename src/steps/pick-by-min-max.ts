@@ -8,23 +8,6 @@ function computeKeyPathHash(keyPath: string[]): string {
 }
 
 /**
- * Compares two values, supporting both numeric and string comparisons.
- * Returns true if value1 < value2.
- */
-function compareValues(value1: number | string, value2: number | string): boolean {
-    // If both are numbers, use numeric comparison
-    if (typeof value1 === 'number' && typeof value2 === 'number') {
-        return value1 < value2;
-    }
-    // If both are strings, use lexicographic comparison
-    if (typeof value1 === 'string' && typeof value2 === 'string') {
-        return value1 < value2;
-    }
-    // Mixed types: convert to string for comparison
-    return String(value1) < String(value2);
-}
-
-/**
  * Determines if a value is numeric.
  */
 function isNumeric(value: any): value is number {
@@ -44,7 +27,7 @@ function isNumeric(value: any): value is number {
  * - Supports both numeric and string comparisons
  */
 export class PickByMinMaxStep<
-    TInput,
+    _TInput,
     TPath extends string[],
     TPropertyName extends string
 > implements Step {

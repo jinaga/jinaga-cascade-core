@@ -62,7 +62,7 @@ function computeKeyPathHash(keyPath: string[]): string {
  * @template TAggregate - The type of the aggregate value
  */
 export class CommutativeAggregateStep<
-    TInput,
+    _TInput,
     TPath extends string[],
     TPropertyName extends string,
     TAggregate

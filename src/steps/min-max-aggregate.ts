@@ -15,7 +15,7 @@ function computeKeyPathHash(keyPath: string[]): string {
  * - Handles removal by tracking all values and recalculating
  */
 export class MinMaxAggregateStep<
-    TInput,
+    _TInput,
     TPath extends string[],
     TPropertyName extends string
 > implements Step {
