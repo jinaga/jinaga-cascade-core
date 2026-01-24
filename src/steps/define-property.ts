@@ -59,7 +59,7 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
         return { ...immutableProps, ...mutableProps } as T;
     }
     
-    private handleMutablePropertyChange(keyPath: string[], key: string, propertyName: string, oldValue: any, newValue: any): void {
+    private handleMutablePropertyChange(keyPath: string[], key: string, propertyName: string, _oldValue: any, newValue: any): void {
         // The key parameter is the item key - use it directly for lookup
         const itemState = this.itemStates.get(key);
         if (!itemState) {

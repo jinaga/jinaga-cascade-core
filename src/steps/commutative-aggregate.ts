@@ -177,7 +177,7 @@ export class CommutativeAggregateStep<
     /**
      * Handle when an item is added to the target array
      */
-    private handleItemAdded(keyPath: string[], itemKey: string, item: ImmutableProps): void {
+    private handleItemAdded(keyPath: string[], _itemKey: string, item: ImmutableProps): void {
         // keyPath contains the runtime keys leading to this item
         // For segmentPath ['cities', 'venues'], keyPath might be ['hash_TX', 'hash_Dallas']
         
@@ -232,7 +232,7 @@ export class CommutativeAggregateStep<
     /**
      * Handle when a mutable property of an aggregated item changes
      */
-    private handleItemPropertyChanged(keyPath: string[], itemKey: string, propertyName: string, oldValue: any, newValue: any): void {
+    private handleItemPropertyChanged(keyPath: string[], _itemKey: string, propertyName: string, oldValue: any, newValue: any): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
         
@@ -305,7 +305,7 @@ export class CommutativeAggregateStep<
     /**
      * Handle when an item is removed from the target array
      */
-    private handleItemRemoved(keyPath: string[], itemKey: string, item: ImmutableProps): void {
+    private handleItemRemoved(keyPath: string[], _itemKey: string, item: ImmutableProps): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
         

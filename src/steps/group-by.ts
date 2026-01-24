@@ -236,7 +236,7 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
     /**
      * Handle when a mutable grouping property changes - re-group the item if necessary
      */
-    private handleGroupingPropertyChange(keyPath: string[], key: string, propertyName: string, oldValue: any, newValue: any): void {
+    private handleGroupingPropertyChange(keyPath: string[], key: string, propertyName: string, _oldValue: any, newValue: any): void {
         // Find the item - key is the item key at the scope level
         const itemKey = keyPath.length > 0 ? keyPath[keyPath.length - 1] : key;
         

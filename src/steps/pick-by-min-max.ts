@@ -54,9 +54,6 @@ export class PickByMinMaxStep<
     /** Whether the comparison property is mutable (auto-detected) */
     private isPropertyMutable: boolean = false;
     
-    /** All mutable properties at root level */
-    private allMutableProperties: string[] = [];
-    
     /** Maps parent key path hash to Map<itemKeyHash, { value, immutableProps, mutableProps }> for tracking individual item values */
     private itemData: Map<string, Map<string, {
         value: number | string | undefined;
@@ -74,7 +71,6 @@ export class PickByMinMaxStep<
         // Auto-detect if comparison property is mutable from TypeDescriptor
         const inputDescriptor = input.getTypeDescriptor();
         const rootMutableProperties = inputDescriptor.mutableProperties || [];
-        this.allMutableProperties = rootMutableProperties;
         if (rootMutableProperties.includes(comparisonProperty)) {
             this.isPropertyMutable = true;
         }
@@ -92,7 +88,7 @@ export class PickByMinMaxStep<
         if (this.isPropertyMutable) {
             // Subscribe to all mutable properties so we can track their values
             for (const mutableProp of rootMutableProperties) {
-                this.input.onModified(this.segmentPath, mutableProp, (keyPath: string[], itemKey: string, oldValue: unknown, newValue: unknown) => {
+                this.input.onModified(this.segmentPath, mutableProp, (keyPath: string[], itemKey: string, _oldValue: unknown, newValue: unknown) => {
                     this.handleMutablePropertyChanged(keyPath, itemKey, mutableProp, newValue);
                 });
             }

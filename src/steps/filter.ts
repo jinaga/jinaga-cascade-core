@@ -97,7 +97,7 @@ export class FilterStep<T> implements Step {
                pathStartsWith(pathSegments, this.scopeSegments);
     }
 
-    private handleMutablePropertyChange(keyPath: string[], key: string, propertyName: string, oldValue: any, newValue: any): void {
+    private handleMutablePropertyChange(_keyPath: string[], key: string, propertyName: string, _oldValue: any, newValue: any): void {
         const itemState = this.itemStates.get(key);
         if (!itemState) {
             // Item not tracked (shouldn't happen if properly added first)

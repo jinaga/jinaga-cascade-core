@@ -700,14 +700,14 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
                 // so we register at both the current path and parent paths
                 mutableProperties.forEach(propertyName => {
                     // Register at current path level
-                    this.lastStep.onModified(segmentPath, propertyName, (keyPath, key, oldValue, newValue) => {
+                    this.lastStep.onModified(segmentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
                         batchedUpdater.modify(segmentPath, keyPath, key, propertyName, newValue);
                     });
                     
                     // Also register at parent level (for aggregates that emit at parent level)
                     if (segmentPath.length > 0) {
                         const parentPath = segmentPath.slice(0, -1);
-                        this.lastStep.onModified(parentPath, propertyName, (keyPath, key, oldValue, newValue) => {
+                        this.lastStep.onModified(parentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
                             batchedUpdater.modify(parentPath, keyPath, key, propertyName, newValue);
                         });
                     }
@@ -717,7 +717,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         });
         
         // Store the batched updater in WeakMap for type-safe access
-        pipelineUpdaters.set(this.input, batchedUpdater);
+        pipelineUpdaters.set(this.input, batchedUpdater as BatchedStateUpdater<unknown>);
         
         return this.input;
     }
