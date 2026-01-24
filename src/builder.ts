@@ -17,7 +17,7 @@ export type Transform<T> = (state: T) => T;
  * Type-safe storage for batched updaters associated with pipelines.
  * Uses WeakMap to avoid memory leaks and maintain type safety.
  */
-const pipelineUpdaters = new WeakMap<Pipeline<any>, BatchedStateUpdater<any>>();
+const pipelineUpdaters = new WeakMap<Pipeline<unknown>, BatchedStateUpdater<unknown>>();
 
 /**
  * Operation type for batched updates.
@@ -25,7 +25,7 @@ const pipelineUpdaters = new WeakMap<Pipeline<any>, BatchedStateUpdater<any>>();
 type BatchedOperation = 
     | { type: 'add', segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps }
     | { type: 'remove', segmentPath: string[], keyPath: string[], key: string }
-    | { type: 'modify', segmentPath: string[], keyPath: string[], key: string, name: string, value: any };
+    | { type: 'modify', segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown };
 
 /**
  * Batched state updater that collects multiple changes and applies them together.
@@ -58,7 +58,7 @@ class BatchedStateUpdater<T> {
         this.scheduleFlush();
     }
 
-    modify(segmentPath: string[], keyPath: string[], key: string, propertyName: string, newValue: any): void {
+    modify(segmentPath: string[], keyPath: string[], key: string, propertyName: string, newValue: unknown): void {
         this.pendingOperations.push({ type: 'modify', segmentPath, keyPath, key, name: propertyName, value: newValue });
         this.scheduleFlush();
     }
@@ -418,8 +418,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         return this.commutativeAggregate(
             arrayName,
             outputProperty,
-            (acc: number | undefined, _item: any) => (acc ?? 0) + 1,
-            (acc: number, _item: any) => acc - 1
+            (acc: number | undefined, _item: unknown) => (acc ?? 0) + 1,
+            (acc: number, _item: unknown) => acc - 1
         );
     }
     
@@ -726,7 +726,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * Flushes any pending batched updates for a pipeline.
      * Call this before reading results to ensure state is up-to-date.
      */
-    static flushBatchedUpdates(pipeline: Pipeline<any>): void {
+    static flushBatchedUpdates(pipeline: Pipeline<unknown>): void {
         const batchedUpdater = pipelineUpdaters.get(pipeline);
         if (batchedUpdater) {
             batchedUpdater.forceFlush();
@@ -737,7 +737,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * Disposes of the batched updater for a pipeline, cleaning up resources.
      * Call this when a pipeline is no longer needed to prevent memory leaks.
      */
-    static disposeBatchedUpdates(pipeline: Pipeline<any>): void {
+    static disposeBatchedUpdates(pipeline: Pipeline<unknown>): void {
         const batchedUpdater = pipelineUpdaters.get(pipeline);
         if (batchedUpdater) {
             batchedUpdater.dispose();
@@ -864,7 +864,7 @@ function removeFromKeyedArray(state: KeyedArray<any>, segmentPath: string[], key
     }
 }
 
-function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, name: string, value: any, keyToIndexMap?: Map<string, number>): KeyedArray<any> {
+function modifyInKeyedArray(state: KeyedArray<any>, segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown, keyToIndexMap?: Map<string, number>): KeyedArray<any> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when modifying state");
