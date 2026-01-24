@@ -323,7 +323,11 @@ export class PickByMinMaxStep<
             const newComparisonValue: number | string | undefined =
                 (newValue === null || newValue === undefined)
                     ? undefined
-                    : (isNumeric(newValue) ? Number(newValue) : String(newValue));
+                    : isNumeric(newValue) 
+                        ? Number(newValue) 
+                        : typeof newValue === 'string'
+                            ? newValue
+                            : undefined; // Non-comparable types are treated as undefined
             data.value = newComparisonValue;
         }
         
