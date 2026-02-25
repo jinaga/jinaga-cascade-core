@@ -726,6 +726,58 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
         });
     });
 
+    describe('heap integration edge cases', () => {
+        it('should transition through invalid values, empty heap, and re-adding values', () => {
+            // Covers:
+            // 1) Item starts invalid (undefined projection)
+            // 2) Item becomes valid after a property change
+            // 3) All tracked values become invalid (heap empty)
+            // 4) A value becomes valid again after heap is empty
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ groupId: string; itemId: string; amount: number }>()
+                    .groupBy(['groupId'], 'items')
+                    .in('items').groupBy(['itemId'], 'orders')
+                    .in('items').sum('orders', 'amount', 'orderTotal')
+                    .in('items').defineProperty(
+                        'eligibleTotal',
+                        item => (item.orderTotal ?? 0) >= 100 ? item.orderTotal : undefined,
+                        ['orderTotal']
+                    )
+                    .min('items', 'eligibleTotal', 'minEligibleTotal')
+            );
+
+            // A starts invalid (50 < 100), so min is undefined.
+            pipeline.add('o1', { groupId: 'G1', itemId: 'A', amount: 50 });
+            let output = getOutput();
+            expect(output[0].minEligibleTotal).toBeUndefined();
+
+            // B is valid (130), min becomes 130.
+            pipeline.add('o2', { groupId: 'G1', itemId: 'B', amount: 130 });
+            output = getOutput();
+            expect(output[0].minEligibleTotal).toBe(130);
+
+            // A becomes valid (50 + 60 = 110), min updates to 110.
+            pipeline.add('o3', { groupId: 'G1', itemId: 'A', amount: 60 });
+            output = getOutput();
+            expect(output[0].minEligibleTotal).toBe(110);
+
+            // A becomes invalid again (110 - 30 = 80), min falls back to B (130).
+            pipeline.add('o4', { groupId: 'G1', itemId: 'A', amount: -30 });
+            output = getOutput();
+            expect(output[0].minEligibleTotal).toBe(130);
+
+            // B also becomes invalid (130 - 40 = 90), heap becomes empty.
+            pipeline.add('o5', { groupId: 'G1', itemId: 'B', amount: -40 });
+            output = getOutput();
+            expect(output[0].minEligibleTotal).toBeUndefined();
+
+            // Re-add a valid value after full empty state (A: 80 + 30 = 110).
+            pipeline.add('o6', { groupId: 'G1', itemId: 'A', amount: 30 });
+            output = getOutput();
+            expect(output[0].minEligibleTotal).toBe(110);
+        });
+    });
+
     describe('comparison with manual mutableProperties (deprecated)', () => {
         it('should work automatically without deprecated mutableProperties param', () => {
             // This test confirms that auto-detection eliminates the need for manual params
@@ -1565,6 +1617,57 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             // KEY ASSERTION: cheapestProduct should now be prodB ($5)
             expect(output[0].cheapestProduct?.productId).toBe('prodB');
             expect(output[0].cheapestProduct?.adjustedPrice).toBe(5);
+        });
+    });
+
+    describe('heap integration edge cases', () => {
+        it('should handle invalid to valid transitions, empty heaps, and re-adding picks', () => {
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ categoryId: string; productId: string; amount: number }>()
+                    .groupBy(['categoryId'], 'products')
+                    .in('products').groupBy(['productId'], 'orders')
+                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('products').defineProperty(
+                        'eligiblePrice',
+                        item => (item.productTotal ?? 0) >= 100 ? item.productTotal : undefined,
+                        ['productTotal']
+                    )
+                    .pickByMin('products', 'eligiblePrice', 'bestDeal')
+            );
+
+            // A starts invalid (50 < 100), so there is no picked item.
+            pipeline.add('o1', { categoryId: 'C1', productId: 'A', amount: 50 });
+            let output = getOutput();
+            expect(output[0].bestDeal).toBeUndefined();
+
+            // B starts valid (130), so B is picked.
+            pipeline.add('o2', { categoryId: 'C1', productId: 'B', amount: 130 });
+            output = getOutput();
+            expect(output[0].bestDeal?.productId).toBe('B');
+            expect(output[0].bestDeal?.eligiblePrice).toBe(130);
+
+            // A becomes valid (50 + 60 = 110), so A becomes the new min pick.
+            pipeline.add('o3', { categoryId: 'C1', productId: 'A', amount: 60 });
+            output = getOutput();
+            expect(output[0].bestDeal?.productId).toBe('A');
+            expect(output[0].bestDeal?.eligiblePrice).toBe(110);
+
+            // A becomes invalid again (110 - 30 = 80), so pick falls back to B.
+            pipeline.add('o4', { categoryId: 'C1', productId: 'A', amount: -30 });
+            output = getOutput();
+            expect(output[0].bestDeal?.productId).toBe('B');
+            expect(output[0].bestDeal?.eligiblePrice).toBe(130);
+
+            // B becomes invalid too (130 - 40 = 90), heap becomes empty.
+            pipeline.add('o5', { categoryId: 'C1', productId: 'B', amount: -40 });
+            output = getOutput();
+            expect(output[0].bestDeal).toBeUndefined();
+
+            // Re-add a valid value after full empty state (A: 80 + 30 = 110).
+            pipeline.add('o6', { categoryId: 'C1', productId: 'A', amount: 30 });
+            output = getOutput();
+            expect(output[0].bestDeal?.productId).toBe('A');
+            expect(output[0].bestDeal?.eligiblePrice).toBe(110);
         });
     });
 

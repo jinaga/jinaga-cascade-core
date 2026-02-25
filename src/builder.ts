@@ -195,6 +195,31 @@ type TransformWithAggregate<
             : never
         : never;
 
+function compareMixedPrimitiveValues(left: number | string, right: number | string): number {
+    if (typeof left === 'number' && typeof right === 'number') {
+        return left - right;
+    }
+    if (typeof left === 'string' && typeof right === 'string') {
+        if (left < right) {
+            return -1;
+        }
+        if (left > right) {
+            return 1;
+        }
+        return 0;
+    }
+
+    const leftAsString = String(left);
+    const rightAsString = String(right);
+    if (leftAsString < rightAsString) {
+        return -1;
+    }
+    if (leftAsString > rightAsString) {
+        return 1;
+    }
+    return 0;
+}
+
 /**
  * Removes an array at the specified path from the type.
  */
@@ -454,7 +479,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             fullSegmentPath,
             outputProperty,
             propertyName,
-            (values) => Math.min(...values)
+            (left, right) => left - right
         );
         return new PipelineBuilder(this.input, newStep);
     }
@@ -490,7 +515,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             fullSegmentPath,
             outputProperty,
             propertyName,
-            (values) => Math.max(...values)
+            (left, right) => right - left
         );
         return new PipelineBuilder(this.input, newStep);
     }
@@ -562,16 +587,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             fullSegmentPath,
             outputProperty,
             propertyName,
-            (value1, value2) => {
-                // For min: value1 < value2
-                if (typeof value1 === 'number' && typeof value2 === 'number') {
-                    return value1 < value2;
-                }
-                if (typeof value1 === 'string' && typeof value2 === 'string') {
-                    return value1 < value2;
-                }
-                return String(value1) < String(value2);
-            }
+            compareMixedPrimitiveValues
         );
         return new PipelineBuilder(this.input, newStep);
     }
@@ -608,16 +624,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             fullSegmentPath,
             outputProperty,
             propertyName,
-            (value1, value2) => {
-                // For max: value1 > value2
-                if (typeof value1 === 'number' && typeof value2 === 'number') {
-                    return value1 > value2;
-                }
-                if (typeof value1 === 'string' && typeof value2 === 'string') {
-                    return value1 > value2;
-                }
-                return String(value1) > String(value2);
-            }
+            (left, right) => compareMixedPrimitiveValues(right, left)
         );
         return new PipelineBuilder(this.input, newStep);
     }
