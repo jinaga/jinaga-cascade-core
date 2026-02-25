@@ -44,6 +44,11 @@ interface ItemRecord {
     mutableProps: Record<string, unknown>;
 }
 
+interface HeapValue {
+    comparisonValue: number | string;
+    tieBreakerId: string;
+}
+
 /**
  * A step that picks the object with the minimum or maximum value of a property from a nested array.
  *
@@ -61,7 +66,7 @@ export class PickByMinMaxStep<
     private readonly items: Map<string, ItemRecord> = new Map();
 
     /** Heap per parent for ordered comparison values */
-    private readonly heaps: Map<string, IndexedHeap<number | string>> = new Map();
+    private readonly heaps: Map<string, IndexedHeap<HeapValue>> = new Map();
 
     /** Last emitted picked item per parent (for oldValue tracking) */
     private readonly lastEmitted: Map<string, ImmutableProps | undefined> = new Map();
@@ -206,10 +211,22 @@ export class PickByMinMaxStep<
         return computeKeyPathHash([...parentKeyPath, itemKey]);
     }
 
-    private getOrCreateHeap(parentKeyHash: string): IndexedHeap<number | string> {
+    private getOrCreateHeap(parentKeyHash: string): IndexedHeap<HeapValue> {
         let heap = this.heaps.get(parentKeyHash);
         if (!heap) {
-            heap = new IndexedHeap<number | string>(this.comparator);
+            heap = new IndexedHeap<HeapValue>((left, right) => {
+                const comparisonResult = this.comparator(left.comparisonValue, right.comparisonValue);
+                if (comparisonResult !== 0) {
+                    return comparisonResult;
+                }
+                if (left.tieBreakerId < right.tieBreakerId) {
+                    return -1;
+                }
+                if (left.tieBreakerId > right.tieBreakerId) {
+                    return 1;
+                }
+                return 0;
+            });
             this.heaps.set(parentKeyHash, heap);
         }
         return heap;
@@ -246,7 +263,13 @@ export class PickByMinMaxStep<
 
         const comparisonValue = this.getComparisonValue(itemRecord);
         if (comparisonValue !== undefined) {
-            this.getOrCreateHeap(parentKeyHash).insert(comparisonValue, itemKeyHash);
+            this.getOrCreateHeap(parentKeyHash).insert(
+                {
+                    comparisonValue,
+                    tieBreakerId: itemKeyHash
+                },
+                itemKeyHash
+            );
         }
 
         this.emitModification(parentKeyPath);
@@ -300,7 +323,13 @@ export class PickByMinMaxStep<
                     this.removeHeapIfEmpty(parentKeyHash);
                 }
                 if (newComparisonValue !== undefined) {
-                    this.getOrCreateHeap(parentKeyHash).insert(newComparisonValue, itemKeyHash);
+                    this.getOrCreateHeap(parentKeyHash).insert(
+                        {
+                            comparisonValue: newComparisonValue,
+                            tieBreakerId: itemKeyHash
+                        },
+                        itemKeyHash
+                    );
                 }
             }
         }
@@ -320,8 +349,7 @@ export class PickByMinMaxStep<
             if (itemRecord) {
                 return {
                     ...itemRecord.immutableProps,
-                    ...itemRecord.mutableProps,
-                    [this.comparisonProperty]: topEntry.value
+                    ...itemRecord.mutableProps
                 };
             }
             heap.removeById(topEntry.id);
