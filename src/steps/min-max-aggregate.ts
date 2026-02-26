@@ -16,7 +16,7 @@ function parseNumericValue(value: unknown): number | undefined {
         return undefined;
     }
     const parsed = Number(value);
-    return Number.isNaN(parsed) ? undefined : parsed;
+    return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 /**
