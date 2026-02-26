@@ -29,7 +29,13 @@ function parseComparisonValue(value: unknown): number | string | undefined {
     if (typeof value === 'string') {
         return value;
     }
-    return JSON.stringify(value);
+    try {
+        return JSON.stringify(value);
+    }
+    catch {
+        // Non-serializable values are treated as undefined and ignored in comparisons.
+        return undefined;
+    }
 }
 
 function comparisonValuesEqual(
