@@ -276,19 +276,21 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         return new PipelineBuilder(this.input, newStep);
     }
 
-    groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
+    groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string, ChildArrayName extends string = ArrayName>(
         groupingProperties: K[],
-        arrayName: ArrayName
+        arrayName: ArrayName,
+        childArrayName?: ChildArrayName
     ): PipelineBuilder<
         Path extends []
-            ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in ArrayName]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
-            : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in ArrayName]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
+            ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in ChildArrayName]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
+            : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in ChildArrayName]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart
     > {
-        const newStep = new GroupByStep<NavigateToPath<T, Path> & {}, K, ArrayName>(
+        const newStep = new GroupByStep<NavigateToPath<T, Path> & {}, K, ArrayName, ChildArrayName>(
             this.lastStep,
             groupingProperties,
             arrayName,
+            childArrayName,
             this.scopeSegments as string[]
         );
         return new PipelineBuilder(this.input, newStep);

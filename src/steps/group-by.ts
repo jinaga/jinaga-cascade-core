@@ -3,7 +3,12 @@ import { type TypeDescriptor } from '../pipeline';
 import { computeGroupKey } from "../util/hash";
 import { pathsMatch, pathStartsWith } from "../util/path";
 
-export class GroupByStep<T extends object, K extends keyof T, ArrayName extends string> implements Step {
+export class GroupByStep<
+    T extends object,
+    K extends keyof T,
+    ParentArrayName extends string,
+    ChildArrayName extends string = ParentArrayName
+> implements Step {
     groupAddedHandlers: AddedHandler[] = [];
     itemAddedHandlers: AddedHandler[] = [];
     groupRemovedHandlers: RemovedHandler[] = [];
@@ -23,12 +28,19 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
     // Maps item key to its current grouping values (for re-grouping)
     itemKeyToGroupingValues: Map<string, ImmutableProps> = new Map<string, ImmutableProps>();
 
+    private readonly childArrayName: ChildArrayName;
+    private readonly useParentLevelName: boolean;
+
     constructor(
         private input: Step,
         private groupingProperties: K[],
-        private arrayName: ArrayName,
+        private parentArrayName: ParentArrayName,
+        childArrayName: ChildArrayName | undefined,
         private scopeSegments: string[]  // Path segments where this groupBy operates
     ) {
+        this.childArrayName = (childArrayName ?? this.parentArrayName) as ChildArrayName;
+        this.useParentLevelName = childArrayName !== undefined;
+
         // Register with the input step to receive items at the scope path level
         this.input.onAdded(this.scopeSegments, (keyPath, itemKey, immutableProps) => {
             this.handleAdded(keyPath, itemKey, immutableProps);
@@ -54,21 +66,39 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
 
     getTypeDescriptor(): TypeDescriptor {
         const inputDescriptor = this.input.getTypeDescriptor();
-        
+
+        if (!this.useParentLevelName) {
+            // Backward-compatible behavior: "into" names the child array.
+            if (this.scopeSegments.length === 0) {
+                // Root level: wrap with the new array
+                return {
+                    arrays: [
+                        {
+                            name: this.parentArrayName,
+                            type: inputDescriptor  // Items have the input type
+                        }
+                    ]
+                };
+            } else {
+                // Scoped level: navigate to scope and transform there
+                return this.transformDescriptorAtPath(inputDescriptor, [...this.scopeSegments]);
+            }
+        }
+
         if (this.scopeSegments.length === 0) {
-            // Root level: wrap with the new array
+            // Parent name is logical at root. Child keeps the root scope name.
             return {
                 arrays: [
                     {
-                        name: this.arrayName,
+                        name: this.childArrayName,
                         type: inputDescriptor  // Items have the input type
                     }
                 ]
             };
-        } else {
-            // Scoped level: navigate to scope and transform there
-            return this.transformDescriptorAtPath(inputDescriptor, [...this.scopeSegments]);
         }
+
+        // Parent name is physical at nested scope: replace the scoped array name.
+        return this.transformDescriptorAtPathWithParentName(inputDescriptor, [...this.scopeSegments]);
     }
     
     /**
@@ -80,7 +110,7 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
             return {
                 arrays: [
                     {
-                        name: this.arrayName,
+                        name: this.parentArrayName,
                         type: descriptor
                     }
                 ]
@@ -102,6 +132,45 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
         };
     }
 
+    /**
+     * Transforms a scoped array so "into" names the parent array and the original
+     * scoped array name is preserved as the child array within each group.
+     */
+    private transformDescriptorAtPathWithParentName(descriptor: TypeDescriptor, remainingSegments: string[]): TypeDescriptor {
+        if (remainingSegments.length === 0) {
+            return descriptor;
+        }
+
+        const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
+
+        return {
+            arrays: descriptor.arrays.map(arrayDesc => {
+                if (arrayDesc.name !== currentSegment) {
+                    return arrayDesc;
+                }
+
+                if (remainingSegmentsAfter.length === 0) {
+                    return {
+                        name: this.parentArrayName,
+                        type: {
+                            arrays: [
+                                {
+                                    name: this.childArrayName,
+                                    type: arrayDesc.type
+                                }
+                            ]
+                        }
+                    };
+                }
+
+                return {
+                    name: arrayDesc.name,
+                    type: this.transformDescriptorAtPathWithParentName(arrayDesc.type, remainingSegmentsAfter)
+                };
+            })
+        };
+    }
+
     onAdded(pathSegments: string[], handler: AddedHandler): void {
         // Check if pathSegments matches our scope + group level
         if (this.isAtGroupLevel(pathSegments)) {
@@ -112,8 +181,8 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
             this.itemAddedHandlers.push(handler);
         } else if (this.isBelowItemLevel(pathSegments)) {
             // Handler is below this array in the tree
-            const scopeAndArraySegments = [...this.scopeSegments, this.arrayName];
-            const shiftedSegments = pathSegments.slice(scopeAndArraySegments.length);
+            const itemSegmentPath = this.getItemLevelSegments();
+            const shiftedSegments = pathSegments.slice(itemSegmentPath.length);
             
             // Register interceptor with input at scope segments + shifted segments
             this.input.onAdded([...this.scopeSegments, ...shiftedSegments], (notifiedKeyPath, itemKey, immutableProps) => {
@@ -145,8 +214,8 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
             this.itemRemovedHandlers.push(handler);
         } else if (this.isBelowItemLevel(pathSegments)) {
             // Handler is below this array in the tree
-            const scopeAndArraySegments = [...this.scopeSegments, this.arrayName];
-            const shiftedSegments = pathSegments.slice(scopeAndArraySegments.length);
+            const itemSegmentPath = this.getItemLevelSegments();
+            const shiftedSegments = pathSegments.slice(itemSegmentPath.length);
             
             // Register interceptor with input at scope segments + shifted segments
             this.input.onRemoved([...this.scopeSegments, ...shiftedSegments], (notifiedKeyPath, itemKey, immutableProps) => {
@@ -173,8 +242,8 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
             // we handle it via handleGroupingPropertyChange registered in constructor
         } else if (this.isAtItemLevel(pathSegments) || this.isBelowItemLevel(pathSegments)) {
             // Shift the path appropriately
-            const scopeAndArraySegments = [...this.scopeSegments, this.arrayName];
-            const shiftedSegments = pathSegments.slice(scopeAndArraySegments.length);
+            const itemSegmentPath = this.getItemLevelSegments();
+            const shiftedSegments = pathSegments.slice(itemSegmentPath.length);
             this.input.onModified([...this.scopeSegments, ...shiftedSegments], propertyName, (notifiedKeyPath, itemKey, oldValue, newValue) => {
                 // For root level (scopeSegments=[]), the itemKey is the key parameter
                 // For nested levels, extract from the key path
@@ -205,23 +274,33 @@ export class GroupByStep<T extends object, K extends keyof T, ArrayName extends 
      * Checks if pathSegments is at the group level (same as scopeSegments)
      */
     private isAtGroupLevel(pathSegments: string[]): boolean {
-        return pathsMatch(pathSegments, this.scopeSegments);
+        return pathsMatch(pathSegments, this.getGroupLevelSegments());
     }
     
     /**
      * Checks if pathSegments is at the item level (scopeSegments + arrayName)
      */
     private isAtItemLevel(pathSegments: string[]): boolean {
-        const itemSegmentPath = [...this.scopeSegments, this.arrayName];
-        return pathsMatch(pathSegments, itemSegmentPath);
+        return pathsMatch(pathSegments, this.getItemLevelSegments());
     }
     
     /**
      * Checks if pathSegments is below the item level
      */
     private isBelowItemLevel(pathSegments: string[]): boolean {
-        const itemSegmentPath = [...this.scopeSegments, this.arrayName];
+        const itemSegmentPath = this.getItemLevelSegments();
         return pathSegments.length > itemSegmentPath.length && pathStartsWith(pathSegments, itemSegmentPath);
+    }
+
+    private getGroupLevelSegments(): string[] {
+        if (this.useParentLevelName && this.scopeSegments.length > 0) {
+            return [...this.scopeSegments.slice(0, -1), this.parentArrayName];
+        }
+        return [...this.scopeSegments];
+    }
+
+    private getItemLevelSegments(): string[] {
+        return [...this.getGroupLevelSegments(), this.childArrayName];
     }
 
     /**
