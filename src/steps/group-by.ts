@@ -35,11 +35,12 @@ export class GroupByStep<
         private input: Step,
         private groupingProperties: K[],
         private parentArrayName: ParentArrayName,
-        childArrayName: ChildArrayName | undefined,
+        childArrayName: ChildArrayName,
+        useParentLevelName: boolean,
         private scopeSegments: string[]  // Path segments where this groupBy operates
     ) {
-        this.childArrayName = (childArrayName ?? this.parentArrayName) as ChildArrayName;
-        this.useParentLevelName = childArrayName !== undefined;
+        this.childArrayName = childArrayName;
+        this.useParentLevelName = useParentLevelName;
 
         // Register with the input step to receive items at the scope path level
         this.input.onAdded(this.scopeSegments, (keyPath, itemKey, immutableProps) => {

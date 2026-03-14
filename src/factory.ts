@@ -34,10 +34,17 @@ class InputPipeline<T> implements Pipeline<T>, Step {
     onModified(_path: string[], _propertyName: string, _handler: (path: string[], key: string, oldValue: unknown, newValue: unknown) => void): void {
         // No modifications at input level
     }
+
+    /**
+     * Optional root collection name used by groupBy when parent-level naming
+     * semantics are enabled by desktop pipeline runner.
+     */
+    __rootScopeName?: string;
 }
 
-export function createPipeline<TStart extends object>(): PipelineBuilder<TStart, TStart> {
+export function createPipeline<TStart extends object>(rootScopeName?: string): PipelineBuilder<TStart, TStart> {
     const start = new InputPipeline<TStart>();
+    start.__rootScopeName = rootScopeName;
     return new PipelineBuilder<TStart, TStart>(start, start);
 }
 
