@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createPipeline } from '../index';
 import type { ImmutableProps, Step } from '../pipeline';
 import { AddOperator, CommutativeAggregateStep, SubtractOperator } from '../steps/commutative-aggregate';

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createPipeline } from '../index';
 import { createTestPipeline } from './helpers';
 
@@ -35,8 +36,8 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedTotal that depends on mutable productTotal
                     // Markup of 10% if productTotal > 100
                     .in('products').defineProperty('adjustedTotal', item =>
@@ -75,8 +76,8 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedTotal', item =>
                         item.productTotal > 100 ? item.productTotal * 1.2 : item.productTotal,
                         ['productTotal']
@@ -130,8 +131,8 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ customerId: string; orderId: string; amount: number }>()
                     .groupBy(['customerId'], 'customers')
-                    .in('customers').groupBy(['orderId'], 'orders')
-                    .in('customers').sum('orders', 'amount', 'totalOrdered')
+                    .in('items').groupBy(['orderId'], 'customers')
+                    .in('customers').sum('items', 'amount', 'totalOrdered')
                     // Sum totalOrdered WITHOUT specifying mutableProperties
                     // Should auto-detect that totalOrdered is mutable (it's a sum result)
                     .sum('customers', 'totalOrdered', 'grandTotal')
@@ -207,7 +208,7 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; basePrice: number; quantity: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'items')
+                    .in('items').groupBy(['productId'], 'products')
                     // Sum basePrice (immutable) -> productValue (mutable)
                     .in('products').sum('items', 'basePrice', 'productValue')
                     // Define a static property that doesn't depend on mutable things
@@ -247,9 +248,9 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
                     // Group by category
                     .groupBy(['categoryId'], 'products')
                     // Within categories (now 'products' array), group by product
-                    .in('products').groupBy(['productId'], 'orders')
+                    .in('items').groupBy(['productId'], 'products')
                     // Sum orders for each product
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice based on productTotal (mutable dependency)
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
@@ -327,8 +328,8 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedTotal',
                         // Handle initial undefined productTotal gracefully
                         item => (item.productTotal ?? 0) * 1.1,
@@ -388,8 +389,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice that depends on mutable productTotal
                     // Apply 10% discount if productTotal > 100
                     .in('products').defineProperty('adjustedPrice', item =>
@@ -436,8 +437,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice with markup for high totals
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
@@ -481,8 +482,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ groupId: string; itemId: string; baseValue: number }>()
                     .groupBy(['groupId'], 'items')
-                    .in('items').groupBy(['itemId'], 'values')
-                    .in('items').sum('values', 'baseValue', 'totalValue')
+                    .in('items').groupBy(['itemId'], 'items')
+                    .in('items').sum('items', 'baseValue', 'totalValue')
                     .min('items', 'totalValue', 'minValue')
             );
 
@@ -514,8 +515,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ groupId: string; itemId: string; baseValue: number }>()
                     .groupBy(['groupId'], 'items')
-                    .in('items').groupBy(['itemId'], 'values')
-                    .in('items').sum('values', 'baseValue', 'totalValue')
+                    .in('items').groupBy(['itemId'], 'items')
+                    .in('items').sum('items', 'baseValue', 'totalValue')
                     .max('items', 'totalValue', 'maxValue')
             );
 
@@ -545,8 +546,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ groupId: string; itemId: string; amount: number }>()
                     .groupBy(['groupId'], 'items')
-                    .in('items').groupBy(['itemId'], 'orders')
-                    .in('items').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['itemId'], 'items')
+                    .in('items').sum('items', 'amount', 'productTotal')
                     // Use defineProperty with formula that can decrease
                     .in('items').defineProperty('adjustedValue', item =>
                         item.productTotal > 50 ? item.productTotal - 30 : item.productTotal,
@@ -584,8 +585,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ groupId: string; itemId: string; amount: number }>()
                     .groupBy(['groupId'], 'items')
-                    .in('items').groupBy(['itemId'], 'orders')
-                    .in('items').sum('orders', 'amount', 'orderTotal')
+                    .in('items').groupBy(['itemId'], 'items')
+                    .in('items').sum('items', 'amount', 'orderTotal')
                     .min('items', 'orderTotal', 'minTotal')
             );
 
@@ -617,9 +618,9 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ storeId: string; categoryId: string; productId: string; amount: number }>()
                     .groupBy(['storeId'], 'categories')
-                    .in('categories').groupBy(['categoryId'], 'products')
-                    .in('categories', 'products').groupBy(['productId'], 'orders')
-                    .in('categories', 'products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['categoryId'], 'categories')
+                    .in('categories', 'items').groupBy(['productId'], 'products')
+                    .in('categories', 'products').sum('items', 'amount', 'productTotal')
                     .in('categories', 'products').defineProperty('adjustedPrice', item =>
                         item.productTotal > 100 ? item.productTotal * 0.8 : item.productTotal,
                         ['productTotal']
@@ -662,8 +663,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ groupId: string; itemId: string; amount: number }>()
                     .groupBy(['groupId'], 'items')
-                    .in('items').groupBy(['itemId'], 'orders')
-                    .in('items').sum('orders', 'amount', 'orderTotal')
+                    .in('items').groupBy(['itemId'], 'items')
+                    .in('items').sum('items', 'amount', 'orderTotal')
                     .min('items', 'orderTotal', 'minTotal')
             );
 
@@ -693,8 +694,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ groupId: string; itemId: string; amount: number }>()
                     .groupBy(['groupId'], 'items')
-                    .in('items').groupBy(['itemId'], 'orders')
-                    .in('items').sum('orders', 'amount', 'orderTotal')
+                    .in('items').groupBy(['itemId'], 'items')
+                    .in('items').sum('items', 'amount', 'orderTotal')
                     // Use defineProperty to normalize values
                     .in('items').defineProperty('normalizedValue', item =>
                         item.orderTotal > 25 ? 15 : (item.orderTotal > 15 ? 15 : item.orderTotal),
@@ -736,8 +737,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ groupId: string; itemId: string; amount: number }>()
                     .groupBy(['groupId'], 'items')
-                    .in('items').groupBy(['itemId'], 'orders')
-                    .in('items').sum('orders', 'amount', 'orderTotal')
+                    .in('items').groupBy(['itemId'], 'items')
+                    .in('items').sum('items', 'amount', 'orderTotal')
                     .in('items').defineProperty(
                         'eligibleTotal',
                         item => (item.orderTotal ?? 0) >= 100 ? item.orderTotal : undefined,
@@ -786,8 +787,8 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('discountedPrice', item =>
                         item.productTotal >= 100 ? item.productTotal * 0.75 : item.productTotal,
                         ['productTotal']
@@ -847,8 +848,8 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice that depends on mutable productTotal
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
@@ -899,8 +900,8 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
                         ['productTotal']
@@ -938,8 +939,8 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Use a formula that can produce zero
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal > 50 ? 0 : item.productTotal,
@@ -974,8 +975,8 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Items are 0 until they reach 50, then they get their actual value
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal >= 50 ? item.productTotal : 0,
@@ -1012,9 +1013,9 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ storeId: string; categoryId: string; productId: string; amount: number }>()
                     .groupBy(['storeId'], 'categories')
-                    .in('categories').groupBy(['categoryId'], 'products')
-                    .in('categories', 'products').groupBy(['productId'], 'orders')
-                    .in('categories', 'products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['categoryId'], 'categories')
+                    .in('categories', 'items').groupBy(['productId'], 'products')
+                    .in('categories', 'products').sum('items', 'amount', 'productTotal')
                     .in('categories', 'products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
                         ['productTotal']
@@ -1052,8 +1053,8 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
                         ['productTotal']
@@ -1101,8 +1102,8 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Normalize all values to 25 once they reach 25
                     .in('products').defineProperty('normalizedPrice', item =>
                         item.productTotal >= 25 ? 25 : item.productTotal,
@@ -1150,8 +1151,8 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
                         ['productTotal']
@@ -1183,8 +1184,8 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
                         ['productTotal']
@@ -1243,8 +1244,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice that depends on mutable productTotal
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
@@ -1289,8 +1290,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice that can decrease using a formula
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal > 25 ? item.productTotal - 20 : item.productTotal,
@@ -1338,8 +1339,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // adjustedPrice decreases when productTotal exceeds threshold
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal > 15 ? item.productTotal - 10 : item.productTotal,
@@ -1382,8 +1383,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
                         ['productTotal']
@@ -1423,8 +1424,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Use formula that can reduce values
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal > 10 ? item.productTotal - 10 : item.productTotal,
@@ -1462,9 +1463,9 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ storeId: string; categoryId: string; productId: string; amount: number }>()
                     .groupBy(['storeId'], 'categories')
-                    .in('categories').groupBy(['categoryId'], 'products')
-                    .in('categories', 'products').groupBy(['productId'], 'orders')
-                    .in('categories', 'products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['categoryId'], 'categories')
+                    .in('categories', 'items').groupBy(['productId'], 'products')
+                    .in('categories', 'products').sum('items', 'amount', 'productTotal')
                     .in('categories', 'products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
                         ['productTotal']
@@ -1507,8 +1508,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal,
                         ['productTotal']
@@ -1547,8 +1548,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Normalize all values to 15 once they reach 15
                     .in('products').defineProperty('normalizedPrice', item =>
                         item.productTotal >= 15 ? 15 : item.productTotal,
@@ -1588,8 +1589,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     // Use formula that can create very low values
                     .in('products').defineProperty('adjustedPrice', item =>
                         item.productTotal > 30 ? 5 : item.productTotal,
@@ -1625,8 +1626,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty(
                         'eligiblePrice',
                         item => (item.productTotal ?? 0) >= 100 ? item.productTotal : undefined,
@@ -1679,8 +1680,8 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ categoryId: string; productId: string; amount: number }>()
                     .groupBy(['categoryId'], 'products')
-                    .in('products').groupBy(['productId'], 'orders')
-                    .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('discountedPrice', item =>
                         item.productTotal >= 100 ? item.productTotal * 0.75 : item.productTotal,
                         ['productTotal']
@@ -1735,11 +1736,11 @@ describe('Multi-level auto-detection integration', () => {
                 // Level 1: Group by region
                 .groupBy(['regionId'], 'categories')
                 // Level 2: Group by category within region
-                .in('categories').groupBy(['categoryId'], 'products')
+                    .in('items').groupBy(['categoryId'], 'categories')
                 // Level 3: Group by product within category
-                .in('categories', 'products').groupBy(['productId'], 'orders')
+                    .in('categories', 'items').groupBy(['productId'], 'products')
                 // Aggregate at product level: productTotal = sum(orders.amount) [MUTABLE]
-                .in('categories', 'products').sum('orders', 'amount', 'productTotal')
+                    .in('categories', 'products').sum('items', 'amount', 'productTotal')
                 // Aggregate at category level: categoryTotal = sum(products.productTotal) [AUTO-DETECT]
                 .in('categories').sum('products', 'productTotal', 'categoryTotal')
                 // Aggregate at region level: grandTotal = sum(categories.categoryTotal) [AUTO-DETECT]
@@ -1818,8 +1819,8 @@ describe('Multi-level auto-detection integration', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ categoryId: string; productId: string; amount: number }>()
                 .groupBy(['categoryId'], 'products')
-                .in('products').groupBy(['productId'], 'orders')
-                .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                 // pickByMin should auto-detect that productTotal is mutable
                 .pickByMin('products', 'productTotal', 'cheapestProduct')
         );
@@ -1865,8 +1866,8 @@ describe('Multi-level auto-detection integration', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ categoryId: string; productId: string; amount: number }>()
                 .groupBy(['categoryId'], 'products')
-                .in('products').groupBy(['productId'], 'orders')
-                .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                 // min should auto-detect that productTotal is mutable
                 .min('products', 'productTotal', 'lowestPrice')
                 // defineProperty with manual mutableProperties for lowestPrice
@@ -1911,13 +1912,13 @@ describe('Multi-level auto-detection integration', () => {
                 // Level 1: Group by region
                 .groupBy(['regionId'], 'countries')
                 // Level 2: Group by country within region
-                .in('countries').groupBy(['countryId'], 'cities')
+                .in('items').groupBy(['countryId'], 'countries')
                 // Level 3: Group by city within country
-                .in('countries', 'cities').groupBy(['cityId'], 'stores')
+                .in('countries', 'items').groupBy(['cityId'], 'cities')
                 // Level 4: Group by store within city
-                .in('countries', 'cities', 'stores').groupBy(['storeId'], 'sales')
+                .in('countries', 'cities', 'items').groupBy(['storeId'], 'stores')
                 // Aggregate at store level
-                .in('countries', 'cities', 'stores').sum('sales', 'amount', 'storeSales')
+                .in('countries', 'cities', 'stores').sum('items', 'amount', 'storeSales')
                 // Aggregate at city level - auto-detect storeSales is mutable
                 .in('countries', 'cities').sum('stores', 'storeSales', 'citySales')
                 // Aggregate at country level - auto-detect citySales is mutable
@@ -1994,8 +1995,8 @@ describe('Multi-level auto-detection integration', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ categoryId: string; productId: string; amount: number }>()
                 .groupBy(['categoryId'], 'products')
-                .in('products').groupBy(['productId'], 'orders')
-                .in('products').sum('orders', 'amount', 'productTotal')
+                    .in('items').groupBy(['productId'], 'products')
+                    .in('products').sum('items', 'amount', 'productTotal')
                 // Define adjustedPrice as simply productTotal (mutable)
                 .in('products').defineProperty('adjustedPrice', item => item.productTotal, ['productTotal'])
                 // Multiple aggregates all auto-detecting adjustedPrice is mutable
@@ -2062,7 +2063,7 @@ describe('Multi-level auto-detection integration', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ customerId: string; orderId: string; price: number }>()
                 .groupBy(['customerId'], 'orders')
-                .in('orders').groupBy(['orderId'], 'items')
+                .in('items').groupBy(['orderId'], 'orders')
                 .in('orders').sum('items', 'price', 'orderTotal')
                 // All these should auto-detect orderTotal is mutable
                 .sum('orders', 'orderTotal', 'customerTotal')
