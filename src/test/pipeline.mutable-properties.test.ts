@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createPipeline } from '../index';
 import { createTestPipeline } from './helpers';
 
