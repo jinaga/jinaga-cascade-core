@@ -33,7 +33,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
-                        .sum('orders', 'amount', 'totalAmount')
+                        .sum('items', 'amount', 'totalAmount')
                         .filter(item => item.totalAmount > 100, ['totalAmount'])
                 );
 
@@ -60,7 +60,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
-                        .sum('orders', 'amount', 'totalAmount')
+                        .sum('items', 'amount', 'totalAmount')
                         .filter(item => item.totalAmount > 100, ['totalAmount'])
                 );
 
@@ -94,7 +94,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
-                        .sum('orders', 'amount', 'totalAmount')
+                        .sum('items', 'amount', 'totalAmount')
                         .filter(item => item.totalAmount > 100, ['totalAmount'])
                 );
 
@@ -124,7 +124,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
-                        .sum('orders', 'amount', 'totalAmount')
+                        .sum('items', 'amount', 'totalAmount')
                         .filter(item => item.totalAmount > 100, ['totalAmount'])
                 );
 
@@ -155,7 +155,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
-                        .sum('orders', 'amount', 'totalAmount')
+                        .sum('items', 'amount', 'totalAmount')
                         .filter(item => item.totalAmount > 100, ['totalAmount'])
                 );
 
@@ -179,7 +179,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
-                        .sum('orders', 'amount', 'totalAmount')
+                        .sum('items', 'amount', 'totalAmount')
                         .filter(item => item.totalAmount > 100, ['totalAmount'])
                 );
 
@@ -252,7 +252,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -297,7 +297,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -344,7 +344,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -378,7 +378,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -412,7 +412,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -458,7 +458,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -489,7 +489,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -528,7 +528,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -552,7 +552,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
                             if (item.total < 200) return 'low';
                             if (item.total < 400) return 'medium';
@@ -583,7 +583,7 @@ describe('pipeline mutable properties', () => {
                 const [pipeline, getOutput] = createTestPipeline(() =>
                     createPipeline<{ entityId: string; amount: number }>()
                         .groupBy(['entityId'], 'entries')
-                        .sum('entries', 'amount', 'total')
+                        .sum('items', 'amount', 'total')
                         .groupBy(['total'], 'entities')
                 );
 

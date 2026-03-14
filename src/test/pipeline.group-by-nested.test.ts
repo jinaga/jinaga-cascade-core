@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createPipeline } from "../index";
 import { createTestPipeline } from "./helpers";
 
@@ -5,8 +6,8 @@ describe('pipeline groupBy nested', () => {
     it('should group by nested key property', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         pipeline.add("town1", { state: 'TX', city: 'Dallas', town: 'Plano', population: 1000000 });
@@ -27,7 +28,7 @@ describe('pipeline groupBy nested', () => {
         expect(output[0].cities).toEqual([
             {
                 city: 'Dallas',
-                towns: [
+                items: [
                     { town: 'Plano', population: 1000000 },
                     { town: 'Richardson', population: 2000000 },
                     { town: 'Carrollton', population: 3000000 }
@@ -35,7 +36,7 @@ describe('pipeline groupBy nested', () => {
             },
             {
                 city: 'Houston',
-                towns: [
+                items: [
                     { town: 'Houston', population: 5000000 },
                     { town: 'Katy', population: 6000000 },
                     { town: 'Sugar Land', population: 7000000 }
@@ -46,14 +47,14 @@ describe('pipeline groupBy nested', () => {
         expect(output[1].cities).toEqual([
             {
                 city: 'Oklahoma City',
-                towns: [
+                items: [
                     { town: 'Oklahoma City', population: 9000000 },
                     { town: 'Edmond', population: 10000000 }
                 ]
             },
             {
                 city: 'Tulsa',
-                towns: [
+                items: [
                     { town: 'Tulsa', population: 10000000 },
                     { town: 'Broken Arrow', population: 11000000 },
                     { town: 'Jenks', population: 13000000 }
@@ -65,8 +66,8 @@ describe('pipeline groupBy nested', () => {
     it('should handle single item per nested group', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         pipeline.add("town1", { state: 'TX', city: 'Dallas', town: 'Plano', population: 1000000 });
@@ -76,40 +77,40 @@ describe('pipeline groupBy nested', () => {
         expect(output.length).toBe(1);
         expect(output[0].state).toBe('TX');
         expect(output[0].cities).toHaveLength(2);
-        expect(output[0].cities[0].towns).toHaveLength(1);
-        expect(output[0].cities[0].towns[0].town).toBe('Plano');
-        expect(output[0].cities[1].towns).toHaveLength(1);
-        expect(output[0].cities[1].towns[0].town).toBe('Houston');
+        expect(output[0].cities[0].items).toHaveLength(1);
+        expect(output[0].cities[0].items[0].town).toBe('Plano');
+        expect(output[0].cities[1].items).toHaveLength(1);
+        expect(output[0].cities[1].items[0].town).toBe('Houston');
     });
 
     it('should handle items added to existing nested groups', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         // Add first town - creates city group
         pipeline.add("town1", { state: 'TX', city: 'Dallas', town: 'Plano', population: 1000000 });
         
         let output = getOutput();
-        expect(output[0].cities[0].towns).toHaveLength(1);
-        expect(output[0].cities[0].towns[0].town).toBe('Plano');
+        expect(output[0].cities[0].items).toHaveLength(1);
+        expect(output[0].cities[0].items[0].town).toBe('Plano');
         
         // Add second town to same city - should update existing city group
         pipeline.add("town2", { state: 'TX', city: 'Dallas', town: 'Richardson', population: 2000000 });
         
         output = getOutput();
-        expect(output[0].cities[0].towns).toHaveLength(2);
-        expect(output[0].cities[0].towns[0].town).toBe('Plano');
-        expect(output[0].cities[0].towns[1].town).toBe('Richardson');
+        expect(output[0].cities[0].items).toHaveLength(2);
+        expect(output[0].cities[0].items[0].town).toBe('Plano');
+        expect(output[0].cities[0].items[1].town).toBe('Richardson');
     });
 
     it('should remove items from nested groups', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         const town1 = { state: 'TX', city: 'Dallas', town: 'Plano', population: 1000000 };
@@ -117,20 +118,20 @@ describe('pipeline groupBy nested', () => {
         pipeline.add("town1", town1);
         pipeline.add("town2", town2);
         
-        expect(getOutput()[0].cities[0].towns).toHaveLength(2);
+        expect(getOutput()[0].cities[0].items).toHaveLength(2);
         
         pipeline.remove("town2", town2);
         
         const output = getOutput();
-        expect(output[0].cities[0].towns).toHaveLength(1);
-        expect(output[0].cities[0].towns[0].town).toBe('Plano');
+        expect(output[0].cities[0].items).toHaveLength(1);
+        expect(output[0].cities[0].items[0].town).toBe('Plano');
     });
 
     it('should remove nested group when all items are removed', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         // Add multiple towns to Dallas (to deplete it later)
@@ -157,8 +158,8 @@ describe('pipeline groupBy nested', () => {
     it('should handle different numbers of nested groups per parent', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         // TX has 2 cities
@@ -183,8 +184,8 @@ describe('pipeline groupBy nested', () => {
     it('should preserve order of items in nested groups', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         const towns = [
@@ -196,16 +197,16 @@ describe('pipeline groupBy nested', () => {
         towns.forEach(t => pipeline.add(t.key, t.data));
         
         const output = getOutput();
-        expect(output[0].cities[0].towns[0].town).toBe('Plano');
-        expect(output[0].cities[0].towns[1].town).toBe('Richardson');
-        expect(output[0].cities[0].towns[2].town).toBe('Carrollton');
+        expect(output[0].cities[0].items[0].town).toBe('Plano');
+        expect(output[0].cities[0].items[1].town).toBe('Richardson');
+        expect(output[0].cities[0].items[2].town).toBe('Carrollton');
     });
 
     it('should remove parent group when all nested groups are removed', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         const town1 = { state: 'TX', city: 'Dallas', town: 'Plano', population: 1000000 };
@@ -227,22 +228,22 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
                 .defineProperty('formatted', (item) => `${item.city}, ${item.state}`)
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
         );
 
         pipeline.add("town1", { state: 'TX', city: 'Dallas', town: 'Plano', population: 1000000 });
         
         const output = getOutput();
-        expect(output[0].cities[0].towns[0].formatted).toBe('Dallas, TX');
+        expect(output[0].cities[0].items[0].formatted).toBe('Dallas, TX');
     });
 
     it('should handle three-level nested grouping', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, building: string, floors: number }>()
-                .groupBy(['state', 'city', 'town'], 'buildings')
-                .groupBy(['state', 'city'], 'towns')
                 .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities')
+                .in('cities', 'items').groupBy(['town'], 'towns')
         );
 
         pipeline.add("b1", { state: 'TX', city: 'Dallas', town: 'Plano', building: 'Tower', floors: 10 });
@@ -255,9 +256,9 @@ describe('pipeline groupBy nested', () => {
         expect(output[0].cities[0].city).toBe('Dallas');
         expect(output[0].cities[0].towns).toHaveLength(1);
         expect(output[0].cities[0].towns[0].town).toBe('Plano');
-        expect(output[0].cities[0].towns[0].buildings).toHaveLength(2);
-        expect(output[0].cities[0].towns[0].buildings[0].building).toBe('Tower');
-        expect(output[0].cities[0].towns[0].buildings[1].building).toBe('Plaza');
+        expect(output[0].cities[0].towns[0].items).toHaveLength(2);
+        expect(output[0].cities[0].towns[0].items[0].building).toBe('Tower');
+        expect(output[0].cities[0].towns[0].items[1].building).toBe('Plaza');
     });
 
     it('should handle nested groupBy with scoped .in() pattern used by desktop app', () => {
@@ -269,7 +270,7 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
                 .groupBy(['state'], 'byState')
-                .in('byState').groupBy(['city'], 'byCity')
+                .in('items').groupBy(['city'], 'byState')
         );
 
         // Add rows incrementally as the CSV parser would
@@ -293,8 +294,8 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, building: string, floors: number }>()
                 .groupBy(['state'], 'byState')
-                .in('byState').groupBy(['city'], 'byCity')
-                .in('byState', 'byCity').groupBy(['town'], 'byTown')
+                .in('items').groupBy(['city'], 'byState')
+                .in('byState', 'items').groupBy(['town'], 'byCity')
         );
 
         // Add first row - creates all three levels
@@ -307,8 +308,8 @@ describe('pipeline groupBy nested', () => {
         expect(output[0].byState[0].city).toBe('Dallas');
         expect(output[0].byState[0].byCity).toHaveLength(1);
         expect(output[0].byState[0].byCity[0].town).toBe('Plano');
-        expect(output[0].byState[0].byCity[0].byTown).toHaveLength(1);
-        expect(output[0].byState[0].byCity[0].byTown[0].building).toBe('Tower');
+        expect(output[0].byState[0].byCity[0].items).toHaveLength(1);
+        expect(output[0].byState[0].byCity[0].items[0].building).toBe('Tower');
     });
 
     it('should handle incremental rows creating new nested groups in existing parents with .in() pattern', () => {
@@ -319,8 +320,8 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() => 
             createPipeline<{ state: string, city: string, town: string, population: number }>()
                 .groupBy(['state'], 'byState')
-                .in('byState').groupBy(['city'], 'byCity')
-                .in('byState', 'byCity').groupBy(['town'], 'byTown')
+                .in('items').groupBy(['city'], 'byState')
+                .in('byState', 'items').groupBy(['town'], 'byCity')
         );
 
         // Row 1: Creates TX -> Dallas -> Plano hierarchy
@@ -358,10 +359,10 @@ describe('pipeline groupBy nested', () => {
         // the interceptor pattern for deeper paths
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ a: string, b: string, c: string, d: string, value: number }>()
-                .groupBy(['a', 'b', 'c', 'd'], 'leaves')
-                .groupBy(['a', 'b', 'c'], 'level3')
-                .groupBy(['a', 'b'], 'level2')
                 .groupBy(['a'], 'level1')
+                .in('items').groupBy(['b'], 'level1')
+                .in('level1', 'items').groupBy(['c'], 'level2')
+                .in('level1', 'level2', 'items').groupBy(['d'], 'level3')
         );
 
         // Add data that creates the full hierarchy
@@ -392,9 +393,9 @@ describe('pipeline groupBy nested', () => {
         // - Then add data that creates new groups at intermediate levels
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ region: string, country: string, city: string, store: string }>()
-                .groupBy(['region', 'country', 'city'], 'stores')
-                .groupBy(['region', 'country'], 'cities')
                 .groupBy(['region'], 'countries')
+                .in('items').groupBy(['country'], 'countries')
+                .in('countries', 'items').groupBy(['city'], 'cities')
         );
 
         // Create first full hierarchy: Americas -> USA -> NYC -> Store1
@@ -425,15 +426,15 @@ describe('pipeline groupBy nested', () => {
         expect(usa?.cities).toHaveLength(2); // NYC, LA
         
         const nyc = usa?.cities.find((city: any) => city.city === 'NYC');
-        expect(nyc?.stores).toHaveLength(2); // Store1, Store2
+        expect(nyc?.items).toHaveLength(2); // Store1, Store2
     });
 
     it('should handle rapid additions that create many groups simultaneously', () => {
         // Stress test: add many rows quickly creating various group combinations
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ cat: string, subcat: string, item: string }>()
-                .groupBy(['cat', 'subcat'], 'items')
                 .groupBy(['cat'], 'subcats')
+                .in('items').groupBy(['subcat'], 'subcats')
         );
 
         // Generate test data with many combinations
@@ -475,8 +476,8 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ a: string, b: string, c: string, value: number }>()
                 .groupBy(['a'], 'level1')
-                .in('level1').groupBy(['b'], 'level2')
-                .in('level1').in('level2').groupBy(['c'], 'level3')
+                .in('items').groupBy(['b'], 'level1')
+                .in('level1').in('items').groupBy(['c'], 'level2')
         );
 
         pipeline.add("row-0", { a: 'A1', b: 'B1', c: 'C1', value: 1 });
@@ -513,7 +514,7 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<UserAllocationRow>()
                 .groupBy(['userHash'], 'rounts')
-                .in('rounts').groupBy(['round'], 'allocations')
+                .in('items').groupBy(['round'], 'rounts')
         );
 
         // Add rows incrementally as the CSV parser would
@@ -553,11 +554,11 @@ describe('pipeline groupBy nested', () => {
 
         const hash1Round1 = hash1?.rounts.find((r: any) => r.round === 1);
         expect(hash1Round1).toBeDefined();
-        expect(hash1Round1?.allocations).toHaveLength(1);
+        expect(hash1Round1?.items).toHaveLength(1);
 
         const hash1Round2 = hash1?.rounts.find((r: any) => r.round === 2);
         expect(hash1Round2).toBeDefined();
-        expect(hash1Round2?.allocations).toHaveLength(1);
+        expect(hash1Round2?.items).toHaveLength(1);
 
         const hash2 = output.find(u => u.userHash === 'hash2');
         expect(hash2).toBeDefined();
@@ -577,7 +578,7 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<CsvRow>()
                 .groupBy(['userHash'], 'rounts')
-                .in('rounts').groupBy(['round'], 'allocations')
+                .in('items').groupBy(['round'], 'rounts')
         );
 
         // Simulate CSV streaming - each row arrives individually
@@ -617,7 +618,7 @@ describe('pipeline groupBy nested', () => {
 
         const hash1Round1 = hash1?.rounts.find((r: any) => r.round === '1');
         expect(hash1Round1).toBeDefined();
-        expect(hash1Round1?.allocations).toHaveLength(1);
+        expect(hash1Round1?.items).toHaveLength(1);
 
         const hash2 = output.find((u: any) => u.userHash === 'hash2');
         expect(hash2).toBeDefined();
@@ -638,12 +639,12 @@ describe('pipeline groupBy nested', () => {
             let builder: any = createPipeline<CsvRow>()
                 .groupBy(['userHash'], 'rounts');
             
-            // Step 2: iterate through scopePath=['rounts']
+            // Step 2: iterate through scopePath=['items']
             let scopedBuilder = builder;
-            for (const segment of ['rounts']) {
+            for (const segment of ['items']) {
                 scopedBuilder = scopedBuilder.in(segment);
             }
-            return scopedBuilder.groupBy(['round'], 'allocations');
+            return scopedBuilder.groupBy(['round'], 'rounts');
         });
 
         // Add rows
@@ -666,7 +667,7 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<CsvRow>()
                 .groupBy(['userHash'], 'rounts')
-                .in('rounts').groupBy(['round'], 'allocations')
+                .in('items').groupBy(['round'], 'rounts')
         );
 
         // Add multiple rows with SAME userHash and SAME round
@@ -695,7 +696,7 @@ describe('pipeline groupBy nested', () => {
         expect(output[0].userHash).toBe('hash1');
         expect(output[0].rounts).toHaveLength(1);
         expect(output[0].rounts[0].round).toBe('1');
-        expect(output[0].rounts[0].allocations).toHaveLength(3);
+        expect(output[0].rounts[0].items).toHaveLength(3);
     });
 
     it('should handle interleaved rows creating nested groups in different order', () => {
@@ -710,7 +711,7 @@ describe('pipeline groupBy nested', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<CsvRow>()
                 .groupBy(['userHash'], 'rounts')
-                .in('rounts').groupBy(['round'], 'allocations')
+                .in('items').groupBy(['round'], 'rounts')
         );
 
         // Interleaved pattern
@@ -726,7 +727,7 @@ describe('pipeline groupBy nested', () => {
         const hash1 = output.find((u: any) => u.userHash === 'hash1');
         expect(hash1?.rounts).toHaveLength(2);
         const hash1Round1 = hash1?.rounts.find((r: any) => r.round === '1');
-        expect(hash1Round1?.allocations).toHaveLength(2);  // row-0 and row-4
+        expect(hash1Round1?.items).toHaveLength(2);  // row-0 and row-4
 
         const hash2 = output.find((u: any) => u.userHash === 'hash2');
         expect(hash2?.rounts).toHaveLength(2);

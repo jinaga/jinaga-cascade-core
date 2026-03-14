@@ -271,7 +271,7 @@ describe('CommutativeAggregateStep', () => {
             
             const aggregateStep = new CommutativeAggregateStep(
                 step,
-                ['employees'],
+                ['items'],
                 'totalSalary',
                 { add: addOp, subtract: subtractOp }
             );
@@ -313,8 +313,8 @@ describe('CommutativeAggregateStep', () => {
         it('should navigate through nested arrays correctly', () => {
             // Set up: state > city > venues
             const builder = createPipeline<{ state: string; city: string; venue: string; capacity: number }>()
-                .groupBy(['state', 'city'], 'venues')
-                .groupBy(['state'], 'cities');
+                .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities');
             
             const step = builder['lastStep'] as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { capacity: number }).capacity;
@@ -322,7 +322,7 @@ describe('CommutativeAggregateStep', () => {
             
             const aggregateStep = new CommutativeAggregateStep(
                 step,
-                ['cities', 'venues'],
+                ['cities', 'items'],
                 'totalCapacity',
                 { add: addOp, subtract: subtractOp }
             );
@@ -344,8 +344,8 @@ describe('CommutativeAggregateStep', () => {
 
         it('should maintain separate aggregates for each nested parent', () => {
             const builder = createPipeline<{ state: string; city: string; venue: string; capacity: number }>()
-                .groupBy(['state', 'city'], 'venues')
-                .groupBy(['state'], 'cities');
+                .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities');
             
             const step = builder['lastStep'] as Step;
             const addOp: NumericAddOp = (acc, _item) => (acc ?? 0) + 1;
@@ -353,7 +353,7 @@ describe('CommutativeAggregateStep', () => {
             
             const aggregateStep = new CommutativeAggregateStep(
                 step,
-                ['cities', 'venues'],
+                ['cities', 'items'],
                 'venueCount',
                 { add: addOp, subtract: subtractOp }
             );
@@ -786,37 +786,37 @@ describe('CommutativeAggregateStep', () => {
 
         it('should handle nested array path in type descriptor transformation with DropPropertyStep', () => {
             const builder = createPipeline<{ state: string; city: string; venue: string; capacity: number }>()
-                .groupBy(['state', 'city'], 'venues')
-                .groupBy(['state'], 'cities');
+                .groupBy(['state'], 'cities')
+                .in('items').groupBy(['city'], 'cities');
             
             const step = builder['lastStep'] as Step;
             const inputDescriptor = step.getTypeDescriptor();
             
-            // Input should have nested structure: cities > venues
+            // Input should have nested structure: cities > items
             expect(inputDescriptor.arrays.some(a => a.name === 'cities')).toBe(true);
             const citiesArray = inputDescriptor.arrays.find(a => a.name === 'cities');
-            expect(citiesArray?.type.arrays.some(a => a.name === 'venues')).toBe(true);
+            expect(citiesArray?.type.arrays.some(a => a.name === 'items')).toBe(true);
             
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { capacity: number }).capacity;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { capacity: number }).capacity;
             
             const aggregateStep = new CommutativeAggregateStep(
                 step,
-                ['cities', 'venues'],
+                ['cities', 'items'],
                 'totalCapacity',
                 { add: addOp, subtract: subtractOp }
             );
             
             // Chain with DropPropertyStep to remove the nested array
-            // Note: 'venues' exists as an array in the type descriptor at runtime, even if TypeScript can't infer it
-            const dropPropertyStep = new DropPropertyStep<any, any>(aggregateStep, 'venues', ['cities']);
+            // Note: 'items' exists as an array in the type descriptor at runtime, even if TypeScript can't infer it
+            const dropPropertyStep = new DropPropertyStep<any, any>(aggregateStep, 'items', ['cities']);
             
             const outputDescriptor = dropPropertyStep.getTypeDescriptor();
             
-            // Output should still have 'cities' but without 'venues'
+            // Output should still have 'cities' but without 'items'
             expect(outputDescriptor.arrays.some(a => a.name === 'cities')).toBe(true);
             const outputCitiesArray = outputDescriptor.arrays.find(a => a.name === 'cities');
-            expect(outputCitiesArray?.type.arrays.some(a => a.name === 'venues')).toBe(false);
+            expect(outputCitiesArray?.type.arrays.some(a => a.name === 'items')).toBe(false);
         });
     });
 
@@ -996,7 +996,7 @@ describe('CommutativeAggregateStep', () => {
                     createPipeline<{ department: string; employee: string; salary: number }>()
                         .groupBy(['department'], 'employees')
                         .commutativeAggregate(
-                            'employees',
+                            'items',
                             'totalSalary',
                             (acc: number | undefined, item) => (acc ?? 0) + item.salary,
                             (acc: number, item) => acc - item.salary
@@ -1030,10 +1030,10 @@ describe('CommutativeAggregateStep', () => {
             it('should navigate through nested arrays correctly (builder API)', () => {
                 const [pipeline, getOutput] = createTestPipeline(() => 
                     createPipeline<{ state: string; city: string; venue: string; capacity: number }>()
-                        .groupBy(['state', 'city'], 'venues')
                         .groupBy(['state'], 'cities')
+                        .in('items').groupBy(['city'], 'cities')
                         .in('cities').commutativeAggregate(
-                            'venues',
+                            'items',
                             'totalCapacity',
                             (acc: number | undefined, item) => (acc ?? 0) + item.capacity,
                             (acc: number, item) => acc - item.capacity
@@ -1053,10 +1053,10 @@ describe('CommutativeAggregateStep', () => {
             it('should maintain separate aggregates for each nested parent (builder API)', () => {
                 const [pipeline, getOutput] = createTestPipeline(() => 
                     createPipeline<{ state: string; city: string; venue: string; capacity: number }>()
-                        .groupBy(['state', 'city'], 'venues')
                         .groupBy(['state'], 'cities')
+                        .in('items').groupBy(['city'], 'cities')
                         .in('cities').commutativeAggregate(
-                            'venues',
+                            'items',
                             'venueCount',
                             (acc: number | undefined, _item) => (acc ?? 0) + 1,
                             (acc: number, _item) => acc - 1
