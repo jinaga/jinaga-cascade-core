@@ -229,7 +229,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         private input: Pipeline<TStart>,
         private lastStep: Step,
         private scopeSegments: Path = [] as unknown as Path,
-        private rootScopeName: string | undefined = (input as { __rootScopeName?: string }).__rootScopeName
+        private rootScopeName: string = (input as { __rootScopeName?: string }).__rootScopeName ?? 'items'
     ) {}
 
     /**
@@ -286,19 +286,15 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in ArrayName]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart
     > {
-        const useParentLevelName = this.rootScopeName !== undefined;
-        const inferredChildArrayName = useParentLevelName
-            ? (this.scopeSegments.length > 0
-                ? this.scopeSegments[this.scopeSegments.length - 1]
-                : this.rootScopeName ?? arrayName)
-            : arrayName;
+        const inferredChildArrayName = this.scopeSegments.length > 0
+            ? this.scopeSegments[this.scopeSegments.length - 1]
+            : this.rootScopeName;
 
         const newStep = new GroupByStep<NavigateToPath<T, Path> & {}, K, ArrayName, string>(
             this.lastStep,
             groupingProperties,
             arrayName,
             inferredChildArrayName,
-            useParentLevelName,
             this.scopeSegments as string[]
         );
         return new PipelineBuilder(this.input, newStep);

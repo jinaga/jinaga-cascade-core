@@ -29,18 +29,14 @@ export class GroupByStep<
     itemKeyToGroupingValues: Map<string, ImmutableProps> = new Map<string, ImmutableProps>();
 
     private readonly childArrayName: ChildArrayName;
-    private readonly useParentLevelName: boolean;
-
     constructor(
         private input: Step,
         private groupingProperties: K[],
         private parentArrayName: ParentArrayName,
         childArrayName: ChildArrayName,
-        useParentLevelName: boolean,
         private scopeSegments: string[]  // Path segments where this groupBy operates
     ) {
         this.childArrayName = childArrayName;
-        this.useParentLevelName = useParentLevelName;
 
         // Register with the input step to receive items at the scope path level
         this.input.onAdded(this.scopeSegments, (keyPath, itemKey, immutableProps) => {
@@ -68,24 +64,6 @@ export class GroupByStep<
     getTypeDescriptor(): TypeDescriptor {
         const inputDescriptor = this.input.getTypeDescriptor();
 
-        if (!this.useParentLevelName) {
-            // Backward-compatible behavior: "into" names the child array.
-            if (this.scopeSegments.length === 0) {
-                // Root level: wrap with the new array
-                return {
-                    arrays: [
-                        {
-                            name: this.parentArrayName,
-                            type: inputDescriptor  // Items have the input type
-                        }
-                    ]
-                };
-            } else {
-                // Scoped level: navigate to scope and transform there
-                return this.transformDescriptorAtPath(inputDescriptor, [...this.scopeSegments]);
-            }
-        }
-
         if (this.scopeSegments.length === 0) {
             // Parent name is logical at root. Child keeps the root scope name.
             return {
@@ -100,37 +78,6 @@ export class GroupByStep<
 
         // Parent name is physical at nested scope: replace the scoped array name.
         return this.transformDescriptorAtPathWithParentName(inputDescriptor, [...this.scopeSegments]);
-    }
-    
-    /**
-     * Transforms the type descriptor at the specified path to add the groupBy result.
-     */
-    private transformDescriptorAtPath(descriptor: TypeDescriptor, remainingSegments: string[]): TypeDescriptor {
-        if (remainingSegments.length === 0) {
-            // We're at the target level - wrap with new array
-            return {
-                arrays: [
-                    {
-                        name: this.parentArrayName,
-                        type: descriptor
-                    }
-                ]
-            };
-        }
-        
-        const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
-        
-        return {
-            arrays: descriptor.arrays.map(arrayDesc => {
-                if (arrayDesc.name === currentSegment) {
-                    return {
-                        name: arrayDesc.name,
-                        type: this.transformDescriptorAtPath(arrayDesc.type, remainingSegmentsAfter)
-                    };
-                }
-                return arrayDesc;
-            })
-        };
     }
 
     /**
@@ -294,7 +241,7 @@ export class GroupByStep<
     }
 
     private getGroupLevelSegments(): string[] {
-        if (this.useParentLevelName && this.scopeSegments.length > 0) {
+        if (this.scopeSegments.length > 0) {
             return [...this.scopeSegments.slice(0, -1), this.parentArrayName];
         }
         return [...this.scopeSegments];

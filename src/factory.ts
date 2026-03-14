@@ -36,13 +36,12 @@ class InputPipeline<T> implements Pipeline<T>, Step {
     }
 
     /**
-     * Optional root collection name used by groupBy when parent-level naming
-     * semantics are enabled by desktop pipeline runner.
+     * Root collection name used by groupBy to preserve child scope naming.
      */
-    __rootScopeName?: string;
+    __rootScopeName: string = 'items';
 }
 
-export function createPipeline<TStart extends object>(rootScopeName?: string): PipelineBuilder<TStart, TStart> {
+export function createPipeline<TStart extends object>(rootScopeName: string = 'items'): PipelineBuilder<TStart, TStart> {
     const start = new InputPipeline<TStart>();
     start.__rootScopeName = rootScopeName;
     return new PipelineBuilder<TStart, TStart>(start, start);
