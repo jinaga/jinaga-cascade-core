@@ -489,3 +489,127 @@ describe('Aggregate Functions', () => {
         });
     });
 });
+
+describe('aggregate steps scalar output', () => {
+    it('should add number scalar for sum aggregate', () => {
+        interface Sale {
+            productId: string;
+            amount: number;
+        }
+
+        const pipeline = createPipeline<Sale>('sales', [
+            { name: 'productId', type: 'string' },
+            { name: 'amount', type: 'number' }
+        ])
+        .groupBy(['productId'], 'sales')
+        .sum('sales', 'amount', 'totalAmount');
+
+        const descriptor = pipeline.getTypeDescriptor();
+        
+        const sumScalar = descriptor.scalars.find(s => s.name === 'totalAmount');
+        expect(sumScalar).toBeDefined();
+        expect(sumScalar?.type).toBe('number');
+    });
+
+    it('should add number scalar for count aggregate', () => {
+        interface Order {
+            orderId: string;
+        }
+
+        const pipeline = createPipeline<Order>('orders', [
+            { name: 'orderId', type: 'string' }
+        ])
+        .groupBy(['orderId'], 'orders')
+        .count('orders', 'orderCount');
+
+        const descriptor = pipeline.getTypeDescriptor();
+        
+        const countScalar = descriptor.scalars.find(s => s.name === 'orderCount');
+        expect(countScalar).toBeDefined();
+        expect(countScalar?.type).toBe('number');
+    });
+
+    it('should add number scalar for average aggregate', () => {
+        interface Score {
+            studentId: string;
+            value: number;
+        }
+
+        const pipeline = createPipeline<Score>('scores', [
+            { name: 'studentId', type: 'string' },
+            { name: 'value', type: 'number' }
+        ])
+        .groupBy(['studentId'], 'scores')
+        .average('scores', 'value', 'avgValue');
+
+        const descriptor = pipeline.getTypeDescriptor();
+        
+        const avgScalar = descriptor.scalars.find(s => s.name === 'avgValue');
+        expect(avgScalar).toBeDefined();
+        expect(avgScalar?.type).toBe('number');
+    });
+
+    it('should add number scalar for min aggregate', () => {
+        interface Measurement {
+            sensorId: string;
+            reading: number;
+        }
+
+        const pipeline = createPipeline<Measurement>('measurements', [
+            { name: 'sensorId', type: 'string' },
+            { name: 'reading', type: 'number' }
+        ])
+        .groupBy(['sensorId'], 'measurements')
+        .min('measurements', 'reading', 'minReading');
+
+        const descriptor = pipeline.getTypeDescriptor();
+        
+        const minScalar = descriptor.scalars.find(s => s.name === 'minReading');
+        expect(minScalar).toBeDefined();
+        expect(minScalar?.type).toBe('number');
+    });
+
+    it('should add number scalar for max aggregate', () => {
+        interface Measurement {
+            sensorId: string;
+            reading: number;
+        }
+
+        const pipeline = createPipeline<Measurement>('measurements', [
+            { name: 'sensorId', type: 'string' },
+            { name: 'reading', type: 'number' }
+        ])
+        .groupBy(['sensorId'], 'measurements')
+        .max('measurements', 'reading', 'maxReading');
+
+        const descriptor = pipeline.getTypeDescriptor();
+        
+        const maxScalar = descriptor.scalars.find(s => s.name === 'maxReading');
+        expect(maxScalar).toBeDefined();
+        expect(maxScalar?.type).toBe('number');
+    });
+
+    it('should preserve input scalar types in aggregate output', () => {
+        interface Measurement {
+            sensorId: string;
+            timestamp: string;
+            reading: number;
+        }
+
+        const pipeline = createPipeline<Measurement>('measurements', [
+            { name: 'sensorId', type: 'string' },
+            { name: 'timestamp', type: 'date' },
+            { name: 'reading', type: 'number' }
+        ])
+        .groupBy(['sensorId'], 'measurements')
+        .max('measurements', 'reading', 'maxReading');
+
+        const descriptor = pipeline.getTypeDescriptor();
+        
+        // Original grouping scalar preserved
+        expect(descriptor.scalars.find(s => s.name === 'sensorId')?.type).toBe('string');
+        
+        // Max output added
+        expect(descriptor.scalars.find(s => s.name === 'maxReading')?.type).toBe('number');
+    });
+});

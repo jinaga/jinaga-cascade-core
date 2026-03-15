@@ -68,14 +68,25 @@ export class MinMaxAggregateStep<
 
     getTypeDescriptor(): TypeDescriptor {
         const inputDescriptor = this.input.getTypeDescriptor();
+        
+        // Add aggregate output to scalars
+        const outputScalar = {
+            name: this.propertyName,
+            type: 'number' as const
+        };
+        
         const mutableProperties = inputDescriptor.mutableProperties || [];
         if (!mutableProperties.includes(this.propertyName)) {
             return {
                 ...inputDescriptor,
+                scalars: [...inputDescriptor.scalars, outputScalar],
                 mutableProperties: [...mutableProperties, this.propertyName]
             };
         }
-        return inputDescriptor;
+        return {
+            ...inputDescriptor,
+            scalars: [...inputDescriptor.scalars, outputScalar]
+        };
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {

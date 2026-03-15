@@ -65,16 +65,27 @@ export class GroupByStep<
         const inputDescriptor = this.input.getTypeDescriptor();
         const groupingKey = this.groupingProperties.map(property => property.toString());
 
+        // Split scalars between parent (keys) and child (rest)
+        const parentScalars = inputDescriptor.scalars.filter(s => groupingKey.includes(s.name));
+        const childScalars = inputDescriptor.scalars.filter(s => !groupingKey.includes(s.name));
+
         if (this.scopeSegments.length === 0) {
             // Parent name is logical at root. Child keeps the root scope name.
+            // Build child descriptor with non-key scalars
+            const childDescriptor: DescriptorNode = {
+                ...inputDescriptor,
+                scalars: childScalars,
+                collectionKey: inputDescriptor.collectionKey.filter(k => !groupingKey.includes(k))
+            };
+
             return {
                 rootCollectionName: this.parentArrayName,
                 collectionKey: groupingKey,
-                scalars: [],
+                scalars: parentScalars,
                 arrays: [
                     {
                         name: this.childArrayName,
-                        type: inputDescriptor  // Items have the input type
+                        type: childDescriptor
                     }
                 ]
             };
@@ -107,15 +118,24 @@ export class GroupByStep<
                 }
 
                 if (remainingSegmentsAfter.length === 0) {
+                    // Split scalars at this level
+                    const groupingKey = this.groupingProperties.map(property => property.toString());
+                    const parentScalars = arrayDesc.type.scalars.filter(s => groupingKey.includes(s.name));
+                    const childScalars = arrayDesc.type.scalars.filter(s => !groupingKey.includes(s.name));
+
                     return {
                         name: this.parentArrayName,
                         type: {
                             collectionKey: this.groupingProperties.map(property => property.toString()),
-                            scalars: [],
+                            scalars: parentScalars,
                             arrays: [
                                 {
                                     name: this.childArrayName,
-                                    type: arrayDesc.type
+                                    type: {
+                                        ...arrayDesc.type,
+                                        scalars: childScalars,
+                                        collectionKey: arrayDesc.type.collectionKey.filter(k => !groupingKey.includes(k))
+                                    }
                                 }
                             ]
                         }

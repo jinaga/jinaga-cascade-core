@@ -152,3 +152,58 @@ describe('pipeline groupBy', () => {
 
 });
 
+describe('group-by scalar propagation', () => {
+    it('should preserve grouping key scalars at root', () => {
+        interface Order {
+            customerId: string;
+            orderId: string;
+            amount: number;
+        }
+
+        const pipeline = createPipeline<Order>('orders', [
+            { name: 'customerId', type: 'string' },
+            { name: 'orderId', type: 'string' },
+            { name: 'amount', type: 'number' }
+        ])
+        .groupBy(['customerId'], 'orders');
+
+        const descriptor = pipeline.getTypeDescriptor();
+        
+        // Root should have customerId scalar
+        expect(descriptor.scalars).toHaveLength(1);
+        expect(descriptor.scalars[0]).toEqual({ name: 'customerId', type: 'string' });
+        
+        // Child array should have remaining scalars
+        expect(descriptor.arrays).toHaveLength(1);
+        const childArray = descriptor.arrays[0];
+        expect(childArray.type.scalars).toHaveLength(2);
+        expect(childArray.type.scalars).toContainEqual({ name: 'orderId', type: 'string' });
+        expect(childArray.type.scalars).toContainEqual({ name: 'amount', type: 'number' });
+    });
+
+    it('should preserve scalar types in nested group-by', () => {
+        interface Transaction {
+            date: string;
+            accountId: string;
+            amount: number;
+            isDebit: boolean;
+        }
+
+        const pipeline = createPipeline<Transaction>('transactions', [
+            { name: 'date', type: 'date' },
+            { name: 'accountId', type: 'string' },
+            { name: 'amount', type: 'number' },
+            { name: 'isDebit', type: 'boolean' }
+        ])
+        .groupBy(['accountId'], 'transactions');
+
+        const descriptor = pipeline.getTypeDescriptor();
+        const childArray = descriptor.arrays[0];
+        
+        expect(childArray.type.scalars).toHaveLength(3);
+        expect(childArray.type.scalars.find(s => s.name === 'date')?.type).toBe('date');
+        expect(childArray.type.scalars.find(s => s.name === 'amount')?.type).toBe('number');
+        expect(childArray.type.scalars.find(s => s.name === 'isDebit')?.type).toBe('boolean');
+    });
+});
+
