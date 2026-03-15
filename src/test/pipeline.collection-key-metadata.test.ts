@@ -18,6 +18,21 @@ describe('pipeline collection key metadata', () => {
         expect(descriptor.collectionKey).toEqual([]);
     });
 
+    it('dropProperty clears entire composite key when dropping one key member', () => {
+        const categoryDroppedDescriptor = createPipeline<{ category: string; region: string; amount: number }>()
+            .groupBy(['category', 'region'], 'groups')
+            .dropProperty('category')
+            .getTypeDescriptor();
+
+        const regionDroppedDescriptor = createPipeline<{ category: string; region: string; amount: number }>()
+            .groupBy(['category', 'region'], 'groups')
+            .dropProperty('region')
+            .getTypeDescriptor();
+
+        expect(categoryDroppedDescriptor.collectionKey).toEqual([]);
+        expect(regionDroppedDescriptor.collectionKey).toEqual([]);
+    });
+
     it('dropProperty preserves key when dropping a non-key member', () => {
         const descriptor = createPipeline<{ category: string; amount: number }>()
             .groupBy(['category'], 'groups')
