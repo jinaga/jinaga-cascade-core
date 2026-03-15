@@ -5,6 +5,7 @@ export interface Pipeline<T> {
 
 export interface TypeDescriptor {
     arrays: ArrayDescriptor[];
+    collectionKey: string[];
     objects?: ObjectDescriptor[];
     mutableProperties?: string[];  // Names of properties that can change
 }

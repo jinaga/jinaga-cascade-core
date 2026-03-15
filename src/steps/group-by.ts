@@ -63,10 +63,12 @@ export class GroupByStep<
 
     getTypeDescriptor(): TypeDescriptor {
         const inputDescriptor = this.input.getTypeDescriptor();
+        const groupingKey = this.groupingProperties.map(property => property.toString());
 
         if (this.scopeSegments.length === 0) {
             // Parent name is logical at root. Child keeps the root scope name.
             return {
+                collectionKey: groupingKey,
                 arrays: [
                     {
                         name: this.childArrayName,
@@ -92,6 +94,7 @@ export class GroupByStep<
         const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
 
         return {
+            collectionKey: descriptor.collectionKey,
             arrays: descriptor.arrays.map(arrayDesc => {
                 if (arrayDesc.name !== currentSegment) {
                     return arrayDesc;
@@ -101,6 +104,7 @@ export class GroupByStep<
                     return {
                         name: this.parentArrayName,
                         type: {
+                            collectionKey: this.groupingProperties.map(property => property.toString()),
                             arrays: [
                                 {
                                     name: this.childArrayName,

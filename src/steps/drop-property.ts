@@ -45,20 +45,19 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         
         if (!arrayDesc) {
             // Path segments don't exist - return empty descriptor
-            return { arrays: [] };
+            return { arrays: [], collectionKey: [] };
         }
         
         return this.navigateToPath(arrayDesc.type, remainingSegments);
     }
     
     getTypeDescriptor(): TypeDescriptor {
+        const inputDescriptor = this.input.getTypeDescriptor();
         if (this.isArrayProperty) {
             // Remove the array from the descriptor
-            const inputDescriptor = this.input.getTypeDescriptor();
             return this.transformDescriptor(inputDescriptor, [...this.fullSegmentPath]);
         }
-        // For non-array properties, don't modify the descriptor
-        return this.input.getTypeDescriptor();
+        return this.transformDescriptorForScalarDrop(inputDescriptor, [...this.scopeSegments], this.propertyName as string);
     }
     
     /**
@@ -72,6 +71,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         if (remainingSegments.length === 0) {
             return {
                 ...descriptor,
+                collectionKey: descriptor.collectionKey,
                 mutableProperties: descriptor.mutableProperties
             };
         }
@@ -82,6 +82,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
             // This is the target array - remove it from the descriptor
             return {
                 arrays: descriptor.arrays.filter(a => a.name !== currentSegment),
+                collectionKey: descriptor.collectionKey,
                 mutableProperties: descriptor.mutableProperties
             };
         }
@@ -97,7 +98,43 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
                 }
                 return arrayDesc;
             }),
+            collectionKey: descriptor.collectionKey,
             mutableProperties: descriptor.mutableProperties
+        };
+    }
+
+    private transformDescriptorForScalarDrop(
+        descriptor: TypeDescriptor,
+        remainingScopeSegments: string[],
+        droppedPropertyName: string
+    ): TypeDescriptor {
+        if (remainingScopeSegments.length === 0) {
+            const nextCollectionKey = descriptor.collectionKey.includes(droppedPropertyName)
+                ? []
+                : descriptor.collectionKey;
+            return {
+                ...descriptor,
+                collectionKey: nextCollectionKey
+            };
+        }
+
+        const [currentSegment, ...remainingSegmentsAfter] = remainingScopeSegments;
+        return {
+            ...descriptor,
+            arrays: descriptor.arrays.map(arrayDesc => {
+                if (arrayDesc.name !== currentSegment) {
+                    return arrayDesc;
+                }
+
+                return {
+                    ...arrayDesc,
+                    type: this.transformDescriptorForScalarDrop(
+                        arrayDesc.type,
+                        remainingSegmentsAfter,
+                        droppedPropertyName
+                    )
+                };
+            })
         };
     }
     

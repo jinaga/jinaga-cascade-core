@@ -8,7 +8,7 @@ class InputPipeline<T> implements Pipeline<T>, Step {
     private removedHandlers: RemovedHandler[] = [];
 
     getTypeDescriptor(): TypeDescriptor {
-        return { arrays: [] }; // No arrays at input level
+        return { arrays: [], collectionKey: [] }; // No arrays at input level
     }
 
     add(key: string, immutableProps: T): void {
