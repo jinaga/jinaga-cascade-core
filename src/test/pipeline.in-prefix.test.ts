@@ -12,12 +12,12 @@ import { createTestPipeline } from './helpers';
 
 describe('pipeline in() path prefix', () => {
     describe('basic in() usage with groupBy', () => {
-        it('should apply groupBy at the scoped cities level', () => {
-            // Using in() to apply groupBy within the cities array
-            // This creates: { state, cities: [{ city, venues: [{ venue, capacity }] }] }
+        it('should apply groupBy at the scoped cities level within states', () => {
+            // Using in() to apply groupBy within the items array (within each state).
+            // This creates: states: [{ state, cities: [{ city, items: [{ venue, capacity }] }] }]
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
             );
 
@@ -50,7 +50,7 @@ describe('pipeline in() path prefix', () => {
         it('should handle items added to existing nested groups via in().groupBy', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
             );
 
@@ -70,7 +70,7 @@ describe('pipeline in() path prefix', () => {
         it('should remove items from nested groups created via in().groupBy', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
             );
 
@@ -91,7 +91,7 @@ describe('pipeline in() path prefix', () => {
         it('should remove nested group when all items are removed via in().groupBy', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
             );
 
@@ -173,7 +173,7 @@ describe('pipeline in() path prefix', () => {
         it('should support defineProperty at nested level', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
                     .in('cities', 'items').defineProperty('isLarge', (v) => v.capacity > 25000)
             );
@@ -195,7 +195,7 @@ describe('pipeline in() path prefix', () => {
             // Note: with normalized API, dropProperty takes just the property name
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
                     .in('cities').dropProperty('items')
             );
@@ -223,7 +223,7 @@ describe('pipeline in() path prefix', () => {
         it('should work with aggregate then dropProperty at scoped level', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
                     .in('cities').commutativeAggregate(
                         'items',
@@ -250,7 +250,7 @@ describe('pipeline in() path prefix', () => {
             // Using in() to compute aggregate within cities
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
                     .in('cities').commutativeAggregate(
                         'items',  // Just the array name, scope provides the prefix
@@ -276,7 +276,7 @@ describe('pipeline in() path prefix', () => {
         it('should update aggregate when items are removed', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
                     .in('cities').commutativeAggregate(
                         'items',
@@ -306,7 +306,7 @@ describe('pipeline in() path prefix', () => {
         it('should maintain independent aggregates for each parent in scope', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
                     .in('cities').commutativeAggregate(
                         'items',
@@ -360,7 +360,7 @@ describe('pipeline in() path prefix', () => {
             // properly registers event handlers at the specified path
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
             );
 
@@ -429,7 +429,7 @@ describe('pipeline in() path prefix', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
                     .defineProperty('formatted', (item) => `${item.city}, ${item.state}`)
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
             );
 
@@ -443,7 +443,7 @@ describe('pipeline in() path prefix', () => {
         it('should handle multiple operations at the same scope level', () => {
             const [pipeline, getOutput] = createTestPipeline(() => 
                 createPipeline<{ state: string, city: string, venue: string, capacity: number }>()
-                    .groupBy(['state'], 'cities')
+                    .groupBy(['state'], 'states')
                     .in('items').groupBy(['city'], 'cities')
                     .in('cities').defineProperty('cityLabel', (c) => `City of ${c.city}`)
                     .in('cities').commutativeAggregate(
