@@ -271,9 +271,9 @@ describe('pipeline mutable properties', () => {
                 // Verify: entity1 appears in the "low" bucket
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('low');
-                expect(output[0].items).toHaveLength(1);
-                expect(output[0].items[0].entityId).toBe('entity1');
-                expect(output[0].items[0].total).toBe(100);
+                expect(output[0].entries).toHaveLength(1);
+                expect(output[0].entries[0].entityId).toBe('entity1');
+                expect(output[0].entries[0].total).toBe(100);
 
                 // Step 2: Add another entry for entity1 with amount 200
                 // total becomes 300, which is >= 200 and < 400, so bucket = "medium"
@@ -285,9 +285,9 @@ describe('pipeline mutable properties', () => {
                 // Entity should move from "low" to "medium" bucket
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('medium');
-                expect(output[0].items).toHaveLength(1);
-                expect(output[0].items[0].entityId).toBe('entity1');
-                expect(output[0].items[0].total).toBe(300);
+                expect(output[0].entries).toHaveLength(1);
+                expect(output[0].entries[0].entityId).toBe('entity1');
+                expect(output[0].entries[0].total).toBe(300);
                 
                 // The "low" bucket should no longer exist (was removed when empty)
                 const lowBucket = output.find(g => g.bucket === 'low');
@@ -316,7 +316,7 @@ describe('pipeline mutable properties', () => {
                 // Both in "low" bucket
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('low');
-                expect(output[0].items).toHaveLength(2);
+                expect(output[0].entries).toHaveLength(2);
 
                 // Add more to entity1, pushing it to "medium" bucket (50 + 200 = 250)
                 pipeline.add('entry3', { entityId: 'entity1', amount: 200 });
@@ -331,14 +331,14 @@ describe('pipeline mutable properties', () => {
                 const mediumBucket = output.find(g => g.bucket === 'medium');
                 
                 expect(lowBucket).toBeDefined();
-                expect(lowBucket?.items).toHaveLength(1);
-                expect(lowBucket?.items[0].entityId).toBe('entity2');
+                expect(lowBucket?.entries).toHaveLength(1);
+                expect(lowBucket?.entries[0].entityId).toBe('entity2');
                 
                 // New bucket was created for the moved item
                 expect(mediumBucket).toBeDefined();
-                expect(mediumBucket?.items).toHaveLength(1);
-                expect(mediumBucket?.items[0].entityId).toBe('entity1');
-                expect(mediumBucket?.items[0].total).toBe(250);
+                expect(mediumBucket?.entries).toHaveLength(1);
+                expect(mediumBucket?.entries[0].entityId).toBe('entity1');
+                expect(mediumBucket?.entries[0].total).toBe(250);
             });
 
             it('should remove group when last item leaves', () => {
@@ -394,7 +394,7 @@ describe('pipeline mutable properties', () => {
                 let output = getOutput();
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('low');
-                expect(output[0].items[0].total).toBe(50);
+                expect(output[0].entries[0].total).toBe(50);
 
                 // Add more, but stay in "low" bucket (50 + 100 = 150, still < 200)
                 pipeline.add('entry2', { entityId: 'entity1', amount: 100 });
@@ -404,9 +404,9 @@ describe('pipeline mutable properties', () => {
                 // Expected: Still in "low" bucket, no re-grouping occurred
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('low');
-                expect(output[0].items).toHaveLength(1);
-                expect(output[0].items[0].entityId).toBe('entity1');
-                expect(output[0].items[0].total).toBe(150);
+                expect(output[0].entries).toHaveLength(1);
+                expect(output[0].entries[0].entityId).toBe('entity1');
+                expect(output[0].entries[0].total).toBe(150);
             });
 
             it('should handle multiple items in same group when one moves', () => {
@@ -430,7 +430,7 @@ describe('pipeline mutable properties', () => {
                 let output = getOutput();
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('low');
-                expect(output[0].items).toHaveLength(3);
+                expect(output[0].entries).toHaveLength(3);
 
                 // Move entity2 to "medium" bucket (75 + 200 = 275)
                 pipeline.add('entry4', { entityId: 'entity2', amount: 200 });
@@ -445,14 +445,14 @@ describe('pipeline mutable properties', () => {
                 const mediumBucket = output.find(g => g.bucket === 'medium');
                 
                 expect(lowBucket).toBeDefined();
-                expect(lowBucket?.items).toHaveLength(2);
-                expect(lowBucket?.items.some(e => e.entityId === 'entity1')).toBe(true);
-                expect(lowBucket?.items.some(e => e.entityId === 'entity3')).toBe(true);
+                expect(lowBucket?.entries).toHaveLength(2);
+                expect(lowBucket?.entries.some(e => e.entityId === 'entity1')).toBe(true);
+                expect(lowBucket?.entries.some(e => e.entityId === 'entity3')).toBe(true);
                 
                 expect(mediumBucket).toBeDefined();
-                expect(mediumBucket?.items).toHaveLength(1);
-                expect(mediumBucket?.items[0].entityId).toBe('entity2');
-                expect(mediumBucket?.items[0].total).toBe(275);
+                expect(mediumBucket?.entries).toHaveLength(1);
+                expect(mediumBucket?.entries[0].entityId).toBe('entity2');
+                expect(mediumBucket?.entries[0].total).toBe(275);
             });
 
             it('should handle item moving through multiple bucket transitions', () => {
@@ -483,7 +483,7 @@ describe('pipeline mutable properties', () => {
                 output = getOutput();
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('high');
-                expect(output[0].items[0].total).toBe(450);
+                expect(output[0].entries[0].total).toBe(450);
             });
 
             it('should handle item moving back to previous bucket on removal', () => {
@@ -508,7 +508,7 @@ describe('pipeline mutable properties', () => {
                 let output = getOutput();
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('medium');
-                expect(output[0].items[0].total).toBe(250);
+                expect(output[0].entries[0].total).toBe(250);
 
                 // Remove entry2, total goes back to 100, should return to "low" bucket
                 pipeline.remove('entry2', entry2);
@@ -516,7 +516,7 @@ describe('pipeline mutable properties', () => {
                 output = getOutput();
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('low');
-                expect(output[0].items[0].total).toBe(100);
+                expect(output[0].entries[0].total).toBe(100);
                 
                 // Verify "medium" bucket was removed
                 const mediumBucket = output.find(g => g.bucket === 'medium');
@@ -546,7 +546,7 @@ describe('pipeline mutable properties', () => {
                 const output = getOutput();
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('high');
-                expect(output[0].items[0].total).toBe(400);
+                expect(output[0].entries[0].total).toBe(400);
             });
 
             it('should correctly handle entity at exact bucket boundary', () => {
@@ -575,7 +575,7 @@ describe('pipeline mutable properties', () => {
                 output = getOutput();
                 expect(output).toHaveLength(1);
                 expect(output[0].bucket).toBe('medium');
-                expect(output[0].items[0].total).toBe(201);
+                expect(output[0].entries[0].total).toBe(201);
             });
 
             it('should handle grouping by raw mutable property value', () => {
