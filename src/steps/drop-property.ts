@@ -1,5 +1,5 @@
 import type { AddedHandler, ModifiedHandler, RemovedHandler, Step } from '../pipeline';
-import { type TypeDescriptor } from '../pipeline';
+import { type DescriptorNode, type TypeDescriptor } from '../pipeline';
 import { pathsMatch } from '../util/path';
 
 export class DropPropertyStep<T, K extends keyof T> implements Step {
@@ -35,7 +35,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
     /**
      * Navigates through the type descriptor to reach the target path segments.
      */
-    private navigateToPath(descriptor: TypeDescriptor, segmentPath: string[]): TypeDescriptor {
+    private navigateToPath(descriptor: DescriptorNode, segmentPath: string[]): DescriptorNode {
         if (segmentPath.length === 0) {
             return descriptor;
         }
@@ -55,9 +55,15 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         const inputDescriptor = this.input.getTypeDescriptor();
         if (this.isArrayProperty) {
             // Remove the array from the descriptor
-            return this.transformDescriptor(inputDescriptor, [...this.fullSegmentPath]);
+            return {
+                ...this.transformDescriptor(inputDescriptor, [...this.fullSegmentPath]),
+                rootCollectionName: inputDescriptor.rootCollectionName
+            };
         }
-        return this.transformDescriptorForScalarDrop(inputDescriptor, [...this.scopeSegments], this.propertyName as string);
+        return {
+            ...this.transformDescriptorForScalarDrop(inputDescriptor, [...this.scopeSegments], this.propertyName as string),
+            rootCollectionName: inputDescriptor.rootCollectionName
+        };
     }
     
     /**
@@ -65,9 +71,9 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
      * (Same logic as DropArrayStep)
      */
     private transformDescriptor(
-        descriptor: TypeDescriptor, 
+        descriptor: DescriptorNode,
         remainingSegments: string[]
-    ): TypeDescriptor {
+    ): DescriptorNode {
         if (remainingSegments.length === 0) {
             return {
                 ...descriptor,
@@ -104,10 +110,10 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
     }
 
     private transformDescriptorForScalarDrop(
-        descriptor: TypeDescriptor,
+        descriptor: DescriptorNode,
         remainingScopeSegments: string[],
         droppedPropertyName: string
-    ): TypeDescriptor {
+    ): DescriptorNode {
         if (remainingScopeSegments.length === 0) {
             const nextCollectionKey = descriptor.collectionKey.includes(droppedPropertyName)
                 ? []

@@ -3,21 +3,25 @@ export interface Pipeline<T> {
     remove(key: string, immutableProps: T): void;
 }
 
-export interface TypeDescriptor {
+export interface DescriptorNode {
     arrays: ArrayDescriptor[];
     collectionKey: string[];
     objects?: ObjectDescriptor[];
     mutableProperties?: string[];  // Names of properties that can change
 }
 
+export interface TypeDescriptor extends DescriptorNode {
+    rootCollectionName: string;
+}
+
 export interface ArrayDescriptor {
     name: string;
-    type: TypeDescriptor;
+    type: DescriptorNode;
 }
 
 export interface ObjectDescriptor {
     name: string;
-    type: TypeDescriptor;
+    type: DescriptorNode;
 }
 
 /**
@@ -33,7 +37,7 @@ export function getMutablePropertiesOfArrayItems(
     descriptor: TypeDescriptor,
     segmentPath: string[]
 ): string[] {
-    let current = descriptor;
+    let current: DescriptorNode = descriptor;
     for (const segment of segmentPath) {
         const arrayDesc = current.arrays.find(a => a.name === segment);
         if (!arrayDesc) return [];
@@ -57,7 +61,18 @@ export function getPathSegmentsFromDescriptor(descriptor: TypeDescriptor): strin
     const paths: string[][] = [[]];
     // Recursively get paths from nested type descriptors
     for (const array of descriptor.arrays) {
-        const allChildSegments = getPathSegmentsFromDescriptor(array.type);
+        const allChildSegments = getPathSegmentsFromNode(array.type);
+        for (const childSegments of allChildSegments) {
+            paths.push([array.name, ...childSegments]);
+        }
+    }
+    return paths;
+}
+
+function getPathSegmentsFromNode(descriptor: DescriptorNode): string[][] {
+    const paths: string[][] = [[]];
+    for (const array of descriptor.arrays) {
+        const allChildSegments = getPathSegmentsFromNode(array.type);
         for (const childSegments of allChildSegments) {
             paths.push([array.name, ...childSegments]);
         }

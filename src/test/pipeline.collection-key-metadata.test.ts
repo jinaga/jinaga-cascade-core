@@ -1,12 +1,21 @@
 import { createPipeline } from '../index';
 
 describe('pipeline collection key metadata', () => {
+    it('root descriptor includes required root collection name', () => {
+        const descriptor = createPipeline<{ category: string; amount: number }>('rows')
+            .getTypeDescriptor();
+
+        expect(descriptor.rootCollectionName).toBe('rows');
+    });
+
     it('groupBy sets collection key to selected grouping properties', () => {
         const descriptor = createPipeline<{ category: string; region: string; amount: number }>()
             .groupBy(['category', 'region'], 'groups')
             .getTypeDescriptor();
 
         expect(descriptor.collectionKey).toEqual(['category', 'region']);
+        expect(descriptor.rootCollectionName).toBe('groups');
+        expect(descriptor.arrays.map(a => a.name)).toEqual(['items']);
     });
 
     it('dropProperty clears key when dropping a key member', () => {
@@ -16,6 +25,7 @@ describe('pipeline collection key metadata', () => {
             .getTypeDescriptor();
 
         expect(descriptor.collectionKey).toEqual([]);
+        expect(descriptor.rootCollectionName).toBe('groups');
     });
 
     it('dropProperty clears entire composite key when dropping one key member', () => {
@@ -31,6 +41,8 @@ describe('pipeline collection key metadata', () => {
 
         expect(categoryDroppedDescriptor.collectionKey).toEqual([]);
         expect(regionDroppedDescriptor.collectionKey).toEqual([]);
+        expect(categoryDroppedDescriptor.rootCollectionName).toBe('groups');
+        expect(regionDroppedDescriptor.rootCollectionName).toBe('groups');
     });
 
     it('dropProperty preserves key when dropping a non-key member', () => {
@@ -40,6 +52,7 @@ describe('pipeline collection key metadata', () => {
             .getTypeDescriptor();
 
         expect(descriptor.collectionKey).toEqual(['category']);
+        expect(descriptor.rootCollectionName).toBe('groups');
     });
 
     it('filter, aggregate and pick steps preserve collection key', () => {
@@ -65,5 +78,8 @@ describe('pipeline collection key metadata', () => {
         expect(filteredDescriptor.collectionKey).toEqual(groupedDescriptor.collectionKey);
         expect(aggregatedDescriptor.collectionKey).toEqual(groupedDescriptor.collectionKey);
         expect(pickedDescriptor.collectionKey).toEqual(groupedDescriptor.collectionKey);
+        expect(filteredDescriptor.rootCollectionName).toEqual(groupedDescriptor.rootCollectionName);
+        expect(aggregatedDescriptor.rootCollectionName).toEqual(groupedDescriptor.rootCollectionName);
+        expect(pickedDescriptor.rootCollectionName).toEqual(groupedDescriptor.rootCollectionName);
     });
 });

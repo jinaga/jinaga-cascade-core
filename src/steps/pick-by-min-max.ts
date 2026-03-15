@@ -1,4 +1,4 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline';
+import type { AddedHandler, DescriptorNode, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline';
 import { IndexedHeap } from '../util/indexed-heap';
 
 /**
@@ -112,7 +112,7 @@ export class PickByMinMaxStep<
         const inputDescriptor = this.input.getTypeDescriptor();
 
         // Navigate through the segment path to find the source array's item type.
-        let currentDescriptor = inputDescriptor;
+        let currentDescriptor: DescriptorNode = inputDescriptor;
         for (let i = 0; i < this.segmentPath.length - 1; i++) {
             const segment = this.segmentPath[i];
             const array = currentDescriptor.arrays.find(a => a.name === segment);
@@ -149,7 +149,8 @@ export class PickByMinMaxStep<
         });
         return {
             ...result,
-            mutableProperties: updatedMutableProperties
+            mutableProperties: updatedMutableProperties,
+            rootCollectionName: inputDescriptor.rootCollectionName
         };
     }
 
@@ -157,10 +158,10 @@ export class PickByMinMaxStep<
      * Recursively clones the type descriptor and adds an object descriptor at the specified path.
      */
     private addObjectAtPath(
-        descriptor: TypeDescriptor,
+        descriptor: DescriptorNode,
         path: string[],
-        objectDesc: { name: string; type: TypeDescriptor }
-    ): TypeDescriptor {
+        objectDesc: { name: string; type: DescriptorNode }
+    ): DescriptorNode {
         if (path.length === 0) {
             return {
                 ...descriptor,

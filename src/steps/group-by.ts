@@ -1,5 +1,5 @@
 import type { AddedHandler, ImmutableProps, RemovedHandler, Step } from '../pipeline';
-import { type TypeDescriptor } from '../pipeline';
+import { type DescriptorNode, type TypeDescriptor } from '../pipeline';
 import { computeGroupKey } from "../util/hash";
 import { pathsMatch, pathStartsWith } from "../util/path";
 
@@ -68,6 +68,7 @@ export class GroupByStep<
         if (this.scopeSegments.length === 0) {
             // Parent name is logical at root. Child keeps the root scope name.
             return {
+                rootCollectionName: this.parentArrayName,
                 collectionKey: groupingKey,
                 arrays: [
                     {
@@ -79,14 +80,17 @@ export class GroupByStep<
         }
 
         // Parent name is physical at nested scope: replace the scoped array name.
-        return this.transformDescriptorAtPathWithParentName(inputDescriptor, [...this.scopeSegments]);
+        return {
+            ...this.transformDescriptorAtPathWithParentName(inputDescriptor, [...this.scopeSegments]),
+            rootCollectionName: inputDescriptor.rootCollectionName
+        };
     }
 
     /**
      * Transforms a scoped array so "into" names the parent array and the original
      * scoped array name is preserved as the child array within each group.
      */
-    private transformDescriptorAtPathWithParentName(descriptor: TypeDescriptor, remainingSegments: string[]): TypeDescriptor {
+    private transformDescriptorAtPathWithParentName(descriptor: DescriptorNode, remainingSegments: string[]): DescriptorNode {
         if (remainingSegments.length === 0) {
             return descriptor;
         }

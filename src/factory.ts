@@ -6,9 +6,18 @@ import { type TypeDescriptor } from './pipeline';
 class InputPipeline<T> implements Pipeline<T>, Step {
     private addedHandlers: AddedHandler[] = [];
     private removedHandlers: RemovedHandler[] = [];
+    private rootCollectionName: string;
+
+    constructor(rootCollectionName: string) {
+        this.rootCollectionName = rootCollectionName;
+    }
 
     getTypeDescriptor(): TypeDescriptor {
-        return { arrays: [], collectionKey: [] }; // No arrays at input level
+        return {
+            rootCollectionName: this.rootCollectionName,
+            arrays: [],
+            collectionKey: []
+        }; // No arrays at input level
     }
 
     add(key: string, immutableProps: T): void {
@@ -35,15 +44,10 @@ class InputPipeline<T> implements Pipeline<T>, Step {
         // No modifications at input level
     }
 
-    /**
-     * Root collection name used by groupBy to preserve child scope naming.
-     */
-    __rootScopeName: string = 'items';
 }
 
 export function createPipeline<TStart extends object>(rootScopeName: string = 'items'): PipelineBuilder<TStart, TStart> {
-    const start = new InputPipeline<TStart>();
-    start.__rootScopeName = rootScopeName;
+    const start = new InputPipeline<TStart>(rootScopeName);
     return new PipelineBuilder<TStart, TStart>(start, start);
 }
 

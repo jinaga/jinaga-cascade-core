@@ -1,4 +1,4 @@
-import { getPathSegmentsFromDescriptor, type ImmutableProps, type Pipeline, type Step, type TypeDescriptor } from './pipeline';
+import { getPathSegmentsFromDescriptor, type DescriptorNode, type ImmutableProps, type Pipeline, type Step, type TypeDescriptor } from './pipeline';
 import { CommutativeAggregateStep, type AddOperator, type SubtractOperator } from './steps/commutative-aggregate';
 import { DefinePropertyStep } from './steps/define-property';
 import { DropPropertyStep } from './steps/drop-property';
@@ -228,8 +228,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
     constructor(
         private input: Pipeline<TStart>,
         private lastStep: Step,
-        private scopeSegments: Path = [] as unknown as Path,
-        private rootScopeName: string = (input as { __rootScopeName?: string }).__rootScopeName ?? 'items'
+        private scopeSegments: Path = [] as unknown as Path
     ) {}
 
     /**
@@ -286,9 +285,10 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in ArrayName]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart
     > {
+        const descriptor = this.lastStep.getTypeDescriptor();
         const inferredChildArrayName = this.scopeSegments.length > 0
             ? this.scopeSegments[this.scopeSegments.length - 1]
-            : this.rootScopeName;
+            : descriptor.rootCollectionName;
 
         const newStep = new GroupByStep<NavigateToPath<T, Path> & {}, K, ArrayName, string>(
             this.lastStep,
@@ -648,8 +648,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         return new PipelineBuilder<T, TStart, [...Path, ...NewPath]>(
             this.input,
             this.lastStep,
-            [...this.scopeSegments, ...pathSegments] as [...Path, ...NewPath],
-            this.rootScopeName
+            [...this.scopeSegments, ...pathSegments] as [...Path, ...NewPath]
         );
     }
 
@@ -764,7 +763,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
  * Collects all mutable properties from the entire type descriptor tree.
  * Returns a flat array of all mutable property names found at any level.
  */
-function collectAllMutableProperties(descriptor: TypeDescriptor): string[] {
+function collectAllMutableProperties(descriptor: DescriptorNode): string[] {
     const mutableProps = new Set<string>();
     
     // Add mutable properties at this level

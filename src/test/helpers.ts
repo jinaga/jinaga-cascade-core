@@ -1,4 +1,4 @@
-import { KeyedArray, Pipeline, PipelineBuilder, Transform, TypeDescriptor } from '../index';
+import { DescriptorNode, KeyedArray, Pipeline, PipelineBuilder, Transform } from '../index';
 
 // Type helper to extract the output type from a PipelineBuilder
 // and recursively convert KeyedArray properties to arrays
@@ -50,13 +50,13 @@ export function simulateState<T>(initialState: T): [() => T, (transform: Transfo
 
 // Extract items from KeyedArray, converting nested KeyedArrays to plain arrays
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test helper: returns dynamic structure based on descriptor
-export function extract(state: KeyedArray<any>, typeDescriptor: TypeDescriptor): any[] {
+export function extract(state: KeyedArray<any>, typeDescriptor: DescriptorNode): any[] {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Test helper: returns extracted values
     return state.map(item => extractItem(item, typeDescriptor));
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test helper: works with dynamic types from descriptors
-function extractItem(item: { key: string; value: any; }, typeDescriptor: TypeDescriptor): any {
+function extractItem(item: { key: string; value: any; }, typeDescriptor: DescriptorNode): any {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Test helper: dynamically construct result object
     const arrays: any = {};
     for (const arrayDescriptor of typeDescriptor.arrays) {
