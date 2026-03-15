@@ -16,7 +16,8 @@ class InputPipeline<T> implements Pipeline<T>, Step {
         return {
             rootCollectionName: this.rootCollectionName,
             arrays: [],
-            collectionKey: []
+            collectionKey: [],
+            scalars: []
         }; // No arrays at input level
     }
 

@@ -70,6 +70,7 @@ export class GroupByStep<
             return {
                 rootCollectionName: this.parentArrayName,
                 collectionKey: groupingKey,
+                scalars: [],
                 arrays: [
                     {
                         name: this.childArrayName,
@@ -99,6 +100,7 @@ export class GroupByStep<
 
         return {
             collectionKey: descriptor.collectionKey,
+            scalars: descriptor.scalars,
             arrays: descriptor.arrays.map(arrayDesc => {
                 if (arrayDesc.name !== currentSegment) {
                     return arrayDesc;
@@ -109,6 +111,7 @@ export class GroupByStep<
                         name: this.parentArrayName,
                         type: {
                             collectionKey: this.groupingProperties.map(property => property.toString()),
+                            scalars: [],
                             arrays: [
                                 {
                                     name: this.childArrayName,

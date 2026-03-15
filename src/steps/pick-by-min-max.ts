@@ -136,7 +136,7 @@ export class PickByMinMaxStep<
                     ...(inputDescriptor.objects || []),
                     {
                         name: this.propertyName,
-                        type: sourceArray?.type || { arrays: [], collectionKey: [] }
+                        type: sourceArray?.type || { arrays: [], collectionKey: [], scalars: [] }
                     }
                 ],
                 mutableProperties: updatedMutableProperties
@@ -145,7 +145,7 @@ export class PickByMinMaxStep<
 
         const result = this.addObjectAtPath(inputDescriptor, this.segmentPath.slice(0, -1), {
             name: this.propertyName,
-            type: sourceArray?.type || { arrays: [], collectionKey: [] }
+            type: sourceArray?.type || { arrays: [], collectionKey: [], scalars: [] }
         });
         return {
             ...result,

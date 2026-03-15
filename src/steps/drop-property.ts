@@ -45,7 +45,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         
         if (!arrayDesc) {
             // Path segments don't exist - return empty descriptor
-            return { arrays: [], collectionKey: [] };
+            return { arrays: [], collectionKey: [], scalars: [] };
         }
         
         return this.navigateToPath(arrayDesc.type, remainingSegments);
@@ -89,6 +89,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
             return {
                 arrays: descriptor.arrays.filter(a => a.name !== currentSegment),
                 collectionKey: descriptor.collectionKey,
+                scalars: descriptor.scalars,
                 mutableProperties: descriptor.mutableProperties
             };
         }
@@ -105,6 +106,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
                 return arrayDesc;
             }),
             collectionKey: descriptor.collectionKey,
+            scalars: descriptor.scalars,
             mutableProperties: descriptor.mutableProperties
         };
     }

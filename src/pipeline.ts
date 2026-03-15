@@ -3,9 +3,17 @@ export interface Pipeline<T> {
     remove(key: string, immutableProps: T): void;
 }
 
+export type ScalarType = 'string' | 'number' | 'boolean' | 'date';
+
+export interface ScalarDescriptor {
+    name: string;
+    type: ScalarType;
+}
+
 export interface DescriptorNode {
     arrays: ArrayDescriptor[];
     collectionKey: string[];
+    scalars: ScalarDescriptor[];
     objects?: ObjectDescriptor[];
     mutableProperties?: string[];  // Names of properties that can change
 }
@@ -44,6 +52,28 @@ export function getMutablePropertiesOfArrayItems(
         current = arrayDesc.type;
     }
     return current.mutableProperties || [];
+}
+
+/**
+ * Get the scalar descriptors at a specific path within the type descriptor.
+ * Navigates through arrays following the segment path and returns scalars
+ * at the final node.
+ *
+ * @param descriptor - The root TypeDescriptor to start navigation from
+ * @param segmentPath - Array of segment names (e.g., [] for root, ['items'] for items array)
+ * @returns Array of ScalarDescriptor at that path, or empty array if path is invalid
+ */
+export function getScalarsAtPath(
+    descriptor: TypeDescriptor,
+    segmentPath: string[]
+): ScalarDescriptor[] {
+    let current: DescriptorNode = descriptor;
+    for (const segment of segmentPath) {
+        const arrayDesc = current.arrays.find(a => a.name === segment);
+        if (!arrayDesc) return [];
+        current = arrayDesc.type;
+    }
+    return current.scalars;
 }
 
 export type ImmutableProps = {
