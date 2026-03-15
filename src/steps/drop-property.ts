@@ -120,9 +120,12 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
             const nextCollectionKey = descriptor.collectionKey.includes(droppedPropertyName)
                 ? []
                 : descriptor.collectionKey;
+            // Filter out the dropped scalar
+            const filteredScalars = descriptor.scalars.filter(s => s.name !== droppedPropertyName);
             return {
                 ...descriptor,
-                collectionKey: nextCollectionKey
+                collectionKey: nextCollectionKey,
+                scalars: filteredScalars
             };
         }
 

@@ -120,6 +120,74 @@ describe('pipeline dropProperty', () => {
         expect(output2[0].items).toBeUndefined();
         expect(output2[1].items).toBeUndefined();
     });
+
+    describe('drop-property scalar handling', () => {
+        it('should remove dropped scalar from scalars list', () => {
+            interface Product {
+                id: string;
+                name: string;
+                price: number;
+            }
+
+            const pipeline = createPipeline<Product>('products', [
+                { name: 'id', type: 'string' },
+                { name: 'name', type: 'string' },
+                { name: 'price', type: 'number' }
+            ])
+            .dropProperty('price');
+
+            const descriptor = pipeline.getTypeDescriptor();
+            expect(descriptor.scalars).toHaveLength(2);
+            expect(descriptor.scalars.find(s => s.name === 'id')).toBeDefined();
+            expect(descriptor.scalars.find(s => s.name === 'name')).toBeDefined();
+            expect(descriptor.scalars.find(s => s.name === 'price')).toBeUndefined();
+        });
+
+        it('should preserve non-dropped scalars', () => {
+            interface Order {
+                orderId: string;
+                customerId: string;
+                amount: number;
+                status: string;
+            }
+
+            const pipeline = createPipeline<Order>('orders', [
+                { name: 'orderId', type: 'string' },
+                { name: 'customerId', type: 'string' },
+                { name: 'amount', type: 'number' },
+                { name: 'status', type: 'string' }
+            ])
+            .dropProperty('status');
+
+            const descriptor = pipeline.getTypeDescriptor();
+            expect(descriptor.scalars).toHaveLength(3);
+            expect(descriptor.scalars).toContainEqual({ name: 'orderId', type: 'string' });
+            expect(descriptor.scalars).toContainEqual({ name: 'customerId', type: 'string' });
+            expect(descriptor.scalars).toContainEqual({ name: 'amount', type: 'number' });
+        });
+
+        it('should handle dropping array properties without affecting scalars', () => {
+            // This test ensures drop-property logic distinguishes scalars from arrays
+            interface Order {
+                id: string;
+                items: Item[];
+            }
+            interface Item {
+                itemId: string;
+            }
+
+            const pipeline = createPipeline<Order>('orders', [
+                { name: 'id', type: 'string' }
+            ])
+            // Assume groupBy creates items array
+            .dropProperty('items');
+
+            const descriptor = pipeline.getTypeDescriptor();
+            // Scalars should be unchanged
+            expect(descriptor.scalars).toHaveLength(1);
+            expect(descriptor.scalars[0]).toEqual({ name: 'id', type: 'string' });
+        });
+    });
 });
 
 

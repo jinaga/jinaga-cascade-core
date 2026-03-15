@@ -335,4 +335,49 @@ describe('pipeline filter', () => {
             expect(westRegion?.items).toContainEqual({ city: 'San Francisco', population: 900000 });
         });
     });
+
+    describe('filter step scalar propagation', () => {
+        it('should preserve source scalars', () => {
+            interface Order {
+                orderId: string;
+                amount: number;
+                status: string;
+            }
+
+            const pipeline = createPipeline<Order>('orders', [
+                { name: 'orderId', type: 'string' },
+                { name: 'amount', type: 'number' },
+                { name: 'status', type: 'string' }
+            ])
+            .filter(order => order.amount > 100);
+
+            const descriptor = pipeline.getTypeDescriptor();
+            expect(descriptor.scalars).toHaveLength(3);
+            expect(descriptor.scalars.find(s => s.name === 'amount')?.type).toBe('number');
+        });
+
+        it('should preserve all scalar types through filter', () => {
+            interface Item {
+                id: string;
+                count: number;
+                active: boolean;
+                createdAt: Date;
+            }
+
+            const pipeline = createPipeline<Item>('items', [
+                { name: 'id', type: 'string' },
+                { name: 'count', type: 'number' },
+                { name: 'active', type: 'boolean' },
+                { name: 'createdAt', type: 'date' }
+            ])
+            .filter(item => item.active);
+
+            const descriptor = pipeline.getTypeDescriptor();
+            expect(descriptor.scalars).toHaveLength(4);
+            expect(descriptor.scalars[0]).toEqual({ name: 'id', type: 'string' });
+            expect(descriptor.scalars[1]).toEqual({ name: 'count', type: 'number' });
+            expect(descriptor.scalars[2]).toEqual({ name: 'active', type: 'boolean' });
+            expect(descriptor.scalars[3]).toEqual({ name: 'createdAt', type: 'date' });
+        });
+    });
 });
