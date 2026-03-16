@@ -87,15 +87,14 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         if (remainingSegmentsAfter.length === 0) {
             // This is the target array - remove it from the descriptor
             return {
+                ...descriptor,
                 arrays: descriptor.arrays.filter(a => a.name !== currentSegment),
-                collectionKey: descriptor.collectionKey,
-                scalars: descriptor.scalars,
-                mutableProperties: descriptor.mutableProperties
             };
         }
         
         // Navigate deeper into the tree
         return {
+            ...descriptor,
             arrays: descriptor.arrays.map(arrayDesc => {
                 if (arrayDesc.name === currentSegment) {
                     return {
@@ -105,9 +104,6 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
                 }
                 return arrayDesc;
             }),
-            collectionKey: descriptor.collectionKey,
-            scalars: descriptor.scalars,
-            mutableProperties: descriptor.mutableProperties
         };
     }
 

@@ -81,24 +81,27 @@ export class AverageAggregateStep<
     getTypeDescriptor(): TypeDescriptor {
         const inputDescriptor = this.input.getTypeDescriptor();
         
-        // Add aggregate output to scalars
+        // Add aggregate output to scalars (idempotent: only add if not already present)
         const outputScalar = {
             name: this.propertyName,
             type: 'number' as const
         };
+        const scalars = inputDescriptor.scalars.some(s => s.name === this.propertyName)
+            ? inputDescriptor.scalars
+            : [...inputDescriptor.scalars, outputScalar];
         
         // Mark the aggregate property as mutable
         const mutableProperties = inputDescriptor.mutableProperties || [];
         if (!mutableProperties.includes(this.propertyName)) {
             return {
                 ...inputDescriptor,
-                scalars: [...inputDescriptor.scalars, outputScalar],
+                scalars,
                 mutableProperties: [...mutableProperties, this.propertyName]
             };
         }
         return {
             ...inputDescriptor,
-            scalars: [...inputDescriptor.scalars, outputScalar]
+            scalars
         };
     }
     
