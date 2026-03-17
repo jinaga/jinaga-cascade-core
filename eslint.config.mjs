@@ -42,7 +42,7 @@ export default tseslint.config(
       '**/*.test.ts',
       '**/*.test-d.ts',
       'eslint.config.mjs',
-      'jest.config.js',
+      'jest.config.cjs',
     ],
   }
 );
