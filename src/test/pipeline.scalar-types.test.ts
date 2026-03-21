@@ -21,6 +21,11 @@ describe('ScalarType and ScalarDescriptor', () => {
         expect(scalarType).toBe('date');
     });
 
+    it('should define unknown scalar type', () => {
+        const scalarType: ScalarType = 'unknown';
+        expect(scalarType).toBe('unknown');
+    });
+
     it('should create a ScalarDescriptor with name and type', () => {
         const descriptor: ScalarDescriptor = {
             name: 'id',

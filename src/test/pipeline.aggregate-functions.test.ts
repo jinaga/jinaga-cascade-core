@@ -36,6 +36,22 @@ describe('Aggregate Functions', () => {
             expect(group?.totalPrice).toBe(150); // 100 + 0 + 0 + 50
         });
 
+        it('should treat non-finite numeric parses as 0', () => {
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ category: string; price: number | string }>()
+                    .groupBy(['category'], 'items')
+                    .sum('items', 'price', 'totalPrice')
+            );
+
+            pipeline.add('item1', { category: 'A', price: 10 });
+            pipeline.add('item2', { category: 'A', price: 'not-a-number' });
+            pipeline.add('item3', { category: 'A', price: 5 });
+
+            const output = getOutput();
+            const group = output.find(g => g.category === 'A');
+            expect(group?.totalPrice).toBe(15);
+        });
+
         it('should return 0 for empty arrays', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline<{ category: string; price: number }>()

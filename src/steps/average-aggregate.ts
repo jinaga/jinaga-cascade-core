@@ -165,7 +165,7 @@ export class AverageAggregateStep<
         
         if (value !== null && value !== undefined) {
             const numValue = Number(value);
-            if (!isNaN(numValue)) {
+            if (Number.isFinite(numValue)) {
                 // Track individual item value
                 this.itemValues.get(parentKeyHash)!.set(itemKey, numValue);
                 
@@ -219,7 +219,7 @@ export class AverageAggregateStep<
         
         // Parse new value
         const newNum = (newValue !== null && newValue !== undefined) ? Number(newValue) : NaN;
-        const hasNewValue = !isNaN(newNum);
+        const hasNewValue = Number.isFinite(newNum);
         
         // Update itemValues map
         if (hasNewValue) {
@@ -307,7 +307,7 @@ export class AverageAggregateStep<
             const value = item[this.numericProperty];
             if (value !== null && value !== undefined) {
                 const numValue = Number(value);
-                if (!isNaN(numValue)) {
+                if (Number.isFinite(numValue)) {
                     valueToRemove = numValue;
                 }
             }

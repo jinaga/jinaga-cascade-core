@@ -2,8 +2,8 @@ import { ScalarType, ScalarDescriptor } from '../index';
 
 describe('Public API exports', () => {
     it('should export ScalarType', () => {
-        const type: ScalarType = 'string';
-        expect(type).toBe('string');
+        const type: ScalarType = 'unknown';
+        expect(type).toBe('unknown');
     });
 
     it('should export ScalarDescriptor', () => {

@@ -13,6 +13,15 @@ import { PickByMinMaxStep } from './steps/pick-by-min-max';
 export type KeyedArray<T> = { key: string, value: T }[];
 export type Transform<T> = (state: T) => T;
 
+/** Cell value contribution for sum: null/undefined → 0; finite numbers → value; NaN/Infinity/non-numeric → 0. */
+function finiteNumericContribution(value: unknown): number {
+    if (value === null || value === undefined) {
+        return 0;
+    }
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+}
+
 /**
  * Type-safe storage for batched updaters associated with pipelines.
  * Uses WeakMap to avoid memory leaks and maintain type safety.
@@ -411,12 +420,12 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             outputProperty,
             (acc: number | undefined, item: unknown) => {
                 const value = (item as Record<string, unknown>)[propertyName];
-                const numValue = (value === null || value === undefined) ? 0 : Number(value);
+                const numValue = finiteNumericContribution(value);
                 return (acc ?? 0) + numValue;
             },
             (acc: number, item: unknown) => {
                 const value = (item as Record<string, unknown>)[propertyName];
-                const numValue = (value === null || value === undefined) ? 0 : Number(value);
+                const numValue = finiteNumericContribution(value);
                 return acc - numValue;
             },
             propertyName  // Pass property name for auto-detection

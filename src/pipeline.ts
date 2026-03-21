@@ -3,7 +3,7 @@ export interface Pipeline<T> {
     remove(key: string, immutableProps: T): void;
 }
 
-export type ScalarType = 'string' | 'number' | 'boolean' | 'date';
+export type ScalarType = 'string' | 'number' | 'boolean' | 'date' | 'unknown';
 
 export interface ScalarDescriptor {
     name: string;
