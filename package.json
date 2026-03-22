@@ -1,6 +1,6 @@
 {
   "name": "@jinaga/cascade-core",
-  "version": "0.1.0",
+  "version": "0.9.1",
   "description": "Incremental, event-driven data pipeline system for Jinaga Cascade",
   "type": "module",
   "main": "dist/index.js",
@@ -56,4 +56,3 @@
     "typescript-eslint": "^8.18.2"
   }
 }
-
