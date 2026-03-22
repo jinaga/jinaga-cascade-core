@@ -34,6 +34,10 @@
     "data-transformation"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jinaga/jinaga-cascade-core.git"
+  },
   "dependencies": {
     "@stablelib/base64": "^1.0.1",
     "@stablelib/sha512": "^1.0.1",

@@ -24,22 +24,24 @@ Use this when onboarding a new maintainer machine, wiring npm to GitHub Actions,
 ### GitHub repository
 
 1. **Actions** — Confirm [GitHub Actions](https://github.com/jinaga/jinaga-cascade-core/actions) are enabled for the repository (Settings → Actions → General).
-2. **Secrets** — If you publish with a classic automation token, add **`NPM_TOKEN`** under Settings → Secrets and variables → Actions. The publish workflow reads it as `NODE_AUTH_TOKEN` (see appendix). If you use **Trusted Publishers** (OIDC) only, you do not need `NPM_TOKEN`.
-3. **Workflow files** — They should live in the monorepo at `packages/jinaga-cascade-core/.github/workflows/`, be committed to `jinaga/cascade`, then deployed to GitHub with `npm run sync-core`. After that, changes to workflows follow the same path: edit in the monorepo, commit, sync.
+2. **OIDC for publish** — The publish workflow uses **Trusted Publishing** (no `NPM_TOKEN`). It must run on **GitHub-hosted** runners (`ubuntu-latest`) with `permissions: id-token: write` (see [npm: Trusted publishing](https://docs.npmjs.com/trusted-publishers)). Self-hosted runners are not supported for OIDC publish today.
+3. **Workflow files** — They live in the monorepo at `packages/jinaga-cascade-core/.github/workflows/`, are committed to `jinaga/cascade`, then deployed to GitHub with `npm run sync-core`. Both **CI** and **Publish** support **`workflow_dispatch`**: in the GitHub Actions tab, choose the workflow, then **Run workflow**. Publish defaults to a **dry run** (`npm publish --dry-run`); turn **dry_run** off only if you intend to publish the current `package.json` version from `main` without a tag (use with care). If manual publish fails with an auth mismatch, see npm’s note on **`workflow_dispatch`** and [trusted publisher configuration](https://docs.npmjs.com/trusted-publishers#troubleshooting).
 
 ### npm package and publishing identity
 
 1. **Package name** — `@jinaga/cascade-core` (see `package.json`). It is **scoped** to the `jinaga` org on npm. Use **`npm publish --access public`** so the package is public (scoped packages default to private on first publish without it).
-2. **Owners** — On [npm](https://www.npmjs.com/package/@jinaga/cascade-core), ensure the right accounts have publish access (`npm owner ls @jinaga/cascade-core`).
-3. **Choose how CI authenticates to npm:**
+2. **`repository` in `package.json`** — Set to the public Git repo (already present) so npm can associate the package with source and [provenance](https://docs.npmjs.com/generating-provenance-statements) works as documented.
+3. **Owners** — On [npm](https://www.npmjs.com/package/@jinaga/cascade-core), ensure the right accounts can manage the package (`npm owner ls @jinaga/cascade-core`).
+4. **Trusted publishing (OIDC)** — On [npmjs.com](https://www.npmjs.com/) → package → **Settings** → **Trusted publishing**, add **GitHub Actions** with:
+   - Repository: `jinaga/jinaga-cascade-core`
+   - **Workflow filename** must match exactly (e.g. `publish.yml` — filename only, case-sensitive).
+   After it works, npm recommends tightening **Publishing access** (e.g. disallow classic publish tokens); see [Trusted publishing](https://docs.npmjs.com/trusted-publishers).
 
-   **Trusted publishing (recommended)**  
-   In the npm package’s settings, connect **Trusted Publishers** to the GitHub repository `jinaga/jinaga-cascade-core` and the workflow that runs `npm publish`. Follow [npm’s Trusted Publishers documentation](https://docs.npmjs.com/trusted-publishers) for OIDC setup. The workflow needs whatever `permissions` npm documents (commonly `id-token: write`). You can add [provenance](https://docs.npmjs.com/generating-provenance-statements) if your workflow supports it.
+5. **Requirements** — [npm CLI](https://www.npmjs.com/package/npm) **≥ 11.5.1** and **Node ≥ 22.14.0** for trusted publishing; the workflow upgrades npm and pins Node accordingly.
 
-   **Automation token**  
-   Create an npm [automation token](https://docs.npmjs.com/creating-and-viewing-access-tokens), store it as the `NPM_TOKEN` secret on GitHub, and use `setup-node` with `registry-url` plus `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` on the publish step (see appendix).
+6. **Fallback: automation token** — If you cannot use OIDC, add **`NPM_TOKEN`** on GitHub and pass `NODE_AUTH_TOKEN` on `npm publish` steps instead (not the default in this repo).
 
-4. **First publish from automation** — After credentials work, the first real publish is usually triggered by pushing a **version tag** to the public repo (see [Releases](#releases)). You can dry-run locally with `npm publish --dry-run` after `npm run build` in a clean clone of the public repo or in this package directory after sync.
+7. **First publish from automation** — After trusted publishing is configured, the first real publish is usually triggered by pushing a **version tag** to the public repo (see [Releases](#releases)). You can dry-run locally with `npm publish --dry-run` after `npm run build` in a clean clone of the public repo or in this package directory after sync.
 
 ### Local clone: `public-repo` remote
 
@@ -150,11 +152,11 @@ npm run build
 
 ---
 
-## Appendix: Example GitHub Actions workflows
+## Appendix: GitHub Actions workflows
 
-Place these under `packages/jinaga-cascade-core/.github/workflows/` in the monorepo, commit, and run `npm run sync-core` so they appear on the public repository.
+Workflows are committed under `packages/jinaga-cascade-core/.github/workflows/`. Sync with `npm run sync-core`. The public repo root must contain `package.json` (true after subtree sync).
 
-Adjust `node-version` to your chosen LTS. The public repo root must contain `package.json` (true after subtree sync).
+Publish uses **Trusted Publishing**: `id-token: write`, no `NODE_AUTH_TOKEN`. To use a classic token instead, add `NPM_TOKEN` and restore `env: NODE_AUTH_TOKEN` on publish steps.
 
 ### `ci.yml` (continuous integration)
 
@@ -166,6 +168,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -183,11 +186,7 @@ jobs:
       - run: npm run build
 ```
 
-### `publish.yml` (npm publish on version tags)
-
-Use **either** Trusted Publishing (OIDC) **or** `NPM_TOKEN`; do not duplicate publish steps.
-
-**With `NPM_TOKEN` repository secret:**
+### `publish.yml` (tags + manual, Trusted Publishing)
 
 ```yaml
 name: Publish
@@ -196,21 +195,31 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: When true, runs npm publish --dry-run (no upload). Ignored for tag pushes.
+        type: boolean
+        default: true
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.14"
           registry-url: https://registry.npmjs.org
           cache: npm
+      - name: Use npm with trusted publishing support
+        run: npm install -g npm@^11.5.1
       - run: npm ci
       - name: Verify tag matches package.json
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: |
           VERSION=$(node -p "require('./package.json').version")
           TAG="${GITHUB_REF_NAME#v}"
@@ -219,9 +228,13 @@ jobs:
             exit 1
           fi
       - run: npm run build
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm (release)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: npm publish --access public
+      - name: Dry-run publish (manual)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: npm publish --dry-run --access public
+      - name: Publish to npm (manual, not dry-run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false
+        run: npm publish --access public
 ```
-
-If you use **Trusted Publishers** with OIDC, follow npm’s current documentation for the publish job (tokenless OIDC, `id-token`, and optional provenance flags) instead of `NPM_TOKEN`.
