@@ -1,4 +1,4 @@
-# jinaga-cascade-core
+# @jinaga/cascade-core
 
 Incremental, event-driven data pipeline system for Jinaga Cascade.
 
@@ -16,13 +16,13 @@ This library provides a reactive data transformation pipeline system that proces
 ## Installation
 
 ```bash
-npm install jinaga-cascade-core
+npm install @jinaga/cascade-core
 ```
 
 ## Usage
 
 ```typescript
-import { PipelineBuilder } from 'jinaga-cascade-core';
+import { PipelineBuilder } from '@jinaga/cascade-core';
 
 // Build a pipeline
 const pipeline = PipelineBuilder

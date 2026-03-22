@@ -1,6 +1,6 @@
-# Deploying `jinaga-cascade-core`
+# Deploying `@jinaga/cascade-core`
 
-This guide is for **maintainers** of the public repository (`jinaga/jinaga-cascade-core`) and the **`jinaga-cascade-core`** npm package. It covers credentials and one-time package setup, then ongoing work and releases.
+This guide is for **maintainers** of the public repository (`jinaga/jinaga-cascade-core`) and the **`@jinaga/cascade-core`** npm package (scoped under the **`jinaga`** organization). It covers credentials and one-time package setup, then ongoing work and releases.
 
 Development happens in the private Cascade monorepo (`jinaga/cascade`) under `packages/jinaga-cascade-core/`. The public repo receives updates via **git subtree** (`npm run sync-core` from the monorepo root). Creating the public repo, adding the `public-repo` remote, and first-time subtree troubleshooting are documented in [`docs/setup-monorepo-git-subtree.md`](../../docs/setup-monorepo-git-subtree.md).
 
@@ -29,8 +29,8 @@ Use this when onboarding a new maintainer machine, wiring npm to GitHub Actions,
 
 ### npm package and publishing identity
 
-1. **Package name** — `jinaga-cascade-core` (see `package.json`). Unscoped; publishes are public by default.
-2. **Owners** — On [npm](https://www.npmjs.com/package/jinaga-cascade-core), ensure the right accounts have publish access (`npm owner ls jinaga-cascade-core`).
+1. **Package name** — `@jinaga/cascade-core` (see `package.json`). It is **scoped** to the `jinaga` org on npm. Use **`npm publish --access public`** so the package is public (scoped packages default to private on first publish without it).
+2. **Owners** — On [npm](https://www.npmjs.com/package/@jinaga/cascade-core), ensure the right accounts have publish access (`npm owner ls @jinaga/cascade-core`).
 3. **Choose how CI authenticates to npm:**
 
    **Trusted publishing (recommended)**  
@@ -102,13 +102,13 @@ Tags created on the **private** monorepo point at monorepo commits. Those SHAs a
 
    ```bash
    git fetch public-repo main
-   git tag vX.Y.Z public-repo/main -m "jinaga-cascade-core vX.Y.Z"
+   git tag vX.Y.Z public-repo/main -m "@jinaga/cascade-core vX.Y.Z"
    git push public-repo vX.Y.Z
    ```
 
    Use `vX.Y.Z` matching `package.json` (for example `0.2.0` → `v0.2.0`).
 
-5. **Confirm** the publish workflow on the [Actions](https://github.com/jinaga/jinaga-cascade-core/actions) tab and the new version on [npm](https://www.npmjs.com/package/jinaga-cascade-core).
+5. **Confirm** the publish workflow on the [Actions](https://github.com/jinaga/jinaga-cascade-core/actions) tab and the new version on [npm](https://www.npmjs.com/package/@jinaga/cascade-core).
 6. **Optional:** Create a [GitHub Release](https://github.com/jinaga/jinaga-cascade-core/releases) from that tag with notes.
 
 The publish workflow should **fail** if the tag does not match `"version"` in `package.json` (see appendix).
