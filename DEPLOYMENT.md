@@ -232,9 +232,9 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: npm publish --access public
       - name: Dry-run publish (manual)
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        if: github.event_name == 'workflow_dispatch' && fromJSON(inputs.dry_run)
         run: npm publish --dry-run --access public
       - name: Publish to npm (manual, not dry-run)
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false
+        if: github.event_name == 'workflow_dispatch' && !fromJSON(inputs.dry_run)
         run: npm publish --access public
 ```
