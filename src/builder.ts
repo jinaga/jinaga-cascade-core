@@ -154,20 +154,18 @@ type Expand<T> = T extends infer O ? { [K in keyof O]: O[K] } : never;
 
 // Type utilities for commutativeAggregate
 
-/**
- * Navigates through a type following a path of array property names.
- * Returns the item type of the final array in the path.
- */
-type NavigateToArrayItem<T, Path extends string[]> =
-    Path extends [infer First extends string, ...infer Rest extends string[]]
-        ? First extends keyof T
-            ? T[First] extends KeyedArray<infer ItemType>
-                ? Rest extends []
-                    ? ItemType  // Reached the target array
-                    : NavigateToArrayItem<ItemType, Rest>  // Continue navigating
-                : never  // Property is not an array
-            : never  // Property doesn't exist
-        : never;  // Empty path
+type ArrayPropertyNameAtCurrentPath<T, Path extends string[]> = {
+    [K in keyof NavigateToPath<T, Path>]-?:
+        NavigateToPath<T, Path>[K] extends KeyedArray<unknown> ? K : never
+}[keyof NavigateToPath<T, Path>] & string;
+
+type ArrayItemAtCurrentPath<
+    T,
+    Path extends string[],
+    ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>
+> = NavigateToPath<T, Path>[ArrayName] extends KeyedArray<infer ItemType>
+    ? ItemType
+    : never;
 
 /**
  * Replaces an array property with an aggregate property at a specific level.
@@ -361,14 +359,14 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * )
      */
     commutativeAggregate<
-        ArrayName extends string,
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         PropName extends string,
         TAggregate
     >(
         arrayName: ArrayName,
         propertyName: PropName,
-        add: AddOperator<NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]>, TAggregate>,
-        subtract: SubtractOperator<NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]>, TAggregate>,
+        add: AddOperator<ArrayItemAtCurrentPath<T, Path, ArrayName>, TAggregate>,
+        subtract: SubtractOperator<ArrayItemAtCurrentPath<T, Path, ArrayName>, TAggregate>,
         propertyToAggregate?: string
     ): PipelineBuilder<
         Path extends []
@@ -403,11 +401,11 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * .sum('items', 'price', 'totalPrice')
      */
     sum<
-        ArrayName extends string,
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         TPropName extends string
     >(
         arrayName: ArrayName,
-        propertyName: keyof NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> & string,
+        propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
         outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
@@ -444,7 +442,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * .count('items', 'itemCount')
      */
     count<
-        ArrayName extends string,
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         TPropName extends string
     >(
         arrayName: ArrayName,
@@ -476,11 +474,11 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * .min('items', 'price', 'minPrice')
      */
     min<
-        ArrayName extends string,
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         TPropName extends string
     >(
         arrayName: ArrayName,
-        propertyName: keyof NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> & string,
+        propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
         outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
@@ -512,11 +510,11 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * .max('items', 'price', 'maxPrice')
      */
     max<
-        ArrayName extends string,
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         TPropName extends string
     >(
         arrayName: ArrayName,
-        propertyName: keyof NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> & string,
+        propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
         outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
@@ -548,11 +546,11 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * .average('items', 'price', 'avgPrice')
      */
     average<
-        ArrayName extends string,
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         TPropName extends string
     >(
         arrayName: ArrayName,
-        propertyName: keyof NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> & string,
+        propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
         outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
@@ -584,16 +582,16 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * .pickByMin('items', 'price', 'cheapestItem')
      */
     pickByMin<
-        ArrayName extends string,
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         TPropName extends string
     >(
         arrayName: ArrayName,
-        propertyName: keyof NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> & string,
+        propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
         outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
-            ? TransformWithAggregate<T, [ArrayName], TPropName, NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> | undefined>
-            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> | undefined>>>,
+            ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
+            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
         TStart
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
@@ -621,16 +619,16 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      * .pickByMax('items', 'price', 'mostExpensiveItem')
      */
     pickByMax<
-        ArrayName extends string,
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         TPropName extends string
     >(
         arrayName: ArrayName,
-        propertyName: keyof NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> & string,
+        propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
         outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
-            ? TransformWithAggregate<T, [ArrayName], TPropName, NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> | undefined>
-            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, NavigateToArrayItem<NavigateToPath<T, Path>, [ArrayName]> | undefined>>>,
+            ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
+            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
         TStart
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
