@@ -1,4 +1,4 @@
-import { KeyedArray } from '../builder';
+import { KeyedArray } from '../builder.js';
 
 /**
  * Navigates through a type following a variadic path of array property names.

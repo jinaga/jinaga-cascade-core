@@ -1,5 +1,5 @@
-import { type KeyedArray } from './builder';
-import { createPipeline as createBasePipeline } from './factory';
+import { type KeyedArray } from './builder.js';
+import { createPipeline as createBasePipeline } from './factory.js';
 
 /**
  * Example pipeline that groups items by category and computes aggregates

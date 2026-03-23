@@ -1,6 +1,6 @@
 import * as fs from 'fs';
-import { computeGroupKey } from './util/hash';
-import type { KeyedArray } from './builder';
+import { computeGroupKey } from './util/hash.js';
+import type { KeyedArray } from './builder.js';
 
 /**
  * Pipeline runner script that processes JSON input through a pipeline
@@ -50,7 +50,7 @@ async function main() {
         console.log(`Processing ${inputData.length} items...`);
         
         // Import the pipeline builder
-        const { createPipeline } = await import('./example-pipeline');
+        const { createPipeline } = await import('./example-pipeline.js');
         
         // Create the pipeline with a state setter
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime JSON data, typed by pipeline

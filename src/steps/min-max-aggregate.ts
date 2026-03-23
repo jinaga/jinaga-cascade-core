@@ -1,5 +1,5 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline';
-import { IndexedHeap } from '../util/indexed-heap';
+import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import { IndexedHeap } from '../util/indexed-heap.js';
 
 /**
  * Computes a hash key for a key path (for map lookups).

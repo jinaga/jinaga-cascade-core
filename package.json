@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "smoke:node-esm": "node scripts/smoke-node-esm.mjs",
     "watch": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
