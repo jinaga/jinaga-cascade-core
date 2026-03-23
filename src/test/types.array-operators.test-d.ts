@@ -74,3 +74,28 @@ type Input = {
     const invalidGroupedArrayName: GroupedArrayName = 'attendees';
     void invalidGroupedArrayName;
 }
+
+// Chained root-level groupBy should use previous root as child scope name
+{
+    interface Vote {
+        attendeePublicKey: string;
+        createdAtSort: string;
+        round: number;
+        isInvestor: boolean;
+    }
+
+    const regrouped = createPipeline<Vote, 'votes'>('votes')
+        .groupBy(['attendeePublicKey'], 'attendees')
+        .groupBy(['attendeePublicKey'], 'groups');
+
+    type RegroupedArrayName = Parameters<typeof regrouped.pickByMax>[0];
+
+    // Current behavior: inferred child array name remains the original root scope.
+    // This demonstrates the issue described in the review comment.
+    expectType<'votes'>({} as RegroupedArrayName);
+
+    // Desired behavior for chained root-level groupBy would be 'attendees' here.
+    // @ts-expect-error Currently rejected: root-scope generic is not updated after first groupBy
+    const shouldBePreviousRoot: RegroupedArrayName = 'attendees';
+    void shouldBePreviousRoot;
+}
