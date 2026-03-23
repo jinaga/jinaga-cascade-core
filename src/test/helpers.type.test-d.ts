@@ -1,7 +1,6 @@
 import { expectType, expectError } from 'tsd';
-import { createPipeline } from '../index';
-import { BuilderOutputType } from './helpers';
-import type { PipelineBuilder } from '../index';
+import { createPipeline } from '../index.js';
+import { BuilderOutputType } from './helpers.js';
 
 // Test single key groupBy - this is the failing case from the user's example
 {
@@ -87,7 +86,7 @@ import type { PipelineBuilder } from '../index';
     type Output = BuilderOutputType<typeof builder>;
     
     // This assignment should work - Output should be assignable to the correct type
-    const correct: { category: string; items: { value: number }[] } = {} as Output;
+    expectType<{ category: string; items: { value: number }[] }>({} as Output);
     
     // This assignment should FAIL - Output should NOT be assignable to type with value at top
     expectError(
