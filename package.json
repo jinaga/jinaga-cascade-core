@@ -15,6 +15,9 @@
     "dist",
     "README.md"
   ],
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "build": "tsc",
     "smoke:node-esm": "node scripts/smoke-node-esm.mjs",
