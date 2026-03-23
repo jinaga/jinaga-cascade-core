@@ -15,3 +15,7 @@ When reviewing existing code, count the data-carrying fields and compare against
 - **Dead stored data:** fields in a record or object that are written but never read. Remove them.
 
 Balance this with performance. The goal is to minimize fields without increasing the time complexity of the solution. An O(1) lookup in a map you already maintain is free; an O(n) scan to avoid storing one extra field is not.
+
+## Compatibility vs Correctness
+
+Default to semantic and type-system correctness over backward compatibility when the two conflict. Do not add compatibility shims, overloads, or transitional behavior unless explicitly requested. When a breaking change is needed to align compile-time and runtime semantics, make the break intentional, minimal, and well-tested.
