@@ -1,13 +1,13 @@
-import { getPathSegmentsFromDescriptor, type DescriptorNode, type ImmutableProps, type Pipeline, type Step, type TypeDescriptor } from './pipeline';
-import { CommutativeAggregateStep, type AddOperator, type SubtractOperator } from './steps/commutative-aggregate';
-import { DefinePropertyStep } from './steps/define-property';
-import { DropPropertyStep } from './steps/drop-property';
-import { FilterStep } from './steps/filter';
-import { GroupByStep } from './steps/group-by';
-import { NavigateToPath, TransformAtPath } from './types/path';
-import { MinMaxAggregateStep } from './steps/min-max-aggregate';
-import { AverageAggregateStep } from './steps/average-aggregate';
-import { PickByMinMaxStep } from './steps/pick-by-min-max';
+import { getPathSegmentsFromDescriptor, type DescriptorNode, type ImmutableProps, type Pipeline, type Step, type TypeDescriptor } from './pipeline.js';
+import { CommutativeAggregateStep, type AddOperator, type SubtractOperator } from './steps/commutative-aggregate.js';
+import { DefinePropertyStep } from './steps/define-property.js';
+import { DropPropertyStep } from './steps/drop-property.js';
+import { FilterStep } from './steps/filter.js';
+import { GroupByStep } from './steps/group-by.js';
+import { NavigateToPath, TransformAtPath } from './types/path.js';
+import { MinMaxAggregateStep } from './steps/min-max-aggregate.js';
+import { AverageAggregateStep } from './steps/average-aggregate.js';
+import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
 
 // Public types (exported for use in build() signature)
 export type KeyedArray<T> = { key: string, value: T }[];

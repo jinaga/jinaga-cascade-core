@@ -1,5 +1,5 @@
-import type { AddedHandler, ImmutableProps, RemovedHandler, ModifiedHandler, Step, TypeDescriptor } from '../pipeline';
-import { pathsMatch, pathStartsWith } from '../util/path';
+import type { AddedHandler, ImmutableProps, RemovedHandler, ModifiedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import { pathsMatch, pathStartsWith } from '../util/path.js';
 
 /**
  * State tracked for each item seen by the filter step.

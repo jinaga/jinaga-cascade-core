@@ -1,7 +1,7 @@
-import type { AddedHandler, ImmutableProps, RemovedHandler, Step } from '../pipeline';
-import { type DescriptorNode, type TypeDescriptor } from '../pipeline';
-import { computeGroupKey } from "../util/hash";
-import { pathsMatch, pathStartsWith } from "../util/path";
+import type { AddedHandler, ImmutableProps, RemovedHandler, Step } from '../pipeline.js';
+import { type DescriptorNode, type TypeDescriptor } from '../pipeline.js';
+import { computeGroupKey } from "../util/hash.js";
+import { pathsMatch, pathStartsWith } from "../util/path.js";
 
 export class GroupByStep<
     T extends object,

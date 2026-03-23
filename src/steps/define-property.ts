@@ -1,6 +1,6 @@
-import type { ImmutableProps, ModifiedHandler, Step } from '../pipeline';
-import { type TypeDescriptor } from '../pipeline';
-import { pathsMatch } from '../util/path';
+import type { ImmutableProps, ModifiedHandler, Step } from '../pipeline.js';
+import { type TypeDescriptor } from '../pipeline.js';
+import { pathsMatch } from '../util/path.js';
 
 export class DefinePropertyStep<T, K extends string, U> implements Step {
     // Track items and their mutable property values + computed property value

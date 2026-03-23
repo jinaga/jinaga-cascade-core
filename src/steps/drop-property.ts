@@ -1,6 +1,6 @@
-import type { AddedHandler, ModifiedHandler, RemovedHandler, Step } from '../pipeline';
-import { type DescriptorNode, type TypeDescriptor } from '../pipeline';
-import { pathsMatch } from '../util/path';
+import type { AddedHandler, ModifiedHandler, RemovedHandler, Step } from '../pipeline.js';
+import { type DescriptorNode, type TypeDescriptor } from '../pipeline.js';
+import { pathsMatch } from '../util/path.js';
 
 export class DropPropertyStep<T, K extends keyof T> implements Step {
     private isArrayProperty: boolean;
