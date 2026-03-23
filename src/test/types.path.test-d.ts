@@ -1,6 +1,6 @@
 import { expectType, expectAssignable } from 'tsd';
-import { KeyedArray } from '../builder';
-import { NavigateToPath, ValidatePath, TransformAtPath } from '../types/path';
+import { KeyedArray } from '../builder.js';
+import { NavigateToPath, ValidatePath, TransformAtPath } from '../types/path.js';
 
 // Test data types
 type SimpleInput = {

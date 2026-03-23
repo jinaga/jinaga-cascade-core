@@ -51,3 +51,70 @@ type Input = {
     // @ts-expect-error City items do not include "population"
     scoped.sum('cities', 'population', 'totalPopulation');
 }
+
+// Root scope name should be preserved through groupBy for downstream operators
+{
+    interface Vote {
+        attendeePublicKey: string;
+        createdAtSort: string;
+        round: number;
+        isInvestor: boolean;
+    }
+
+    const grouped = createPipeline<Vote, 'votes'>('votes')
+        .groupBy(['attendeePublicKey'], 'attendees');
+
+    // Runtime-correct child array name remains the previous scope ("votes")
+    grouped.pickByMax('votes', 'createdAtSort', 'latestVote');
+
+    type GroupedArrayName = Parameters<typeof grouped.pickByMax>[0];
+    expectType<'votes'>({} as GroupedArrayName);
+
+    // @ts-expect-error groupBy parent name should not be accepted as the picked array
+    const invalidGroupedArrayName: GroupedArrayName = 'attendees';
+    void invalidGroupedArrayName;
+}
+
+// Chained root-level groupBy should use previous parent as child scope name
+{
+    interface Vote {
+        attendeePublicKey: string;
+        createdAtSort: string;
+        round: number;
+        isInvestor: boolean;
+    }
+
+    const regrouped = createPipeline<Vote, 'votes'>('votes')
+        .groupBy(['attendeePublicKey'], 'attendees')
+        .groupBy(['attendeePublicKey'], 'groups');
+
+    type RegroupedArrayName = Parameters<typeof regrouped.pickByMax>[0];
+
+    // After the second root-level groupBy, operators should target the previous root collection.
+    expectType<'attendees'>({} as RegroupedArrayName);
+    // @ts-expect-error Original root scope name should no longer be accepted
+    const invalidRegroupedArrayName: RegroupedArrayName = 'votes';
+    void invalidRegroupedArrayName;
+}
+
+// Root-level groupBy after aggregate should still advance root scope name
+{
+    interface Vote {
+        attendeePublicKey: string;
+        createdAtSort: string;
+        round: number;
+        isInvestor: boolean;
+    }
+
+    const regroupedAfterAggregate = createPipeline<Vote, 'votes'>('votes')
+        .groupBy(['attendeePublicKey'], 'attendees')
+        .sum('votes', 'round', 'totalRound')
+        .groupBy(['attendeePublicKey'], 'groups');
+
+    type RegroupedAfterAggregateArrayName = Parameters<typeof regroupedAfterAggregate.pickByMax>[0];
+
+    expectType<'attendees'>({} as RegroupedAfterAggregateArrayName);
+    // @ts-expect-error Original root scope name should no longer be accepted after regrouping
+    const invalidRegroupedAfterAggregateArrayName: RegroupedAfterAggregateArrayName = 'votes';
+    void invalidRegroupedAfterAggregateArrayName;
+}

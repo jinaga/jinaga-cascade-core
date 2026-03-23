@@ -202,6 +202,11 @@ type TransformWithAggregate<
             : never
         : never;
 
+type CurrentScopeName<Path extends string[], RootScopeName extends string> =
+    Path extends [...infer _Rest extends string[], infer LastSegment extends string]
+        ? LastSegment
+        : RootScopeName;
+
 function compareMixedPrimitiveValues(left: number | string, right: number | string): number {
     if (typeof left === 'number' && typeof right === 'number') {
         return left - right;
@@ -231,7 +236,7 @@ function compareMixedPrimitiveValues(left: number | string, right: number | stri
  * Removes an array at the specified path from the type.
  */
 
-export class PipelineBuilder<T extends object, TStart, Path extends string[] = []> {
+export class PipelineBuilder<T extends object, TStart, Path extends string[] = [], RootScopeName extends string = 'items'> {
     constructor(
         private input: Pipeline<TStart>,
         private lastStep: Step,
@@ -257,7 +262,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? Expand<T & Record<K, U>>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<K, U>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         const newStep = new DefinePropertyStep(
             this.lastStep,
@@ -273,7 +280,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? Expand<Omit<T, K>>
             : Expand<TransformAtPath<T, Path, Expand<Omit<NavigateToPath<T, Path>, K>>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         const newStep = new DropPropertyStep<NavigateToPath<T, Path>, K>(
             this.lastStep,
@@ -288,9 +297,11 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         arrayName: ArrayName
     ): PipelineBuilder<
         Path extends []
-            ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in ArrayName]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
-            : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in ArrayName]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
-        TStart
+            ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
+            : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
+        TStart,
+        Path,
+        Path extends [] ? ArrayName : RootScopeName
     > {
         const descriptor = this.lastStep.getTypeDescriptor();
         const inferredChildArrayName = this.scopeSegments.length > 0
@@ -372,7 +383,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], PropName, TAggregate>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<PropName, TAggregate>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new CommutativeAggregateStep(
@@ -411,7 +424,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         return this.commutativeAggregate(
             arrayName,
@@ -451,7 +466,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         return this.commutativeAggregate(
             arrayName,
@@ -484,7 +501,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new MinMaxAggregateStep(
@@ -520,7 +539,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new MinMaxAggregateStep(
@@ -556,7 +577,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new AverageAggregateStep(
@@ -592,7 +615,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new PickByMinMaxStep(
@@ -629,7 +654,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
-        TStart
+        TStart,
+        Path,
+        RootScopeName
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new PickByMinMaxStep(
@@ -651,8 +678,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      */
     in<NewPath extends string[]>(
         ...pathSegments: NewPath
-    ): PipelineBuilder<T, TStart, [...Path, ...NewPath]> {
-        return new PipelineBuilder<T, TStart, [...Path, ...NewPath]>(
+    ): PipelineBuilder<T, TStart, [...Path, ...NewPath], RootScopeName> {
+        return new PipelineBuilder<T, TStart, [...Path, ...NewPath], RootScopeName>(
             this.input,
             this.lastStep,
             [...this.scopeSegments, ...pathSegments] as [...Path, ...NewPath]
@@ -676,7 +703,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
     filter(
         predicate: (item: NavigateToPath<T, Path>) => boolean,
         mutableProperties: string[] = []
-    ): PipelineBuilder<T, TStart, Path> {
+    ): PipelineBuilder<T, TStart, Path, RootScopeName> {
         const newStep = new FilterStep<NavigateToPath<T, Path>>(
             this.lastStep,
             predicate as (item: unknown) => boolean,

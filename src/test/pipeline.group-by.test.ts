@@ -160,7 +160,7 @@ describe('group-by scalar propagation', () => {
             amount: number;
         }
 
-        const pipeline = createPipeline<Order>('orders', [
+        const pipeline = createPipeline<Order, 'orders'>('orders', [
             { name: 'customerId', type: 'string' },
             { name: 'orderId', type: 'string' },
             { name: 'amount', type: 'number' }
@@ -189,7 +189,7 @@ describe('group-by scalar propagation', () => {
             isDebit: boolean;
         }
 
-        const pipeline = createPipeline<Transaction>('transactions', [
+        const pipeline = createPipeline<Transaction, 'transactions'>('transactions', [
             { name: 'date', type: 'date' },
             { name: 'accountId', type: 'string' },
             { name: 'amount', type: 'number' },
