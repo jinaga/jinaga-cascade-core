@@ -2,7 +2,7 @@ import { createPipeline } from '../index';
 
 describe('pipeline collection key metadata', () => {
     it('root descriptor includes required root collection name', () => {
-        const descriptor = createPipeline<{ category: string; amount: number }>('rows')
+        const descriptor = createPipeline<{ category: string; amount: number }, 'rows'>('rows')
             .getTypeDescriptor();
 
         expect(descriptor.rootCollectionName).toBe('rows');
@@ -48,7 +48,7 @@ describe('pipeline collection key metadata', () => {
     it('dropProperty preserves key when dropping a non-key member', () => {
         const descriptor = createPipeline<{ category: string; amount: number }>()
             .groupBy(['category'], 'groups')
-            .dropProperty('groups')
+            .dropProperty('items')
             .getTypeDescriptor();
 
         expect(descriptor.collectionKey).toEqual(['category']);
@@ -67,12 +67,12 @@ describe('pipeline collection key metadata', () => {
 
         const aggregatedDescriptor = createPipeline<{ category: string; amount: number }>()
             .groupBy(['category'], 'groups')
-            .sum('groups', 'amount', 'totalAmount')
+            .sum('items', 'amount', 'totalAmount')
             .getTypeDescriptor();
 
         const pickedDescriptor = createPipeline<{ category: string; amount: number }>()
             .groupBy(['category'], 'groups')
-            .pickByMax('groups', 'amount', 'largestItem')
+            .pickByMax('items', 'amount', 'largestItem')
             .getTypeDescriptor();
 
         expect(filteredDescriptor.collectionKey).toEqual(groupedDescriptor.collectionKey);

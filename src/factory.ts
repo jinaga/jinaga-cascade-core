@@ -49,11 +49,16 @@ class InputPipeline<T> implements Pipeline<T>, Step {
 
 }
 
+export function createPipeline<TStart extends object>(): PipelineBuilder<TStart, TStart, [], 'items'>;
+export function createPipeline<TStart extends object, TRootScopeName extends string>(
+    rootScopeName: TRootScopeName,
+    sourceScalars?: ScalarDescriptor[]
+): PipelineBuilder<TStart, TStart, [], TRootScopeName>;
 export function createPipeline<TStart extends object>(
     rootScopeName: string = 'items',
     sourceScalars: ScalarDescriptor[] = []
-): PipelineBuilder<TStart, TStart> {
+): PipelineBuilder<TStart, TStart, [], string> {
     const start = new InputPipeline<TStart>(rootScopeName, sourceScalars);
-    return new PipelineBuilder<TStart, TStart>(start, start);
+    return new PipelineBuilder<TStart, TStart, [], string>(start, start);
 }
 

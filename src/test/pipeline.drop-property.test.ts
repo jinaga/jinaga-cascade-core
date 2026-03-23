@@ -129,7 +129,7 @@ describe('pipeline dropProperty', () => {
                 price: number;
             }
 
-            const pipeline = createPipeline<Product>('products', [
+            const pipeline = createPipeline<Product, 'products'>('products', [
                 { name: 'id', type: 'string' },
                 { name: 'name', type: 'string' },
                 { name: 'price', type: 'number' }
@@ -151,7 +151,7 @@ describe('pipeline dropProperty', () => {
                 status: string;
             }
 
-            const pipeline = createPipeline<Order>('orders', [
+            const pipeline = createPipeline<Order, 'orders'>('orders', [
                 { name: 'orderId', type: 'string' },
                 { name: 'customerId', type: 'string' },
                 { name: 'amount', type: 'number' },
@@ -176,7 +176,7 @@ describe('pipeline dropProperty', () => {
                 itemId: string;
             }
 
-            const pipeline = createPipeline<Order>('orders', [
+            const pipeline = createPipeline<Order, 'orders'>('orders', [
                 { name: 'id', type: 'string' }
             ])
             // Assume groupBy creates items array

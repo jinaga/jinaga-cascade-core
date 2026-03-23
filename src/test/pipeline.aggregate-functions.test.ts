@@ -513,7 +513,7 @@ describe('aggregate steps scalar output', () => {
             amount: number;
         }
 
-        const pipeline = createPipeline<Sale>('sales', [
+        const pipeline = createPipeline<Sale, 'sales'>('sales', [
             { name: 'productId', type: 'string' },
             { name: 'amount', type: 'number' }
         ])
@@ -532,7 +532,7 @@ describe('aggregate steps scalar output', () => {
             orderId: string;
         }
 
-        const pipeline = createPipeline<Order>('orders', [
+        const pipeline = createPipeline<Order, 'orders'>('orders', [
             { name: 'orderId', type: 'string' }
         ])
         .groupBy(['orderId'], 'orders')
@@ -551,7 +551,7 @@ describe('aggregate steps scalar output', () => {
             value: number;
         }
 
-        const pipeline = createPipeline<Score>('scores', [
+        const pipeline = createPipeline<Score, 'scores'>('scores', [
             { name: 'studentId', type: 'string' },
             { name: 'value', type: 'number' }
         ])
@@ -571,7 +571,7 @@ describe('aggregate steps scalar output', () => {
             reading: number;
         }
 
-        const pipeline = createPipeline<Measurement>('measurements', [
+        const pipeline = createPipeline<Measurement, 'measurements'>('measurements', [
             { name: 'sensorId', type: 'string' },
             { name: 'reading', type: 'number' }
         ])
@@ -591,7 +591,7 @@ describe('aggregate steps scalar output', () => {
             reading: number;
         }
 
-        const pipeline = createPipeline<Measurement>('measurements', [
+        const pipeline = createPipeline<Measurement, 'measurements'>('measurements', [
             { name: 'sensorId', type: 'string' },
             { name: 'reading', type: 'number' }
         ])
@@ -612,7 +612,7 @@ describe('aggregate steps scalar output', () => {
             reading: number;
         }
 
-        const pipeline = createPipeline<Measurement>('measurements', [
+        const pipeline = createPipeline<Measurement, 'measurements'>('measurements', [
             { name: 'sensorId', type: 'string' },
             { name: 'timestamp', type: 'date' },
             { name: 'reading', type: 'number' }

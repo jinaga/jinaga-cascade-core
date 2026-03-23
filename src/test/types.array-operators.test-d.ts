@@ -51,3 +51,26 @@ type Input = {
     // @ts-expect-error City items do not include "population"
     scoped.sum('cities', 'population', 'totalPopulation');
 }
+
+// Root scope name should be preserved through groupBy for downstream operators
+{
+    interface Vote {
+        attendeePublicKey: string;
+        createdAtSort: string;
+        round: number;
+        isInvestor: boolean;
+    }
+
+    const grouped = createPipeline<Vote, 'votes'>('votes')
+        .groupBy(['attendeePublicKey'], 'attendees');
+
+    // Runtime-correct child array name remains the previous scope ("votes")
+    grouped.pickByMax('votes', 'createdAtSort', 'latestVote');
+
+    type GroupedArrayName = Parameters<typeof grouped.pickByMax>[0];
+    expectType<'votes'>({} as GroupedArrayName);
+
+    // @ts-expect-error groupBy parent name should not be accepted as the picked array
+    const invalidGroupedArrayName: GroupedArrayName = 'attendees';
+    void invalidGroupedArrayName;
+}

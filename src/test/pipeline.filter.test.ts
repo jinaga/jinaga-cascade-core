@@ -344,7 +344,7 @@ describe('pipeline filter', () => {
                 status: string;
             }
 
-            const pipeline = createPipeline<Order>('orders', [
+            const pipeline = createPipeline<Order, 'orders'>('orders', [
                 { name: 'orderId', type: 'string' },
                 { name: 'amount', type: 'number' },
                 { name: 'status', type: 'string' }
@@ -364,7 +364,7 @@ describe('pipeline filter', () => {
                 createdAt: Date;
             }
 
-            const pipeline = createPipeline<Item>('items', [
+            const pipeline = createPipeline<Item, 'items'>('items', [
                 { name: 'id', type: 'string' },
                 { name: 'count', type: 'number' },
                 { name: 'active', type: 'boolean' },
