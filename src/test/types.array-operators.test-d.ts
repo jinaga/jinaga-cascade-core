@@ -75,7 +75,7 @@ type Input = {
     void invalidGroupedArrayName;
 }
 
-// Chained root-level groupBy should use previous root as child scope name
+// Chained root-level groupBy should use previous parent as child scope name
 {
     interface Vote {
         attendeePublicKey: string;
@@ -90,12 +90,31 @@ type Input = {
 
     type RegroupedArrayName = Parameters<typeof regrouped.pickByMax>[0];
 
-    // Current behavior: inferred child array name remains the original root scope.
-    // This demonstrates the issue described in the review comment.
-    expectType<'votes'>({} as RegroupedArrayName);
+    // After the second root-level groupBy, operators should target the previous root collection.
+    expectType<'attendees'>({} as RegroupedArrayName);
+    // @ts-expect-error Original root scope name should no longer be accepted
+    const invalidRegroupedArrayName: RegroupedArrayName = 'votes';
+    void invalidRegroupedArrayName;
+}
 
-    // Desired behavior for chained root-level groupBy would be 'attendees' here.
-    // @ts-expect-error Currently rejected: root-scope generic is not updated after first groupBy
-    const shouldBePreviousRoot: RegroupedArrayName = 'attendees';
-    void shouldBePreviousRoot;
+// Root-level groupBy after aggregate should still advance root scope name
+{
+    interface Vote {
+        attendeePublicKey: string;
+        createdAtSort: string;
+        round: number;
+        isInvestor: boolean;
+    }
+
+    const regroupedAfterAggregate = createPipeline<Vote, 'votes'>('votes')
+        .groupBy(['attendeePublicKey'], 'attendees')
+        .sum('votes', 'round', 'totalRound')
+        .groupBy(['attendeePublicKey'], 'groups');
+
+    type RegroupedAfterAggregateArrayName = Parameters<typeof regroupedAfterAggregate.pickByMax>[0];
+
+    expectType<'attendees'>({} as RegroupedAfterAggregateArrayName);
+    // @ts-expect-error Original root scope name should no longer be accepted after regrouping
+    const invalidRegroupedAfterAggregateArrayName: RegroupedAfterAggregateArrayName = 'votes';
+    void invalidRegroupedAfterAggregateArrayName;
 }

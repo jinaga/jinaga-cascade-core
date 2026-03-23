@@ -301,7 +301,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart,
         Path,
-        RootScopeName
+        Path extends [] ? ArrayName : RootScopeName
     > {
         const descriptor = this.lastStep.getTypeDescriptor();
         const inferredChildArrayName = this.scopeSegments.length > 0
