@@ -39,6 +39,8 @@ export default tseslint.config(
     ignores: [
       'dist/**',
       'node_modules/**',
+      'scripts/**/*.mjs',
+      'src/test/helpers.ts',
       '**/*.test.ts',
       '**/*.test-d.ts',
       'eslint.config.mjs',
