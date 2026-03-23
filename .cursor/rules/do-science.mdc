@@ -1,0 +1,33 @@
+---
+description: Use the scientific method to analyze observations with ranked hypotheses and experiment selection
+alwaysApply: false
+---
+
+# Do Science
+
+Use this rule only when the user invokes `/do-science`.
+
+When invoked, follow this workflow:
+
+1. Restate the user's observation in precise, testable terms.
+2. Identify key unknowns, assumptions, and constraints.
+3. Generate a set of plausible hypotheses (at least 3 when possible).
+4. Rank hypotheses by likelihood, and explain the ranking briefly.
+5. For each hypothesis, design a concrete experiment:
+   - Goal
+   - Method (steps)
+   - Expected result if true
+   - Expected result if false
+6. Present hypotheses and experiments in a concise numbered list.
+7. Ask whether the user wants one performed now.
+8. Only after the full explanation is shown, offer an interactive selection using `AskQuestion` so the user can choose:
+   - a specific experiment to run, or
+   - "none / refine hypotheses first"
+
+Interaction requirements:
+
+- Be explicit about uncertainty and alternative explanations.
+- Prefer low-cost, low-risk, high-information experiments first.
+- Keep reasoning concise and evidence-focused.
+- If data is missing, state what additional measurements would improve confidence.
+- Do not call `AskQuestion` before presenting the hypotheses and experiments in plain text.
