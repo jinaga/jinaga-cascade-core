@@ -29,7 +29,7 @@ export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, an
     // Use the actual output type from the builder, not the input type
     const [ getState, setState ] = simulateState<KeyedArray<OutputType>>([]);
     const typeDescriptor = builder.getTypeDescriptor();
-    const pipeline = builder.build(setState, typeDescriptor);
+    const pipeline = builder.build(setState);
     const getOutput = (): OutputType[] => {
         // Flush any pending batched updates before reading state
         // This ensures all changes are applied before test assertions

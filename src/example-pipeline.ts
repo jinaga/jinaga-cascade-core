@@ -59,7 +59,7 @@ export function createPipeline(setState: (transform: (state: KeyedArray<OutputCa
         // Pick the item with the highest value
         .pickByMax('items', 'value', 'mostExpensiveItem')
         // Build the pipeline
-        .build(setState, builder.getTypeDescriptor());
+        .build(setState);
     
     return pipeline;
 }

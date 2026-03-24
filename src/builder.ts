@@ -9,7 +9,7 @@ import { MinMaxAggregateStep } from './steps/min-max-aggregate.js';
 import { AverageAggregateStep } from './steps/average-aggregate.js';
 import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
 
-// Public types (exported for use in build() signature)
+// Public types
 export type KeyedArray<T> = { key: string, value: T }[];
 export type Transform<T> = (state: T) => T;
 
@@ -717,8 +717,9 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         return this.lastStep.getTypeDescriptor();
     }
 
-    build(setState: (transform: Transform<KeyedArray<T>>) => void, typeDescriptor: TypeDescriptor): Pipeline<TStart> {
-        const pathSegments = getPathSegmentsFromDescriptor(typeDescriptor);
+    build(setState: (transform: Transform<KeyedArray<T>>) => void): Pipeline<TStart> {
+        const runtimeDescriptor = this.lastStep.getTypeDescriptor();
+        const pathSegments = getPathSegmentsFromDescriptor(runtimeDescriptor);
         
         // Create batched updater for efficient state updates
         // Batch size of 50 provides good balance between performance and responsiveness
@@ -739,7 +740,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             // Collect all mutable properties from the entire type descriptor tree
             // This handles cases where aggregates add mutable properties at root level
             // even when they semantically belong at nested levels
-            const mutableProperties = collectAllMutableProperties(typeDescriptor);
+            const mutableProperties = collectAllMutableProperties(runtimeDescriptor);
             
             if (mutableProperties.length > 0) {
                 // Register for each mutable property at this path level
