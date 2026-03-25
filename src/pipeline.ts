@@ -1,6 +1,41 @@
-export interface Pipeline<T> {
+export interface PipelineInput<T> {
     add(key: string, immutableProps: T): void;
     remove(key: string, immutableProps: T): void;
+}
+
+export interface PipelineRuntimeDiagnostic {
+    code:
+        | 'operation_after_dispose'
+        | 'stale_epoch_operation_dropped'
+        | 'missing_parent_add_dropped'
+        | 'missing_parent_remove_dropped'
+        | 'missing_parent_modify_dropped'
+        | 'missing_item_modify_dropped';
+    message: string;
+    operationType?: 'add' | 'remove' | 'modify';
+    segmentPath?: string[];
+    keyPath?: string[];
+    key?: string;
+    parentKey?: string;
+    epoch?: number;
+}
+
+export interface PipelineRuntimeOptions {
+    batchSize?: number;
+    flushDelayMs?: number;
+    onDiagnostic?: (diagnostic: PipelineRuntimeDiagnostic) => void;
+}
+
+export interface PipelineRuntimeDisposeOptions {
+    flush?: boolean;
+}
+
+export interface Pipeline<TStart> {
+    add(key: string, immutableProps: TStart): void;
+    remove(key: string, immutableProps: TStart): void;
+    flush(): void;
+    dispose(options?: PipelineRuntimeDisposeOptions): void;
+    isDisposed(): boolean;
 }
 
 export type ScalarType = 'string' | 'number' | 'boolean' | 'date' | 'unknown';

@@ -33,7 +33,7 @@ export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, an
     const getOutput = (): OutputType[] => {
         // Flush any pending batched updates before reading state
         // This ensures all changes are applied before test assertions
-        PipelineBuilder.flushBatchedUpdates(pipeline);
+        pipeline.flush();
         // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- Test helper: extract converts KeyedArray to plain array
         return extract(getState(), typeDescriptor);
     };

@@ -38,12 +38,12 @@ interface OutputCategory {
  * Creates a pipeline that groups items by category and computes various aggregates
  * 
  * @param setState - Function to update the pipeline state
- * @returns A pipeline instance ready to process items
+ * @returns A runtime session with pipeline lifecycle controls
  */
 export function createPipeline(setState: (transform: (state: KeyedArray<OutputCategory>) => KeyedArray<OutputCategory>) => void) {
     const builder = createBasePipeline<InputItem>();
     
-    const pipeline = builder
+    const runtimeSession = builder
         // Group items by category
         .groupBy(['category'], 'items')
         // Compute sum of all values in the category
@@ -61,5 +61,5 @@ export function createPipeline(setState: (transform: (state: KeyedArray<OutputCa
         // Build the pipeline
         .build(setState);
     
-    return pipeline;
+    return runtimeSession;
 }

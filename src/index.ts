@@ -1,4 +1,17 @@
-export type { Pipeline, Step, DescriptorNode, TypeDescriptor, ArrayDescriptor, ObjectDescriptor, ScalarType, ScalarDescriptor } from './pipeline.js';
+export type {
+    Pipeline,
+    PipelineInput,
+    Step,
+    DescriptorNode,
+    TypeDescriptor,
+    ArrayDescriptor,
+    ObjectDescriptor,
+    ScalarType,
+    ScalarDescriptor,
+    PipelineRuntimeDiagnostic,
+    PipelineRuntimeDisposeOptions,
+    PipelineRuntimeOptions
+} from './pipeline.js';
 export type { KeyedArray, Transform } from './builder.js';
 export { PipelineBuilder } from './builder.js';
 export { createPipeline } from './factory.js';
