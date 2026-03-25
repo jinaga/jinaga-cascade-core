@@ -1,5 +1,6 @@
 export type {
     Pipeline,
+    PipelineInput,
     Step,
     DescriptorNode,
     TypeDescriptor,
@@ -9,8 +10,7 @@ export type {
     ScalarDescriptor,
     PipelineRuntimeDiagnostic,
     PipelineRuntimeDisposeOptions,
-    PipelineRuntimeOptions,
-    PipelineRuntimeSession
+    PipelineRuntimeOptions
 } from './pipeline.js';
 export type { KeyedArray, Transform } from './builder.js';
 export { PipelineBuilder } from './builder.js';

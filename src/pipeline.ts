@@ -1,4 +1,4 @@
-export interface Pipeline<T> {
+export interface PipelineInput<T> {
     add(key: string, immutableProps: T): void;
     remove(key: string, immutableProps: T): void;
 }
@@ -30,7 +30,7 @@ export interface PipelineRuntimeDisposeOptions {
     flush?: boolean;
 }
 
-export interface PipelineRuntimeSession<TStart> {
+export interface Pipeline<TStart> {
     add(key: string, immutableProps: TStart): void;
     remove(key: string, immutableProps: TStart): void;
     flush(): void;

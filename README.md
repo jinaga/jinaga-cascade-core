@@ -51,14 +51,15 @@ runtimeSession.add('vote-2', { attendeePublicKey: 'A', round: 2, amount: 15 });
 runtimeSession.flush();
 ```
 
-## Runtime Session Lifecycle
+## Pipeline Lifecycle
 
-Each `.build(...)` call returns a `PipelineRuntimeSession`:
+Each `.build(...)` call returns a `Pipeline`:
 
-- `pipeline`: the event input interface (`add` / `remove`)
+- `add(key, immutableProps)`: adds an item to the pipeline
+- `remove(key, immutableProps)`: removes an item from the pipeline
 - `flush()`: drains queued operations immediately
-- `dispose(options?)`: closes the session and prevents further state mutation
-- `isDisposed()`: indicates whether the session is closed
+- `dispose(options?)`: closes the pipeline and prevents further state updates
+- `isDisposed()`: indicates whether the pipeline is closed
 
 Recommended teardown behavior:
 

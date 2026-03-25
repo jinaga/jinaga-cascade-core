@@ -1,9 +1,9 @@
 import { PipelineBuilder } from './builder.js';
-import type { AddedHandler, ImmutableProps, Pipeline, RemovedHandler, Step } from './pipeline.js';
+import type { AddedHandler, ImmutableProps, PipelineInput, RemovedHandler, Step } from './pipeline.js';
 import { type TypeDescriptor, type ScalarDescriptor } from './pipeline.js';
 
 // Private class (not exported)
-class InputPipeline<T> implements Pipeline<T>, Step {
+class InputPipeline<T> implements PipelineInput<T>, Step {
     private addedHandlers: AddedHandler[] = [];
     private removedHandlers: RemovedHandler[] = [];
     private rootCollectionName: string;

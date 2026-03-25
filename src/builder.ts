@@ -3,10 +3,10 @@ import {
     type DescriptorNode,
     type ImmutableProps,
     type Pipeline,
+    type PipelineInput,
     type PipelineRuntimeDiagnostic,
     type PipelineRuntimeDisposeOptions,
     type PipelineRuntimeOptions,
-    type PipelineRuntimeSession,
     type Step,
     type TypeDescriptor
 } from './pipeline.js';
@@ -43,9 +43,9 @@ interface RuntimeApplyContext {
     emitDiagnostic: (diagnostic: PipelineRuntimeDiagnostic) => void;
 }
 
-class PipelineRuntimeSessionImpl<TState extends object, TStart> implements PipelineRuntimeSession<TStart> {
+class PipelineRuntimeSessionImpl<TState extends object, TStart> implements Pipeline<TStart> {
     private readonly setState: (transform: Transform<KeyedArray<TState>>) => void;
-    private readonly inputPipeline: Pipeline<TStart>;
+    private readonly inputPipeline: PipelineInput<TStart>;
     private readonly runtimeOptions: Required<Pick<PipelineRuntimeOptions, 'batchSize' | 'flushDelayMs'>> &
         Pick<PipelineRuntimeOptions, 'onDiagnostic'>;
     private pendingOperations: PendingOperation[] = [];
@@ -54,7 +54,7 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart> implements Pipel
     private epoch = 1;
 
     constructor(
-        pipeline: Pipeline<TStart>,
+        pipeline: PipelineInput<TStart>,
         setState: (transform: Transform<KeyedArray<TState>>) => void,
         runtimeOptions: PipelineRuntimeOptions
     ) {
@@ -303,7 +303,7 @@ function compareMixedPrimitiveValues(left: number | string, right: number | stri
 
 export class PipelineBuilder<T extends object, TStart, Path extends string[] = [], RootScopeName extends string = 'items'> {
     constructor(
-        private input: Pipeline<TStart>,
+        private input: PipelineInput<TStart>,
         private lastStep: Step,
         private scopeSegments: Path = [] as unknown as Path
     ) {}
@@ -789,7 +789,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
     build(
         setState: (transform: Transform<KeyedArray<T>>) => void,
         runtimeOptions: PipelineRuntimeOptions = {}
-    ): PipelineRuntimeSession<TStart> {
+    ): Pipeline<TStart> {
         const runtimeDescriptor = this.lastStep.getTypeDescriptor();
         const pathSegments = getPathSegmentsFromDescriptor(runtimeDescriptor);
         const session = new PipelineRuntimeSessionImpl<T, TStart>(
