@@ -16,6 +16,21 @@ When reviewing existing code, count the data-carrying fields and compare against
 
 Balance this with performance. The goal is to minimize fields without increasing the time complexity of the solution. An O(1) lookup in a map you already maintain is free; an O(n) scan to avoid storing one extra field is not.
 
+### Enforcement
+
+- Do not introduce new runtime modes, options, flags, or alternate API paths unless explicitly requested by the user in this conversation.
+- If a proposed change adds any new degree of freedom, stop and ask for approval before implementing.
+- Before coding, include a short "Degrees of Freedom Check":
+  1. What independently varying domain variable is represented?
+  2. Why can this not be a fixed policy?
+  3. What existing field/API is removed or simplified to offset complexity?
+
 ## Compatibility vs Correctness
 
 Default to semantic and type-system correctness over backward compatibility when the two conflict. Do not add compatibility shims, overloads, or transitional behavior unless explicitly requested. When a breaking change is needed to align compile-time and runtime semantics, make the break intentional, minimal, and well-tested.
+
+### Enforcement
+
+- Do not preserve legacy behavior via wrappers, compatibility helpers, static bridge APIs, or dual paths unless explicitly requested by the user in this conversation.
+- Prefer one semantically correct API over transitional dual APIs.
+- When multiple valid designs exist (for example strict vs lenient behavior or old vs new API), present options and get user selection before implementing.

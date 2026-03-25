@@ -54,6 +54,11 @@ export function createPipeline<TStart extends object, TRootScopeName extends str
     rootScopeName: TRootScopeName,
     sourceScalars?: ScalarDescriptor[]
 ): PipelineBuilder<TStart, TStart, [], TRootScopeName>;
+/**
+ * Create a pipeline builder.
+ * Call `.build(setState, runtimeOptions?)` on the returned builder to create
+ * an isolated runtime session with explicit lifecycle controls.
+ */
 export function createPipeline<TStart extends object>(
     rootScopeName: string = 'items',
     sourceScalars: ScalarDescriptor[] = []

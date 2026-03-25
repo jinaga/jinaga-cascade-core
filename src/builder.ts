@@ -1,4 +1,15 @@
-import { getPathSegmentsFromDescriptor, type DescriptorNode, type ImmutableProps, type Pipeline, type Step, type TypeDescriptor } from './pipeline.js';
+import {
+    getPathSegmentsFromDescriptor,
+    type DescriptorNode,
+    type ImmutableProps,
+    type Pipeline,
+    type PipelineRuntimeDiagnostic,
+    type PipelineRuntimeDisposeOptions,
+    type PipelineRuntimeOptions,
+    type PipelineRuntimeSession,
+    type Step,
+    type TypeDescriptor
+} from './pipeline.js';
 import { CommutativeAggregateStep, type AddOperator, type SubtractOperator } from './steps/commutative-aggregate.js';
 import { DefinePropertyStep } from './steps/define-property.js';
 import { DropPropertyStep } from './steps/drop-property.js';
@@ -22,70 +33,58 @@ function finiteNumericContribution(value: unknown): number {
     return Number.isFinite(n) ? n : 0;
 }
 
-/**
- * Type-safe storage for batched updaters associated with pipelines.
- * Uses WeakMap to avoid memory leaks and maintain type safety.
- */
-const pipelineUpdaters = new WeakMap<Pipeline<unknown>, BatchedStateUpdater<unknown>>();
+type PendingOperation =
+    | { type: 'add', epoch: number, segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps }
+    | { type: 'remove', epoch: number, segmentPath: string[], keyPath: string[], key: string }
+    | { type: 'modify', epoch: number, segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown };
 
-/**
- * Operation type for batched updates.
- */
-type BatchedOperation = 
-    | { type: 'add', segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps }
-    | { type: 'remove', segmentPath: string[], keyPath: string[], key: string }
-    | { type: 'modify', segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown };
+interface RuntimeApplyContext {
+    epoch: number;
+    emitDiagnostic: (diagnostic: PipelineRuntimeDiagnostic) => void;
+}
 
-/**
- * Batched state updater that collects multiple changes and applies them together.
- * This reduces O(N) operations by batching changes and using efficient data structures.
- * 
- * Operations are preserved in the order they were queued to maintain temporal dependencies.
- */
-class BatchedStateUpdater<T> {
-    private pendingOperations: BatchedOperation[] = [];
-    private batchSize: number;
+class PipelineRuntimeSessionImpl<TState extends object, TStart> implements PipelineRuntimeSession<TStart> {
+    private readonly setState: (transform: Transform<KeyedArray<TState>>) => void;
+    private readonly inputPipeline: Pipeline<TStart>;
+    private readonly runtimeOptions: Required<Pick<PipelineRuntimeOptions, 'batchSize' | 'flushDelayMs'>> &
+        Pick<PipelineRuntimeOptions, 'onDiagnostic'>;
+    private pendingOperations: PendingOperation[] = [];
     private flushTimer: ReturnType<typeof setTimeout> | null = null;
-    private readonly flushDelayMs: number = 16; // ~60fps for UI updates
+    private closed = false;
+    private epoch = 1;
 
     constructor(
-        private setState: (transform: Transform<KeyedArray<T>>) => void,
-        batchSize: number = 50,
-        flushDelayMs: number = 16
+        pipeline: Pipeline<TStart>,
+        setState: (transform: Transform<KeyedArray<TState>>) => void,
+        runtimeOptions: PipelineRuntimeOptions
     ) {
-        this.batchSize = batchSize;
-        this.flushDelayMs = flushDelayMs;
+        this.inputPipeline = pipeline;
+        this.setState = setState;
+        this.runtimeOptions = {
+            batchSize: runtimeOptions.batchSize ?? 50,
+            flushDelayMs: runtimeOptions.flushDelayMs ?? 16,
+            onDiagnostic: runtimeOptions.onDiagnostic
+        };
     }
 
-    add(segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
-        this.pendingOperations.push({ type: 'add', segmentPath, keyPath, key, immutableProps });
-        this.scheduleFlush();
+    add(key: string, immutableProps: TStart): void {
+        this.inputPipeline.add(key, immutableProps);
     }
 
-    remove(segmentPath: string[], keyPath: string[], key: string): void {
-        this.pendingOperations.push({ type: 'remove', segmentPath, keyPath, key });
-        this.scheduleFlush();
+    remove(key: string, immutableProps: TStart): void {
+        this.inputPipeline.remove(key, immutableProps);
     }
 
-    modify(segmentPath: string[], keyPath: string[], key: string, propertyName: string, newValue: unknown): void {
-        this.pendingOperations.push({ type: 'modify', segmentPath, keyPath, key, name: propertyName, value: newValue });
-        this.scheduleFlush();
+    enqueueAdd(segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
+        this.enqueueOperation({ type: 'add', epoch: this.epoch, segmentPath, keyPath, key, immutableProps });
     }
 
-    private scheduleFlush(): void {
-        // Flush immediately if batch size reached
-        if (this.pendingOperations.length >= this.batchSize) {
-            this.flush();
-            return;
-        }
+    enqueueRemove(segmentPath: string[], keyPath: string[], key: string): void {
+        this.enqueueOperation({ type: 'remove', epoch: this.epoch, segmentPath, keyPath, key });
+    }
 
-        // Otherwise schedule a delayed flush
-        if (this.flushTimer === null) {
-            this.flushTimer = setTimeout(() => {
-                this.flushTimer = null;
-                this.flush();
-            }, this.flushDelayMs);
-        }
+    enqueueModify(segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown): void {
+        this.enqueueOperation({ type: 'modify', epoch: this.epoch, segmentPath, keyPath, key, name, value });
     }
 
     flush(): void {
@@ -94,58 +93,124 @@ class BatchedStateUpdater<T> {
             this.flushTimer = null;
         }
 
-        if (this.pendingOperations.length === 0) {
+        if (this.pendingOperations.length === 0 || this.closed) {
             return;
         }
 
-        // Apply all pending changes in a single state update, preserving order
-        // This maintains temporal dependencies between operations
+        const operationsToApply = this.pendingOperations;
+        this.pendingOperations = [];
+
         this.setState(state => {
             let result = state;
 
-            // Process operations in the order they were queued to preserve temporal dependencies
-            // Note: Map creation for lookups is O(N) per operation, but batching reduces
-            // the number of state updates from O(N) to O(N/batchSize), providing overall O(N) complexity
-            for (const op of this.pendingOperations) {
+            for (const op of operationsToApply) {
+                if (!this.shouldAcceptOperation(op)) {
+                    continue;
+                }
+
+                const applyContext: RuntimeApplyContext = {
+                    emitDiagnostic: diagnostic => this.emitDiagnostic(diagnostic),
+                    epoch: op.epoch
+                };
+
                 switch (op.type) {
                     case 'add':
-                        result = addToKeyedArray(result, op.segmentPath, op.keyPath, op.key, op.immutableProps);
+                        result = addToKeyedArray(result, op.segmentPath, op.keyPath, op.key, op.immutableProps, undefined, applyContext);
                         break;
                     case 'remove':
-                        result = removeFromKeyedArray(result, op.segmentPath, op.keyPath, op.key);
+                        result = removeFromKeyedArray(result, op.segmentPath, op.keyPath, op.key, undefined, applyContext);
                         break;
                     case 'modify':
-                        result = modifyInKeyedArray(result, op.segmentPath, op.keyPath, op.key, op.name, op.value);
+                        result = modifyInKeyedArray(result, op.segmentPath, op.keyPath, op.key, op.name, op.value, undefined, applyContext);
                         break;
                 }
             }
-
             return result;
         });
-
-        // Clear pending operations
-        this.pendingOperations = [];
     }
 
-    /**
-     * Force immediate flush of all pending changes.
-     * Useful when you need to ensure state is up-to-date (e.g., before reading results).
-     */
-    forceFlush(): void {
-        this.flush();
-    }
+    dispose(options: PipelineRuntimeDisposeOptions = {}): void {
+        if (this.closed) {
+            return;
+        }
 
-    /**
-     * Dispose of this updater, cleaning up any pending timers.
-     * Call this when the pipeline is no longer needed to prevent memory leaks.
-     */
-    dispose(): void {
+        if (options.flush) {
+            this.flush();
+        }
+
         if (this.flushTimer !== null) {
             clearTimeout(this.flushTimer);
             this.flushTimer = null;
         }
-        // Clear pending operations to allow garbage collection
+
         this.pendingOperations = [];
+        this.closed = true;
+        this.epoch += 1;
+    }
+
+    isDisposed(): boolean {
+        return this.closed;
+    }
+
+    private enqueueOperation(operation: PendingOperation): void {
+        if (!this.shouldAcceptOperation(operation)) {
+            return;
+        }
+
+        this.pendingOperations.push(operation);
+        this.scheduleFlush();
+    }
+
+    private shouldAcceptOperation(operation: PendingOperation): boolean {
+        if (this.closed) {
+            this.emitDiagnostic({
+                code: 'operation_after_dispose',
+                message: 'Dropping operation because the runtime session has been disposed.',
+                operationType: operation.type,
+                segmentPath: operation.segmentPath,
+                keyPath: operation.keyPath,
+                key: operation.key,
+                epoch: operation.epoch
+            });
+            return false;
+        }
+
+        if (operation.epoch !== this.epoch) {
+            this.emitDiagnostic({
+                code: 'stale_epoch_operation_dropped',
+                message: 'Dropping stale operation from a previous runtime epoch.',
+                operationType: operation.type,
+                segmentPath: operation.segmentPath,
+                keyPath: operation.keyPath,
+                key: operation.key,
+                epoch: operation.epoch
+            });
+            return false;
+        }
+
+        return true;
+    }
+
+    private scheduleFlush(): void {
+        if (this.pendingOperations.length >= this.runtimeOptions.batchSize) {
+            this.flush();
+            return;
+        }
+
+        if (this.flushTimer === null) {
+            this.flushTimer = setTimeout(() => {
+                this.flushTimer = null;
+                this.flush();
+            }, this.runtimeOptions.flushDelayMs);
+        }
+    }
+
+    private emitDiagnostic(diagnostic: PipelineRuntimeDiagnostic): void {
+        if (this.runtimeOptions.onDiagnostic) {
+            this.runtimeOptions.onDiagnostic(diagnostic);
+            return;
+        }
+        console.warn(`Warning: ${diagnostic.message}`);
     }
 }
 
@@ -717,23 +782,30 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
         return this.lastStep.getTypeDescriptor();
     }
 
-    build(setState: (transform: Transform<KeyedArray<T>>) => void): Pipeline<TStart> {
+    /**
+     * Build an isolated runtime session for this pipeline.
+     * The session owns batching, flush, and dispose lifecycle behavior.
+     */
+    build(
+        setState: (transform: Transform<KeyedArray<T>>) => void,
+        runtimeOptions: PipelineRuntimeOptions = {}
+    ): PipelineRuntimeSession<TStart> {
         const runtimeDescriptor = this.lastStep.getTypeDescriptor();
         const pathSegments = getPathSegmentsFromDescriptor(runtimeDescriptor);
-        
-        // Create batched updater for efficient state updates
-        // Batch size of 50 provides good balance between performance and responsiveness
-        // Flush delay of 16ms (~60fps) ensures UI stays responsive
-        const batchedUpdater = new BatchedStateUpdater<T>(setState, 50, 16);
-        
+        const session = new PipelineRuntimeSessionImpl<T, TStart>(
+            this.input,
+            setState,
+            runtimeOptions
+        );
+
         // Register handlers for each path the step will emit
         pathSegments.forEach(segmentPath => {
             this.lastStep.onAdded(segmentPath, (keyPath, key, immutableProps) => {
-                batchedUpdater.add(segmentPath, keyPath, key, immutableProps);
+                session.enqueueAdd(segmentPath, keyPath, key, immutableProps);
             });
             
             this.lastStep.onRemoved(segmentPath, (keyPath, key, _immutableProps) => {
-                batchedUpdater.remove(segmentPath, keyPath, key);
+                session.enqueueRemove(segmentPath, keyPath, key);
             });
             
             // Register for mutable properties
@@ -749,48 +821,22 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
                 mutableProperties.forEach(propertyName => {
                     // Register at current path level
                     this.lastStep.onModified(segmentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
-                        batchedUpdater.modify(segmentPath, keyPath, key, propertyName, newValue);
+                        session.enqueueModify(segmentPath, keyPath, key, propertyName, newValue);
                     });
                     
                     // Also register at parent level (for aggregates that emit at parent level)
                     if (segmentPath.length > 0) {
                         const parentPath = segmentPath.slice(0, -1);
                         this.lastStep.onModified(parentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
-                            batchedUpdater.modify(parentPath, keyPath, key, propertyName, newValue);
+                            session.enqueueModify(parentPath, keyPath, key, propertyName, newValue);
                         });
                     }
                 });
             }
             // If no mutable properties, modifications won't be tracked (this is expected for immutable-only pipelines)
         });
-        
-        // Store the batched updater in WeakMap for type-safe access
-        pipelineUpdaters.set(this.input, batchedUpdater as BatchedStateUpdater<unknown>);
-        
-        return this.input;
-    }
 
-    /**
-     * Flushes any pending batched updates for a pipeline.
-     * Call this before reading results to ensure state is up-to-date.
-     */
-    static flushBatchedUpdates(pipeline: Pipeline<unknown>): void {
-        const batchedUpdater = pipelineUpdaters.get(pipeline);
-        if (batchedUpdater) {
-            batchedUpdater.forceFlush();
-        }
-    }
-
-    /**
-     * Disposes of the batched updater for a pipeline, cleaning up resources.
-     * Call this when a pipeline is no longer needed to prevent memory leaks.
-     */
-    static disposeBatchedUpdates(pipeline: Pipeline<unknown>): void {
-        const batchedUpdater = pipelineUpdaters.get(pipeline);
-        if (batchedUpdater) {
-            batchedUpdater.dispose();
-            pipelineUpdaters.delete(pipeline);
-        }
+        return session;
     }
 }
 
@@ -825,7 +871,15 @@ function createKeyToIndexMap<T>(state: KeyedArray<T>): Map<string, number> {
     return keyToIndex;
 }
 
-function addToKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps, keyToIndexMap?: Map<string, number>): KeyedArray<T> {
+function addToKeyedArray<T>(
+    state: KeyedArray<T>,
+    segmentPath: string[],
+    keyPath: string[],
+    key: string,
+    immutableProps: ImmutableProps,
+    keyToIndexMap?: Map<string, number>,
+    runtimeApplyContext?: RuntimeApplyContext
+): KeyedArray<T> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when setting state");
@@ -845,14 +899,32 @@ function addToKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyPath
         
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
-            throw new Error("Path references unknown item when setting state");
+            runtimeApplyContext?.emitDiagnostic({
+                code: 'missing_parent_add_dropped',
+                message: `Attempted to add key "${key}" at segment path [${segmentPath.join(".")}] with parent key "${parentKey}", but parent was not found in state. Operation dropped.`,
+                operationType: 'add',
+                segmentPath,
+                keyPath,
+                key,
+                parentKey,
+                epoch: runtimeApplyContext?.epoch
+            });
+            return state;
         }
         const existingItem = state[existingItemIndex];
         // Dynamic property access: segment is used as a property key at runtime
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
         const value = existingItem.value as Record<string, any>;
         const existingArray = (value[segment] as KeyedArray<unknown>) || [];
-        const modifiedArray = addToKeyedArray(existingArray, segmentPath.slice(1), keyPath.slice(1), key, immutableProps);
+        const modifiedArray = addToKeyedArray(
+            existingArray,
+            segmentPath.slice(1),
+            keyPath.slice(1),
+            key,
+            immutableProps,
+            undefined,
+            runtimeApplyContext
+        );
         const modifiedItem = {
             key: parentKey,
             value: {
@@ -868,7 +940,14 @@ function addToKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyPath
     }
 }
 
-function removeFromKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyPath: string[], key: string, keyToIndexMap?: Map<string, number>): KeyedArray<T> {
+function removeFromKeyedArray<T>(
+    state: KeyedArray<T>,
+    segmentPath: string[],
+    keyPath: string[],
+    key: string,
+    keyToIndexMap?: Map<string, number>,
+    runtimeApplyContext?: RuntimeApplyContext
+): KeyedArray<T> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when removing from state");
@@ -888,13 +967,16 @@ function removeFromKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], ke
         
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
-            // Parent doesn't exist - item may have been removed already or never added
-            // This can happen when batching operations, so we log a warning and skip
-            console.warn(
-                `Warning: Attempted to remove key "${key}" at segment path [${segmentPath.join(
-                    "."
-                )}] with parent key "${parentKey}", but parent was not found in state.`
-            );
+            runtimeApplyContext?.emitDiagnostic({
+                code: 'missing_parent_remove_dropped',
+                message: `Attempted to remove key "${key}" at segment path [${segmentPath.join(".")}] with parent key "${parentKey}", but parent was not found in state. Operation dropped.`,
+                operationType: 'remove',
+                segmentPath,
+                keyPath,
+                key,
+                parentKey,
+                epoch: runtimeApplyContext?.epoch
+            });
             return state;
         }
         const existingItem = state[existingItemIndex];
@@ -902,7 +984,14 @@ function removeFromKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], ke
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
         const value = existingItem.value as Record<string, any>;
         const existingArray = (value[segment] as KeyedArray<unknown>) || [];
-        const modifiedArray = removeFromKeyedArray(existingArray, segmentPath.slice(1), keyPath.slice(1), key);
+        const modifiedArray = removeFromKeyedArray(
+            existingArray,
+            segmentPath.slice(1),
+            keyPath.slice(1),
+            key,
+            undefined,
+            runtimeApplyContext
+        );
         const modifiedItem = {
             key: parentKey,
             value: {
@@ -918,7 +1007,16 @@ function removeFromKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], ke
     }
 }
 
-function modifyInKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown, keyToIndexMap?: Map<string, number>): KeyedArray<T> {
+function modifyInKeyedArray<T>(
+    state: KeyedArray<T>,
+    segmentPath: string[],
+    keyPath: string[],
+    key: string,
+    name: string,
+    value: unknown,
+    keyToIndexMap?: Map<string, number>,
+    runtimeApplyContext?: RuntimeApplyContext
+): KeyedArray<T> {
     if (segmentPath.length === 0) {
         if (keyPath.length !== 0) {
             throw new Error("Mismatched path length when modifying state");
@@ -930,12 +1028,15 @@ function modifyInKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyP
         
         const existingItemIndex = keyToIndex.get(key);
         if (existingItemIndex === undefined) {
-            // Item doesn't exist - may have been removed already or never added
-            // This can happen when batching operations, so we log a warning and skip
-            console.warn(
-                `Warning: Attempted to modify missing item in KeyedArray. ` +
-                `Key: ${key}, Path: [${segmentPath.join('.')}]`
-            );
+            runtimeApplyContext?.emitDiagnostic({
+                code: 'missing_item_modify_dropped',
+                message: `Attempted to modify missing item in KeyedArray. Key: ${key}, Path: [${segmentPath.join('.')}]`,
+                operationType: 'modify',
+                segmentPath,
+                keyPath,
+                key,
+                epoch: runtimeApplyContext?.epoch
+            });
             return state;
         }
         const existingItem = state[existingItemIndex];
@@ -967,13 +1068,16 @@ function modifyInKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyP
         
         const existingItemIndex = keyToIndex.get(parentKey);
         if (existingItemIndex === undefined) {
-            // Parent doesn't exist - item may have been removed already or never added
-            // This can happen when batching operations, so we log a warning and skip
-            console.warn(
-                `Warning: Parent item with key '${parentKey}' not found when modifying nested state at segment path [${segmentPath.join(
-                    "."
-                )}] and key path [${keyPath.join(".")}]. Modification skipped.`
-            );
+            runtimeApplyContext?.emitDiagnostic({
+                code: 'missing_parent_modify_dropped',
+                message: `Parent item with key '${parentKey}' not found when modifying nested state at segment path [${segmentPath.join(".")}] and key path [${keyPath.join(".")}]. Modification dropped.`,
+                operationType: 'modify',
+                segmentPath,
+                keyPath,
+                key,
+                parentKey,
+                epoch: runtimeApplyContext?.epoch
+            });
             return state;
         }
         const existingItem = state[existingItemIndex];
@@ -981,7 +1085,16 @@ function modifyInKeyedArray<T>(state: KeyedArray<T>, segmentPath: string[], keyP
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
         const existingValue = existingItem.value as Record<string, any>;
         const existingArray = (existingValue[segment] as KeyedArray<unknown>) || [];
-        const modifiedArray = modifyInKeyedArray(existingArray, segmentPath.slice(1), keyPath.slice(1), key, name, value);
+        const modifiedArray = modifyInKeyedArray(
+            existingArray,
+            segmentPath.slice(1),
+            keyPath.slice(1),
+            key,
+            name,
+            value,
+            undefined,
+            runtimeApplyContext
+        );
         const modifiedItem = {
             key: parentKey,
             value: {

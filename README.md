@@ -22,25 +22,55 @@ npm install @jinaga/cascade-core
 ## Usage
 
 ```typescript
-import { PipelineBuilder } from '@jinaga/cascade-core';
+import { createPipeline } from '@jinaga/cascade-core';
 
-// Build a pipeline
-const pipeline = PipelineBuilder
-  .from<InputType>()
-  .filter(item => item.active)
-  .groupBy(item => item.category)
-  .aggregate('total', items => items.reduce((sum, item) => sum + item.value, 0))
-  .build();
+type Vote = {
+  attendeePublicKey: string;
+  round: number;
+  amount: number;
+};
 
-// Add data incrementally
-pipeline.add('item-1', { active: true, category: 'A', value: 10 });
-pipeline.add('item-2', { active: true, category: 'B', value: 20 });
+let state: unknown[] = [];
+const setState = (transform: (state: any) => any) => {
+  state = transform(state);
+};
 
-// Subscribe to state updates
-pipeline.onStateChange(state => {
-  console.log('New state:', state);
-});
+const runtimeSession = createPipeline<Vote, 'votes'>('votes')
+  .groupBy(['attendeePublicKey'], 'attendees')
+  .in('votes')
+  .groupBy(['round'], 'rounds')
+  .build(setState, {
+    // Optional diagnostics hook
+    onDiagnostic: diagnostic => console.warn(diagnostic)
+  });
+
+runtimeSession.add('vote-1', { attendeePublicKey: 'A', round: 1, amount: 10 });
+runtimeSession.add('vote-2', { attendeePublicKey: 'A', round: 2, amount: 15 });
+
+// Flush pending batched operations when you need deterministic reads.
+runtimeSession.flush();
 ```
+
+## Runtime Session Lifecycle
+
+Each `.build(...)` call returns a `PipelineRuntimeSession`:
+
+- `pipeline`: the event input interface (`add` / `remove`)
+- `flush()`: drains queued operations immediately
+- `dispose(options?)`: closes the session and prevents further state mutation
+- `isDisposed()`: indicates whether the session is closed
+
+Recommended teardown behavior:
+
+```typescript
+// Drop pending work and close
+runtimeSession.dispose();
+
+// Or flush pending work first, then close
+runtimeSession.dispose({ flush: true });
+```
+
+Nested adds with missing parents are handled deterministically (`warn` + drop with diagnostics).
 
 ## Mutable Property Auto-Detection
 

@@ -60,7 +60,7 @@ async function main() {
             currentState = transform(currentState);
         };
         
-        const pipeline = createPipeline(setState);
+        const runtimeSession = createPipeline(setState);
         
         // Process each item through the pipeline
         inputData.forEach((item: unknown) => {
@@ -75,8 +75,10 @@ async function main() {
             
             // Runtime script: item structure validated by pipeline at runtime
             // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument -- Runtime JSON data structure
-            pipeline.add(itemId, item as any);
+            runtimeSession.add(itemId, item as any);
         });
+
+        runtimeSession.flush();
         
         // Write results to output file
         console.log(`Writing results to: ${outputPath}`);
