@@ -12,17 +12,17 @@ This design addresses the observed issues in:
 
 ## Degrees of Freedom Check
 
-1. **Independently varying domain variable**: descriptor metadata state per node (`mutableProperties`, `objects`) including definition status and contents.
+1. **Independently varying domain variable**: descriptor metadata contents per node (`mutableProperties`, `objects`), not metadata "definedness".
 2. **Why this cannot be fixed policy**: metadata differs by node and by transform scope; a single global policy cannot represent scoped changes correctly.
-3. **What is simplified**: replace ad hoc per-step cloning/filtering with shared descriptor transform primitives and uniform semantics.
+3. **What is simplified**: eliminate dual representations (`undefined` vs `[]`) and replace ad hoc per-step cloning/filtering with shared descriptor transform primitives and uniform semantics.
 
 ## Problem Summary
 
 Current code has three classes of inconsistency:
 
-1. **Definition-status erasure (`[]` -> `undefined`)**
-   - Example: `group-by` only copies `objects` when `length > 0`.
-   - Result: explicitly empty metadata is lost.
+1. **Dual representation of "no metadata"**
+   - Current model allows both `undefined` and `[]` to mean "none".
+   - Result: transforms can accidentally change meaning or shape (`[]` -> `undefined`) and create non-compositional behavior.
 
 2. **Nested metadata loss during structural transforms**
    - Example: `group-by` nested transform rebuilds nodes with only `collectionKey/scalars/arrays`, dropping optional metadata on traversed nodes.
@@ -37,11 +37,10 @@ These violations make descriptor state non-compositional and block strong correc
 1. **Node-local metadata semantics**
    - `mutableProperties` and `objects` are properties of each `DescriptorNode`, not just root.
 
-2. **Definition-status preservation by default**
-   - If a metadata field is defined on input node, transformed node keeps it defined unless intentionally removed.
-   - Preserve distinction:
-     - `undefined`: not declared/unspecified
-     - `[]`: explicitly declared empty
+2. **Canonical representation**
+   - `mutableProperties` and `objects` are always present arrays on every node.
+   - `[]` is the only representation of "none".
+   - `undefined` is forbidden in normalized descriptors.
 
 3. **Scope-local edits**
    - Property drop at scope `S` only edits node `S` metadata unless behavior explicitly requires broader cleanup.
@@ -55,11 +54,32 @@ These violations make descriptor state non-compositional and block strong correc
 
 For any node `N`:
 
-- `N.mutableProperties` and `N.objects` are optional finite lists.
+- `N.mutableProperties` and `N.objects` are required finite lists (possibly empty).
 - Transformations must obey:
-  - **Preserve rule**: if untouched, preserve value and definedness.
-  - **Edit rule**: if edited, preserve definedness (`undefined` remains undefined unless transform intentionally introduces field).
-  - **Introduce rule**: steps that produce new mutable/object properties can introduce metadata explicitly.
+  - **Preserve rule**: if untouched, preserve list contents exactly.
+  - **Edit rule**: edits produce lists (possibly empty), never `undefined`.
+  - **Introduce rule**: steps that produce new mutable/object properties append idempotently.
+
+### Type-Level Canonicalization
+
+Descriptor types should be changed to make illegal states unrepresentable:
+
+- In `DescriptorNode`, replace:
+  - `objects?: ObjectDescriptor[]`
+  - `mutableProperties?: string[]`
+- With:
+  - `objects: ObjectDescriptor[]`
+  - `mutableProperties: string[]`
+
+This is an intentional correctness-first breaking change.
+
+Normalization boundary:
+
+- `createPipeline` / descriptor constructors must initialize both lists to `[]`.
+- Any legacy descriptor sources (if any) are normalized at ingress:
+  - `objects ?? []`
+  - `mutableProperties ?? []`
+- After ingress normalization, the rest of the codebase treats both fields as total.
 
 ### Drop Semantics
 
@@ -89,7 +109,7 @@ Create `src/util/descriptor-transform.ts` with pure helpers.
 
 - Input: `DescriptorNode`, plus overrides for structural fields.
 - Behavior: copies node via spread and applies overrides.
-- Guarantees optional metadata preserved unless override provided.
+- Guarantees metadata lists are preserved unless override provided.
 
 ### 2) `mapNodeAtArrayPath`
 
@@ -101,21 +121,22 @@ Create `src/util/descriptor-transform.ts` with pure helpers.
 
 - Input: node, property name.
 - Removes property from `mutableProperties` and `objects` on that node only.
-- Preserves definedness (defined list can become `[]`, not `undefined`).
+- Output fields remain total arrays.
 
-### 4) `copyOptionalList`
+### 4) `normalizeNodeMetadata`
 
-- Utility for optional list fields:
-  - `undefined -> undefined`
-  - defined list -> shallow copy (including empty list)
+- Utility used only at boundaries (construction/legacy ingress):
+  - `objects = objects ?? []`
+  - `mutableProperties = mutableProperties ?? []`
+- Never needed inside normalized transforms.
 
 ## Step-Level Changes (Design)
 
 ### `GroupByStep`
 
 1. **Root and nested branches**
-   - Replace `length > 0` checks with definition checks for `objects`.
-   - Use `copyOptionalList` semantics.
+   - Remove `length > 0` and `undefined` checks for metadata fields.
+   - Use direct array copies when needed.
 
 2. **`transformDescriptorAtPathWithParentName`**
    - Preserve metadata on all recursively rebuilt nodes with spread-based cloning.
@@ -136,19 +157,20 @@ Create `src/util/descriptor-transform.ts` with pure helpers.
 ### `PickByMinMaxStep` and related writers
 
 - Keep behavior but migrate descriptor mutations to shared helpers.
-- Ensure object insertion and mutable insertion remain idempotent and preserve optional field semantics.
+- Ensure object insertion and mutable insertion remain idempotent with total-array semantics.
 
 ### Aggregate and define-property steps
 
 - Continue root-level mutable insertion as current model requires, but apply via shared helper to enforce idempotence and optional-field handling.
+- Continue root-level mutable insertion as current model requires, but apply via shared helper to enforce idempotence and total-array semantics.
 
 ## Cross-Cutting Invariants to Enforce
 
 1. **No accidental metadata drops**
    - Any node not intentionally rewritten preserves metadata exactly.
 
-2. **No `[]`/`undefined` conflation**
-   - Optional-list definition status stable under pass-through transforms.
+2. **Canonical metadata totality**
+   - `objects` and `mutableProperties` are arrays at every node in every descriptor.
 
 3. **Scoped cleanup correctness**
    - Dropped property metadata removed at exact target scope node.
@@ -164,8 +186,8 @@ Add/expand tests in descriptor-focused suites:
    - Nested scope (`scopeSegments.length > 1`) with metadata on intermediate nodes.
    - Assert intermediate `objects`/`mutableProperties` survive regrouping.
 
-2. **Empty-list preservation**
-   - Input with `objects: []` stays defined after `groupBy` root and nested variants.
+2. **Canonical-shape preservation**
+   - All transformed descriptors keep `objects`/`mutableProperties` present as arrays at all nodes.
 
 3. **Scoped drop of nested objects**
    - Build nested object descriptor via `pickByMax`/`pickByMin` with multi-segment path.
@@ -178,36 +200,39 @@ Add/expand tests in descriptor-focused suites:
    - Validate descriptor invariants and runtime output shape alignment.
 
 5. **Property-based descriptor invariants (optional)**
-   - For random descriptor trees, verify helper transforms preserve untouched-node metadata.
+   - For random descriptor trees, verify helper transforms preserve untouched-node metadata and never produce `undefined` metadata lists.
 
 ## Migration Plan
 
-1. Add shared transform helpers with unit tests.
-2. Refactor `group-by` to helper-based cloning and metadata copy semantics.
-3. Refactor `drop-property` scalar path cleanup to scoped metadata edit.
-4. Refactor `pick-by-min-max` and aggregate/define-property descriptor writes to shared helpers.
-5. Add regression tests, then remove obsolete ad hoc logic.
+1. Update descriptor types in `src/pipeline.ts` to make metadata lists required.
+2. Add normalization at descriptor construction/ingress boundaries.
+3. Add shared transform helpers with unit tests (operating on total metadata lists).
+4. Refactor `group-by` to helper-based cloning and metadata-preserving semantics.
+5. Refactor `drop-property` scalar path cleanup to scoped metadata edit.
+6. Refactor `pick-by-min-max` and aggregate/define-property descriptor writes to shared helpers.
+7. Add regression tests, then remove obsolete ad hoc logic and optional-field branches.
 
 ## Risks and Mitigations
 
-1. **Risk: behavior change in descriptor snapshots**
+1. **Risk: behavior change in descriptor snapshots and typings**
    - Mitigation: codify new semantics in tests and docs; this is correctness-improving.
 
 2. **Risk: ambiguity about parent vs child metadata during groupBy split**
    - Mitigation: document explicit assignment policy and test both channels.
 
-3. **Risk: hidden dependencies on root-only metadata**
-   - Mitigation: keep root metadata behavior while adding nested correctness; validate runtime registration still passes.
+3. **Risk: hidden dependencies on optional metadata checks**
+   - Mitigation: remove optional checks systematically; compile-time type errors guide full migration; validate runtime registration still passes.
 
 ## Acceptance Criteria
 
 Design is complete when implementation can satisfy:
 
-1. No step drops optional metadata on untouched nodes.
-2. `objects: []` and `mutableProperties: []` remain defined when intentionally defined.
-3. Nested-scope scalar drop removes same-scope object metadata entries.
-4. All descriptor-writing steps use shared helper primitives.
-5. Composition tests demonstrate stable descriptor semantics across mixed step pipelines.
+1. No step drops metadata on untouched nodes.
+2. `DescriptorNode.objects` and `DescriptorNode.mutableProperties` are non-optional everywhere.
+3. No descriptor emitted by `getTypeDescriptor()` contains `undefined` metadata lists.
+4. Nested-scope scalar drop removes same-scope object metadata entries.
+5. All descriptor-writing steps use shared helper primitives.
+6. Composition tests demonstrate stable descriptor semantics across mixed step pipelines.
 
 ## Relationship to Proof Foundation
 
