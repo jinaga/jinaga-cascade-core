@@ -68,10 +68,56 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart> implements Pipel
     }
 
     add(key: string, immutableProps: TStart): void {
+        const operationEpoch = this.epoch;
+        if (this.closed) {
+            this.emitDiagnostic({
+                code: 'operation_after_dispose',
+                message: 'Dropping operation because the runtime session has been disposed.',
+                operationType: 'add',
+                key,
+                epoch: operationEpoch
+            });
+            return;
+        }
+
+        if (operationEpoch !== this.epoch) {
+            this.emitDiagnostic({
+                code: 'stale_epoch_operation_dropped',
+                message: 'Dropping stale operation from a previous runtime epoch.',
+                operationType: 'add',
+                key,
+                epoch: operationEpoch
+            });
+            return;
+        }
+
         this.inputPipeline.add(key, immutableProps);
     }
 
     remove(key: string, immutableProps: TStart): void {
+        const operationEpoch = this.epoch;
+        if (this.closed) {
+            this.emitDiagnostic({
+                code: 'operation_after_dispose',
+                message: 'Dropping operation because the runtime session has been disposed.',
+                operationType: 'remove',
+                key,
+                epoch: operationEpoch
+            });
+            return;
+        }
+
+        if (operationEpoch !== this.epoch) {
+            this.emitDiagnostic({
+                code: 'stale_epoch_operation_dropped',
+                message: 'Dropping stale operation from a previous runtime epoch.',
+                operationType: 'remove',
+                key,
+                epoch: operationEpoch
+            });
+            return;
+        }
+
         this.inputPipeline.remove(key, immutableProps);
     }
 

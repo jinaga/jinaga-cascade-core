@@ -104,6 +104,55 @@ describe('pipeline runtime sessions', () => {
         expect(diagnostics).toContain('operation_after_dispose');
     });
 
+    it('prevents post-dispose adds from propagating through nested pipeline steps', () => {
+        type Row = { attendeePublicKey: string; round: number; amount: number };
+        const store = createStateStore<any>();
+        const diagnostics: string[] = [];
+
+        const session = createPipeline<Row, 'allocations'>('allocations')
+            .groupBy(['attendeePublicKey'], 'attendees')
+            .in('allocations')
+            .groupBy(['round'], 'rounds')
+            .build(store.setState, {
+                flushDelayMs: 100,
+                onDiagnostic: diagnostic => diagnostics.push(diagnostic.code)
+            });
+
+        session.dispose();
+        session.add('r1', { attendeePublicKey: 'p1', round: 1, amount: 10 });
+        jest.runOnlyPendingTimers();
+
+        expect(store.getState()).toEqual([]);
+        expect(diagnostics).toEqual(['operation_after_dispose']);
+    });
+
+    it('prevents post-dispose removes from propagating through nested pipeline steps', () => {
+        type Row = { attendeePublicKey: string; round: number; amount: number };
+        const store = createStateStore<any>();
+        const diagnostics: string[] = [];
+
+        const session = createPipeline<Row, 'allocations'>('allocations')
+            .groupBy(['attendeePublicKey'], 'attendees')
+            .in('allocations')
+            .groupBy(['round'], 'rounds')
+            .build(store.setState, {
+                flushDelayMs: 100,
+                onDiagnostic: diagnostic => diagnostics.push(diagnostic.code)
+            });
+
+        session.add('r1', { attendeePublicKey: 'p1', round: 1, amount: 10 });
+        session.flush();
+        const stateBeforeDispose = store.getState();
+        diagnostics.length = 0;
+
+        session.dispose();
+        session.remove('r1', { attendeePublicKey: 'p1', round: 1, amount: 10 });
+        jest.runOnlyPendingTimers();
+
+        expect(store.getState()).toEqual(stateBeforeDispose);
+        expect(diagnostics).toEqual(['operation_after_dispose']);
+    });
+
     it('drops missing-parent nested adds and emits diagnostics', () => {
         type Row = { attendeePublicKey: string; round: number; amount: number };
         const resilientStore = createStateStore<any>();
