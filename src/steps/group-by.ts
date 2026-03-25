@@ -87,14 +87,28 @@ export class GroupByStep<
                         name: this.childArrayName,
                         type: childDescriptor
                     }
-                ]
+                ],
+                // Preserve root metadata so downstream steps (e.g. sum auto-detection) still see
+                // mutable properties from defineProperty / aggregates after regrouping.
+                ...(inputDescriptor.mutableProperties !== undefined
+                    ? { mutableProperties: [...inputDescriptor.mutableProperties] }
+                    : {}),
+                ...(inputDescriptor.objects !== undefined && inputDescriptor.objects.length > 0
+                    ? { objects: [...inputDescriptor.objects] }
+                    : {})
             };
         }
 
         // Parent name is physical at nested scope: replace the scoped array name.
         return {
             ...this.transformDescriptorAtPathWithParentName(inputDescriptor, [...this.scopeSegments]),
-            rootCollectionName: inputDescriptor.rootCollectionName
+            rootCollectionName: inputDescriptor.rootCollectionName,
+            ...(inputDescriptor.mutableProperties !== undefined
+                ? { mutableProperties: [...inputDescriptor.mutableProperties] }
+                : {}),
+            ...(inputDescriptor.objects !== undefined && inputDescriptor.objects.length > 0
+                ? { objects: [...inputDescriptor.objects] }
+                : {})
         };
     }
 
