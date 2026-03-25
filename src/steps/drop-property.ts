@@ -60,9 +60,38 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
                 rootCollectionName: inputDescriptor.rootCollectionName
             };
         }
+        const scalarTransformed = this.transformDescriptorForScalarDrop(
+            inputDescriptor,
+            [...this.scopeSegments],
+            this.propertyName as string
+        );
+        return this.finalizeScalarDropDescriptor(
+            scalarTransformed,
+            inputDescriptor.rootCollectionName,
+            this.propertyName as string
+        );
+    }
+
+    /**
+     * Removes references to the dropped scalar from root descriptor metadata so
+     * mutable auto-detection and object wiring stay consistent with runtime props.
+     */
+    private finalizeScalarDropDescriptor(
+        descriptor: DescriptorNode,
+        rootCollectionName: string,
+        droppedPropertyName: string
+    ): TypeDescriptor {
+        const mutableProperties = descriptor.mutableProperties?.filter(p => p !== droppedPropertyName);
+        const objects = descriptor.objects?.filter(o => o.name !== droppedPropertyName);
         return {
-            ...this.transformDescriptorForScalarDrop(inputDescriptor, [...this.scopeSegments], this.propertyName as string),
-            rootCollectionName: inputDescriptor.rootCollectionName
+            ...descriptor,
+            rootCollectionName,
+            ...(descriptor.mutableProperties !== undefined
+                ? { mutableProperties: mutableProperties ?? [] }
+                : {}),
+            ...(descriptor.objects !== undefined
+                ? { objects: objects ?? [] }
+                : {})
         };
     }
     
