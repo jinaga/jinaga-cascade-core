@@ -90,7 +90,7 @@ interface RuntimeApplyContext {
     emitDiagnostic: (diagnostic: PipelineRuntimeDiagnostic) => void;
 }
 
-class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends Record<string, unknown> = {}>
+class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends Record<string, unknown> = Record<never, never>>
     implements Pipeline<TStart, TSources> {
     private readonly setState: (transform: Transform<KeyedArray<TState>>) => void;
     private readonly inputPipeline: PipelineInput<TStart, TSources>;
@@ -417,7 +417,7 @@ export class PipelineBuilder<
     TStart,
     Path extends string[] = [],
     RootScopeName extends string = 'items',
-    TSources extends Record<string, unknown> = {}
+    TSources extends Record<string, unknown> = Record<never, never>
 > {
     private reportDiagnostic(diagnostic: PipelineRuntimeDiagnostic): void {
         if (this.diagnosticBridge.emit) {
