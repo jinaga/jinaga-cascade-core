@@ -61,6 +61,12 @@ export type PipelineOutput<TBuilder> =
  */
 export type PipelinePlainOutput<TBuilder> = KeyedRecursivePlain<PipelineOutput<TBuilder>>;
 
+/**
+ * Plain row shape for a given pipeline output row type `T` (the same mapping as {@link PipelinePlainOutput}
+ * applied to {@link PipelineOutput}). Used as the return type of {@link toPipelinePlainOutput}.
+ */
+export type PipelinePlainOutputShape<T> = KeyedRecursivePlain<T>;
+
 /** Cell value contribution for sum: null/undefined → 0; finite numbers → value; NaN/Infinity/non-numeric → 0. */
 function finiteNumericContribution(value: unknown): number {
     if (value === null || value === undefined) {
