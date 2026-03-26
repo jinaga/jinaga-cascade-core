@@ -12,7 +12,7 @@ export type {
     PipelineRuntimeDisposeOptions,
     PipelineRuntimeOptions
 } from './pipeline.js';
-export type { KeyedArray, Transform } from './builder.js';
+export type { KeyedArray, Transform, PipelineOutput, PipelinePlainOutput } from './builder.js';
 export { PipelineBuilder } from './builder.js';
 export { createPipeline } from './factory.js';
 

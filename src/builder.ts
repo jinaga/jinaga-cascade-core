@@ -24,6 +24,38 @@ import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
 export type KeyedArray<T> = { key: string, value: T }[];
 export type Transform<T> = (state: T) => T;
 
+/**
+ * Recursively replaces each {@link KeyedArray} with a plain array of the item type.
+ * Use {@link PipelinePlainOutput} to apply this to a builder; see also {@link PipelineOutput}.
+ */
+type KeyedRecursivePlain<T> =
+    T extends KeyedArray<infer U>
+        ? KeyedRecursivePlain<U>[]
+        : T extends object
+            ? {
+                  [K in keyof T]: T[K] extends KeyedArray<infer U>
+                      ? KeyedRecursivePlain<U>[]
+                      : KeyedRecursivePlain<T[K]>
+              }
+            : T;
+
+/**
+ * Root item shape produced by a pipeline: the `T` in `KeyedArray<T>` passed to `.build(setState)`.
+ * Nested groups and aggregates appear as {@link KeyedArray} properties in this shape.
+ *
+ * @example
+ * const builder = createPipeline<{ category: string; value: number }>().groupBy(['category'], 'items');
+ * type Row = PipelineOutput<typeof builder>;
+ */
+export type PipelineOutput<TBuilder> =
+    TBuilder extends PipelineBuilder<infer T, infer _S, infer _Path, infer _Root> ? T : never;
+
+/**
+ * Same structure as {@link PipelineOutput} but with every {@link KeyedArray} replaced by a plain array.
+ * Useful for snapshot tests and for UI models that use arrays instead of keyed rows.
+ */
+export type PipelinePlainOutput<TBuilder> = KeyedRecursivePlain<PipelineOutput<TBuilder>>;
+
 /** Cell value contribution for sum: null/undefined → 0; finite numbers → value; NaN/Infinity/non-numeric → 0. */
 function finiteNumericContribution(value: unknown): number {
     if (value === null || value === undefined) {

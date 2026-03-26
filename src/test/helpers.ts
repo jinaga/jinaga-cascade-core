@@ -1,31 +1,13 @@
-import { DescriptorNode, KeyedArray, Pipeline, PipelineBuilder, Transform } from '../index.js';
-
-// Type helper to extract the output type from a PipelineBuilder
-// and recursively convert KeyedArray properties to arrays
-type ExtractKeyedArrays<T> = T extends KeyedArray<infer U>
-    ? ExtractKeyedArrays<U>[]  // Convert KeyedArray<T> to T[]
-    : T extends object
-    ? {
-          // For intersection types, we need to be more careful about which keys to include
-          [K in keyof T]: T[K] extends KeyedArray<infer U>
-              ? ExtractKeyedArrays<U>[]
-              : ExtractKeyedArrays<T[K]>
-      }
-    : T;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type BuilderOutputType<T> = T extends PipelineBuilder<infer U, any, any>
-    ? ExtractKeyedArrays<U>
-    : never;
+import { DescriptorNode, KeyedArray, Pipeline, PipelineBuilder, Transform, type PipelinePlainOutput } from '../index.js';
 
 // Helper function that uses type inference to set up a test pipeline
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, any>>(
     builderFactory: () => TBuilder
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): [Pipeline<any>, () => BuilderOutputType<TBuilder>[]] {
+): [Pipeline<any>, () => PipelinePlainOutput<TBuilder>[]] {
     const builder = builderFactory();
-    type OutputType = BuilderOutputType<TBuilder>;
+    type OutputType = PipelinePlainOutput<TBuilder>;
     // Use the actual output type from the builder, not the input type
     const [ getState, setState ] = simulateState<KeyedArray<OutputType>>([]);
     const typeDescriptor = builder.getTypeDescriptor();

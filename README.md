@@ -123,6 +123,33 @@ createPipeline<Order>()
 
 Changes at the lowest level (items.price) cascade up through all aggregate levels automatically.
 
+## TypeScript: output shapes and React state
+
+Use **`PipelineOutput<typeof builder>`** for the row type that matches `.build(setState)` (nested groups stay as `KeyedArray` properties). Use **`PipelinePlainOutput<typeof builder>`** for the same shape with every `KeyedArray` replaced by a plain array (for tests or read-only views).
+
+The value passed to `setState` is `KeyedArray<Row>` where `Row` is the pipeline output type:
+
+```typescript
+import {
+    createPipeline,
+    type KeyedArray,
+    type PipelineOutput,
+    type PipelinePlainOutput
+} from '@jinaga/cascade-core';
+import { useState } from 'react';
+
+const builder = createPipeline<{ category: string; sku: string; qty: number }>()
+    .groupBy(['category'], 'items')
+    .sum('items', 'qty', 'totalQty');
+
+type Row = PipelineOutput<typeof builder>;
+type SnapshotRow = PipelinePlainOutput<typeof builder>;
+
+const [rows, setRows] = useState<KeyedArray<Row>>([]);
+
+builder.build(transform => setRows(prev => transform(prev)));
+```
+
 ## Development
 
 This library is developed as part of the Cascade monorepo (`jinaga/cascade`). See the main repository for development setup.
