@@ -32,15 +32,15 @@ The current implementation surface includes:
 Define the descriptor type as a rooted tree:
 
 - `TypeDescriptor = (rootCollectionName, rootNode)`
-- `DescriptorNode = (arrays, collectionKey, scalars, mutableProperties?, objects?)`
+- `DescriptorNode = (arrays, collectionKey, scalars, mutableProperties, objects)`
 
 where:
 
 - `arrays` is a finite map from segment name to child node.
 - `collectionKey` is an ordered list of scalar names used as logical key parts.
 - `scalars` is a finite set/list of scalar descriptors.
-- `mutableProperties` is an optional set/list of property names whose values may change after add.
-- `objects` is an optional set/list of object descriptors, each `(name, node)`.
+- `mutableProperties` is a finite list of property names whose values may change after add (empty means none).
+- `objects` is a finite list of object descriptors, each `(name, node)` (empty means none).
 
 Path model:
 
@@ -77,7 +77,7 @@ These invariants are the basis of all local proofs:
    - Any property newly produced via modification channels is included in `mutableProperties` at the effective descriptor contract used by runtime registration.
 
 5. **Metadata Preservation Under Non-Shape Transforms**
-   - Steps that do not intentionally alter metadata should preserve `mutableProperties` and `objects` definition status and values.
+   - Steps that do not intentionally alter metadata should preserve `mutableProperties` and `objects` list contents (both fields are always present; use `[]` for none).
 
 6. **Idempotent Descriptor Augmentation**
    - Re-applying the same descriptor augmentation step does not duplicate scalar/object/mutable entries.
@@ -92,6 +92,8 @@ Let `F_step` denote descriptor transfer for a step.
   - `arrays = []`
   - `collectionKey = []`
   - `scalars = sourceScalars`
+  - `objects = []`
+  - `mutableProperties = []`
 
 Proof role: base case for induction over step composition.
 
@@ -122,13 +124,13 @@ Note: current implementation does not add the computed property to `scalars`; th
 Two modes:
 
 - **Array drop:** remove target array edge at scoped path.
-- **Scalar drop:** remove scalar name at scoped node; if dropped scalar is in `collectionKey`, current behavior clears `collectionKey` at that node; root metadata filters dropped name from `mutableProperties` and `objects` when those fields are defined.
+- **Scalar drop:** remove scalar name at scoped node; if dropped scalar is in `collectionKey`, current behavior clears `collectionKey` at that node; at the **scoped** node, filter dropped name from `mutableProperties` and `objects`.
 
 Proof obligations:
 
 - No emitted events reference removed array path.
 - Dropped scalar no longer appears in node scalars.
-- Metadata cleanup remains definition-preserving (defined optional fields stay defined, possibly empty).
+- Metadata cleanup updates the scoped node’s lists (possibly to `[]`) without affecting unrelated nodes.
 
 ### 5) GroupByStep
 
@@ -144,7 +146,7 @@ Proof obligations:
 
 - Path transformation bijection between old item paths and new grouped item paths.
 - Key projection correctness (`collectionKey` at parent equals grouping properties).
-- Metadata preservation is stable for both non-empty and empty-but-defined optional metadata fields.
+- Metadata preservation is stable for both non-empty and empty metadata lists (`[]`).
 
 ### 6) CommutativeAggregateStep
 
@@ -238,7 +240,7 @@ Minimal formal core:
 
 ## Known Risk Areas To Address In Proofs
 
-1. Optional metadata semantics (`undefined` vs explicitly empty list) must be explicit in the model.
+1. ~~Optional metadata semantics (`undefined` vs explicitly empty list) must be explicit in the model.~~ **Resolved in implementation:** `objects` and `mutableProperties` are required arrays on every `DescriptorNode`; `[]` is the only representation of “none.”
 2. Scalar descriptors are currently not a complete declaration of all emitted add/remove payload fields (for example, computed properties may be emitted without scalar insertion).
 3. Root-level mutable-property flattening in runtime registration is a deliberate abstraction that should be represented as an implementation lemma, not assumed as a universal semantic truth.
 

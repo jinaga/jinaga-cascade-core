@@ -172,7 +172,7 @@ describe('pipeline dropProperty', () => {
                 .dropProperty('b');
 
             const descriptor = pipeline.getTypeDescriptor();
-            expect(descriptor.mutableProperties?.includes('b')).toBe(false);
+            expect(descriptor.mutableProperties.includes('b')).toBe(false);
         });
 
         it('should remove dropped property from objects in type descriptor when present', () => {
@@ -186,7 +186,7 @@ describe('pipeline dropProperty', () => {
                 .dropProperty('latestAllocation');
 
             const descriptor = pipeline.getTypeDescriptor();
-            expect(descriptor.objects?.some(o => o.name === 'latestAllocation')).toBe(false);
+            expect(descriptor.objects.some(o => o.name === 'latestAllocation')).toBe(false);
         });
 
         it('should handle dropping array properties without affecting scalars', () => {

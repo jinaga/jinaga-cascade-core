@@ -56,7 +56,7 @@ export class AverageAggregateStep<
     ) {
         // Auto-detect if property is mutable from TypeDescriptor
         const inputDescriptor = input.getTypeDescriptor();
-        const rootMutableProperties = inputDescriptor.mutableProperties || [];
+        const rootMutableProperties = inputDescriptor.mutableProperties;
         if (rootMutableProperties.includes(numericProperty)) {
             this.isPropertyMutable = true;
         }
@@ -91,7 +91,7 @@ export class AverageAggregateStep<
             : [...inputDescriptor.scalars, outputScalar];
         
         // Mark the aggregate property as mutable
-        const mutableProperties = inputDescriptor.mutableProperties || [];
+        const mutableProperties = inputDescriptor.mutableProperties;
         if (!mutableProperties.includes(this.propertyName)) {
             return {
                 ...inputDescriptor,

@@ -4,6 +4,10 @@
 
 Design a unified, correctness-first approach for descriptor metadata propagation so `mutableProperties` and `objects` remain semantically consistent across all step transforms, including nested scopes.
 
+## Implementation status
+
+The canonical model (required `objects` and `mutableProperties` arrays on every `DescriptorNode`, shared helpers in `src/util/descriptor-transform.ts`, and step updates for `group-by`, `drop-property`, `pick-by-min-max`, aggregates, `define-property`, and `builder`) is implemented in this repository. Invariant coverage includes `src/test/pipeline.type-descriptor-invariants.test.ts`.
+
 This design addresses the observed issues in:
 
 - `src/steps/group-by.ts` (metadata dropped in nested transforms and empty-list erasure),
@@ -87,8 +91,8 @@ For scalar property drop `dropProperty(p)` at scope node `S`:
 
 - Remove `p` from `S.scalars`.
 - Update `S.collectionKey` according to current policy.
-- Remove `p` from `S.mutableProperties` if defined.
-- Remove object descriptor named `p` from `S.objects` if defined.
+- Remove `p` from `S.mutableProperties`.
+- Remove object descriptor named `p` from `S.objects`.
 - Do not remove `p` metadata at unrelated nodes.
 
 ### Grouping Semantics
@@ -123,12 +127,9 @@ Create `src/util/descriptor-transform.ts` with pure helpers.
 - Removes property from `mutableProperties` and `objects` on that node only.
 - Output fields remain total arrays.
 
-### 4) `normalizeNodeMetadata`
+### 4) ~~`normalizeNodeMetadata`~~
 
-- Utility used only at boundaries (construction/legacy ingress):
-  - `objects = objects ?? []`
-  - `mutableProperties = mutableProperties ?? []`
-- Never needed inside normalized transforms.
+- **Removed:** `DescriptorNode` requires `objects` and `mutableProperties` at the type level; runtime `?? []` shims are redundant. Construction boundaries (`InputPipeline`, step outputs) must emit total arrays only.
 
 ## Step-Level Changes (Design)
 

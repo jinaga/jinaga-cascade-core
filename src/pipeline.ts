@@ -49,8 +49,10 @@ export interface DescriptorNode {
     arrays: ArrayDescriptor[];
     collectionKey: string[];
     scalars: ScalarDescriptor[];
-    objects?: ObjectDescriptor[];
-    mutableProperties?: string[];  // Names of properties that can change
+    /** Presentational object wiring; always an array (empty means none). */
+    objects: ObjectDescriptor[];
+    /** Property names that may change after add; always an array (empty means none). */
+    mutableProperties: string[];
 }
 
 export interface TypeDescriptor extends DescriptorNode {
@@ -86,7 +88,7 @@ export function getMutablePropertiesOfArrayItems(
         if (!arrayDesc) return [];
         current = arrayDesc.type;
     }
-    return current.mutableProperties || [];
+    return current.mutableProperties;
 }
 
 /**
