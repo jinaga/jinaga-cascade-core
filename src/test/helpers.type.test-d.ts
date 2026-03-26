@@ -1,13 +1,12 @@
 import { expectType, expectError } from 'tsd';
-import { createPipeline } from '../index.js';
-import { BuilderOutputType } from './helpers.js';
+import { createPipeline, type PipelinePlainOutput } from '../index.js';
 
 // Test single key groupBy - this is the failing case from the user's example
 {
     const builder = createPipeline<{ category: string; value: number }>()
         .groupBy(['category'], 'items');
     
-    type Output = BuilderOutputType<typeof builder>;
+    type Output = PipelinePlainOutput<typeof builder>;
     
     // Expected: { category: string; items: { value: number }[] }
     // This should pass if the fix is working
@@ -40,7 +39,7 @@ import { BuilderOutputType } from './helpers.js';
     const builder = createPipeline<{ category: string; status: string; value: number }>()
         .groupBy(['category', 'status'], 'items');
     
-    type Output = BuilderOutputType<typeof builder>;
+    type Output = PipelinePlainOutput<typeof builder>;
     
     // Expected: { category: string; status: string; items: { value: number }[] }
     expectType<{ category: string; status: string; items: { value: number }[] }>({} as Output);
@@ -64,7 +63,7 @@ import { BuilderOutputType } from './helpers.js';
         .defineProperty("sum", (item) => item.a + item.b)
         .groupBy(['category'], 'items');
     
-    type Output = BuilderOutputType<typeof builder>;
+    type Output = PipelinePlainOutput<typeof builder>;
     
     // Expected: { category: string; items: { a: number; b: number; sum: number }[] }
     expectType<{ category: string; items: { a: number; b: number; sum: number }[] }>({} as Output);
@@ -83,7 +82,7 @@ import { BuilderOutputType } from './helpers.js';
     const builder = createPipeline<{ category: string; value: number }>()
         .groupBy(['category'], 'items');
     
-    type Output = BuilderOutputType<typeof builder>;
+    type Output = PipelinePlainOutput<typeof builder>;
     
     // This assignment should work - Output should be assignable to the correct type
     expectType<{ category: string; items: { value: number }[] }>({} as Output);
@@ -102,7 +101,7 @@ import { BuilderOutputType } from './helpers.js';
     const builder = createPipeline<{ category: string; value: number }>()
         .groupBy(['category'], 'items');
     
-    type Output = BuilderOutputType<typeof builder>;
+    type Output = PipelinePlainOutput<typeof builder>;
     
     // Check what keys TypeScript sees
     type OutputKeys = keyof Output;
