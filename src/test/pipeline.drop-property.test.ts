@@ -166,6 +166,29 @@ describe('pipeline dropProperty', () => {
             expect(descriptor.scalars).toContainEqual({ name: 'amount', type: 'number' });
         });
 
+        it('should remove dropped property from mutableProperties in type descriptor', () => {
+            const pipeline = createPipeline<{ a: number }>()
+                .defineProperty('b', x => x.a * 2, ['a'])
+                .dropProperty('b');
+
+            const descriptor = pipeline.getTypeDescriptor();
+            expect(descriptor.mutableProperties.includes('b')).toBe(false);
+        });
+
+        it('should remove dropped property from objects in type descriptor when present', () => {
+            const pipeline = createPipeline<{
+                attendeePublicKey: string;
+                createdAt: string;
+                a0: number;
+            }, 'allocations'>('allocations')
+                .groupBy(['attendeePublicKey'], 'attendees')
+                .pickByMax('allocations', 'createdAt', 'latestAllocation')
+                .dropProperty('latestAllocation');
+
+            const descriptor = pipeline.getTypeDescriptor();
+            expect(descriptor.objects.some(o => o.name === 'latestAllocation')).toBe(false);
+        });
+
         it('should handle dropping array properties without affecting scalars', () => {
             // This test ensures drop-property logic distinguishes scalars from arrays
             interface Order {

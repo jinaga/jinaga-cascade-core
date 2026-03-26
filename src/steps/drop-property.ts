@@ -1,6 +1,7 @@
 import type { AddedHandler, ModifiedHandler, RemovedHandler, Step } from '../pipeline.js';
 import { type DescriptorNode, type TypeDescriptor } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
+import { emptyDescriptorNode, filterMetadataByPropertyName } from '../util/descriptor-transform.js';
 
 export class DropPropertyStep<T, K extends keyof T> implements Step {
     private isArrayProperty: boolean;
@@ -45,7 +46,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         
         if (!arrayDesc) {
             // Path segments don't exist - return empty descriptor
-            return { arrays: [], collectionKey: [], scalars: [] };
+            return emptyDescriptorNode();
         }
         
         return this.navigateToPath(arrayDesc.type, remainingSegments);
@@ -60,8 +61,13 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
                 rootCollectionName: inputDescriptor.rootCollectionName
             };
         }
+        const scalarTransformed = this.transformDescriptorForScalarDrop(
+            inputDescriptor,
+            [...this.scopeSegments],
+            this.propertyName as string
+        );
         return {
-            ...this.transformDescriptorForScalarDrop(inputDescriptor, [...this.scopeSegments], this.propertyName as string),
+            ...scalarTransformed,
             rootCollectionName: inputDescriptor.rootCollectionName
         };
     }
@@ -118,11 +124,14 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
                 : descriptor.collectionKey;
             // Filter out the dropped scalar
             const filteredScalars = descriptor.scalars.filter(s => s.name !== droppedPropertyName);
-            return {
-                ...descriptor,
-                collectionKey: nextCollectionKey,
-                scalars: filteredScalars
-            };
+            return filterMetadataByPropertyName(
+                {
+                    ...descriptor,
+                    collectionKey: nextCollectionKey,
+                    scalars: filteredScalars
+                },
+                droppedPropertyName
+            );
         }
 
         const [currentSegment, ...remainingSegmentsAfter] = remainingScopeSegments;

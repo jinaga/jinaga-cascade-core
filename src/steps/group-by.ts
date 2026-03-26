@@ -2,6 +2,7 @@ import type { AddedHandler, ImmutableProps, RemovedHandler, Step } from '../pipe
 import { type DescriptorNode, type TypeDescriptor } from '../pipeline.js';
 import { computeGroupKey } from "../util/hash.js";
 import { pathsMatch, pathStartsWith } from "../util/path.js";
+import { emptyDescriptorNode } from '../util/descriptor-transform.js';
 
 export class GroupByStep<
     T extends object,
@@ -48,7 +49,7 @@ export class GroupByStep<
         
         // Check if any grouping properties are mutable and register for changes
         const inputTypeDescriptor = this.input.getTypeDescriptor();
-        const mutableProperties = inputTypeDescriptor.mutableProperties || [];
+        const mutableProperties = inputTypeDescriptor.mutableProperties;
         
         for (const groupProp of this.groupingProperties) {
             const propName = groupProp.toString();
@@ -87,14 +88,20 @@ export class GroupByStep<
                         name: this.childArrayName,
                         type: childDescriptor
                     }
-                ]
+                ],
+                // Preserve root metadata so downstream steps (e.g. sum auto-detection) still see
+                // mutable properties from defineProperty / aggregates after regrouping.
+                mutableProperties: [...inputDescriptor.mutableProperties],
+                objects: [...inputDescriptor.objects]
             };
         }
 
         // Parent name is physical at nested scope: replace the scoped array name.
         return {
             ...this.transformDescriptorAtPathWithParentName(inputDescriptor, [...this.scopeSegments]),
-            rootCollectionName: inputDescriptor.rootCollectionName
+            rootCollectionName: inputDescriptor.rootCollectionName,
+            mutableProperties: [...inputDescriptor.mutableProperties],
+            objects: [...inputDescriptor.objects]
         };
     }
 
@@ -110,8 +117,7 @@ export class GroupByStep<
         const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
 
         return {
-            collectionKey: descriptor.collectionKey,
-            scalars: descriptor.scalars,
+            ...descriptor,
             arrays: descriptor.arrays.map(arrayDesc => {
                 if (arrayDesc.name !== currentSegment) {
                     return arrayDesc;
@@ -126,6 +132,7 @@ export class GroupByStep<
                     return {
                         name: this.parentArrayName,
                         type: {
+                            ...emptyDescriptorNode(),
                             collectionKey: this.groupingProperties.map(property => property.toString()),
                             scalars: parentScalars,
                             arrays: [

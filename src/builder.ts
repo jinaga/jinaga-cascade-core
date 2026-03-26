@@ -894,8 +894,8 @@ function collectAllMutableProperties(descriptor: DescriptorNode): string[] {
     const mutableProps = new Set<string>();
     
     // Add mutable properties at this level
-    if (descriptor.mutableProperties) {
-        descriptor.mutableProperties.forEach(prop => mutableProps.add(prop));
+    for (const prop of descriptor.mutableProperties) {
+        mutableProps.add(prop);
     }
     
     // Recursively collect from nested arrays

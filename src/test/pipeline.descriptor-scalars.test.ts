@@ -5,7 +5,9 @@ describe('DescriptorNode with scalars', () => {
         const node: DescriptorNode = {
             arrays: [],
             collectionKey: [],
-            scalars: []
+            scalars: [],
+            objects: [],
+            mutableProperties: []
         };
         expect(node.scalars).toEqual([]);
     });
@@ -18,7 +20,9 @@ describe('DescriptorNode with scalars', () => {
         const node: DescriptorNode = {
             arrays: [],
             collectionKey: [],
-            scalars
+            scalars,
+            objects: [],
+            mutableProperties: []
         };
         expect(node.scalars).toHaveLength(2);
         expect(node.scalars[0]).toEqual({ name: 'id', type: 'string' });
@@ -33,7 +37,9 @@ describe('DescriptorNode with scalars', () => {
             scalars: [
                 { name: 'orderId', type: 'string' },
                 { name: 'total', type: 'number' }
-            ]
+            ],
+            objects: [],
+            mutableProperties: []
         };
         expect(descriptor.scalars).toHaveLength(2);
         expect(descriptor.rootCollectionName).toBe('orders');
@@ -45,7 +51,8 @@ describe('DescriptorNode with scalars', () => {
             arrays: [],
             collectionKey: ['id'],
             scalars: [{ name: 'id', type: 'string' }],
-            mutableProperties: ['status']
+            mutableProperties: ['status'],
+            objects: []
         };
         expect(descriptor.mutableProperties).toEqual(['status']);
         expect(descriptor.scalars).toHaveLength(1);
@@ -61,7 +68,9 @@ describe('getScalarsAtPath utility', () => {
             scalars: [
                 { name: 'orderId', type: 'string' },
                 { name: 'total', type: 'number' }
-            ]
+            ],
+            objects: [],
+            mutableProperties: []
         };
         const scalars = getScalarsAtPath(descriptor, []);
         expect(scalars).toHaveLength(2);
@@ -79,11 +88,15 @@ describe('getScalarsAtPath utility', () => {
                     scalars: [
                         { name: 'itemId', type: 'string' },
                         { name: 'price', type: 'number' }
-                    ]
+                    ],
+                    objects: [],
+                    mutableProperties: []
                 }
             }],
             collectionKey: [],
-            scalars: []
+            scalars: [],
+            objects: [],
+            mutableProperties: []
         };
         const scalars = getScalarsAtPath(descriptor, ['items']);
         expect(scalars).toHaveLength(2);
@@ -95,7 +108,9 @@ describe('getScalarsAtPath utility', () => {
             rootCollectionName: 'orders',
             arrays: [],
             collectionKey: [],
-            scalars: [{ name: 'id', type: 'string' }]
+            scalars: [{ name: 'id', type: 'string' }],
+            objects: [],
+            mutableProperties: []
         };
         const scalars = getScalarsAtPath(descriptor, ['nonexistent']);
         expect(scalars).toEqual([]);
@@ -112,15 +127,21 @@ describe('getScalarsAtPath utility', () => {
                         type: {
                             arrays: [],
                             collectionKey: [],
-                            scalars: [{ name: 'deep', type: 'boolean' }]
+                            scalars: [{ name: 'deep', type: 'boolean' }],
+                            objects: [],
+                            mutableProperties: []
                         }
                     }],
                     collectionKey: [],
-                    scalars: []
+                    scalars: [],
+                    objects: [],
+                    mutableProperties: []
                 }
             }],
             collectionKey: [],
-            scalars: []
+            scalars: [],
+            objects: [],
+            mutableProperties: []
         };
         const scalars = getScalarsAtPath(descriptor, ['level1', 'level2']);
         expect(scalars).toHaveLength(1);

@@ -40,7 +40,7 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
         const inputDescriptor = this.input.getTypeDescriptor();
         // If this property depends on mutable properties, mark it as mutable too
         if (this.mutableProperties.length > 0) {
-            const existingMutableProps = inputDescriptor.mutableProperties || [];
+            const existingMutableProps = inputDescriptor.mutableProperties;
             if (!existingMutableProps.includes(this.propertyName)) {
                 return {
                     ...inputDescriptor,

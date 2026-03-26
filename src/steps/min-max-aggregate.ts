@@ -48,7 +48,7 @@ export class MinMaxAggregateStep<
         private comparator: (a: number, b: number) => number
     ) {
         const inputDescriptor = input.getTypeDescriptor();
-        const rootMutableProperties = inputDescriptor.mutableProperties || [];
+        const rootMutableProperties = inputDescriptor.mutableProperties;
         const isPropertyMutable = rootMutableProperties.includes(numericProperty);
 
         this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
@@ -78,7 +78,7 @@ export class MinMaxAggregateStep<
             ? inputDescriptor.scalars
             : [...inputDescriptor.scalars, outputScalar];
         
-        const mutableProperties = inputDescriptor.mutableProperties || [];
+        const mutableProperties = inputDescriptor.mutableProperties;
         if (!mutableProperties.includes(this.propertyName)) {
             return {
                 ...inputDescriptor,

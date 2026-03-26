@@ -107,7 +107,7 @@ export class CommutativeAggregateStep<
             // Note: DefinePropertyStep and CommutativeAggregateStep add mutable properties at the root level,
             // not at the nested array level, so we check root-level mutableProperties
             const inputDescriptor = input.getTypeDescriptor();
-            const rootMutableProperties = inputDescriptor.mutableProperties || [];
+            const rootMutableProperties = inputDescriptor.mutableProperties;
             if (rootMutableProperties.includes(propertyToAggregate)) {
                 effectiveMutableProperties = [propertyToAggregate];
                 this.isPropertyMutable = true;
@@ -138,7 +138,7 @@ export class CommutativeAggregateStep<
         
         // Mark the aggregate property as mutable
         // The property lives at the parent level of segmentPath
-        const mutableProperties = inputDescriptor.mutableProperties || [];
+        const mutableProperties = inputDescriptor.mutableProperties;
         if (!mutableProperties.includes(this.propertyName)) {
             return {
                 ...inputDescriptor,

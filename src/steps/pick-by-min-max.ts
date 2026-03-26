@@ -1,5 +1,6 @@
-import type { AddedHandler, DescriptorNode, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, DescriptorNode, ImmutableProps, ModifiedHandler, ObjectDescriptor, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
+import { appendMutableIfMissing, appendObjectIfMissing, emptyDescriptorNode } from '../util/descriptor-transform.js';
 
 /**
  * Computes a hash key for a key path (for map lookups).
@@ -88,7 +89,7 @@ export class PickByMinMaxStep<
         private comparator: (value1: number | string, value2: number | string) => number
     ) {
         const inputDescriptor = input.getTypeDescriptor();
-        const rootMutableProperties = inputDescriptor.mutableProperties || [];
+        const rootMutableProperties = inputDescriptor.mutableProperties;
         const isPropertyMutable = rootMutableProperties.includes(comparisonProperty);
 
         this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
@@ -124,32 +125,19 @@ export class PickByMinMaxStep<
         const arrayName = this.segmentPath[this.segmentPath.length - 1];
         const sourceArray = currentDescriptor.arrays.find(a => a.name === arrayName);
 
-        const mutableProperties = inputDescriptor.mutableProperties || [];
-        const updatedMutableProperties = mutableProperties.includes(this.propertyName)
-            ? mutableProperties
-            : [...mutableProperties, this.propertyName];
+        const objectDesc: ObjectDescriptor = {
+            name: this.propertyName,
+            type: sourceArray?.type ?? emptyDescriptorNode()
+        };
 
         if (this.segmentPath.length === 1) {
-            return {
-                ...inputDescriptor,
-                objects: [
-                    ...(inputDescriptor.objects || []),
-                    {
-                        name: this.propertyName,
-                        type: sourceArray?.type || { arrays: [], collectionKey: [], scalars: [] }
-                    }
-                ],
-                mutableProperties: updatedMutableProperties
-            };
+            const withObject = appendObjectIfMissing(inputDescriptor, objectDesc);
+            return appendMutableIfMissing(withObject, this.propertyName) as TypeDescriptor;
         }
 
-        const result = this.addObjectAtPath(inputDescriptor, this.segmentPath.slice(0, -1), {
-            name: this.propertyName,
-            type: sourceArray?.type || { arrays: [], collectionKey: [], scalars: [] }
-        });
+        const result = this.addObjectAtPath(inputDescriptor, this.segmentPath.slice(0, -1), objectDesc);
         return {
-            ...result,
-            mutableProperties: updatedMutableProperties,
+            ...appendMutableIfMissing(result, this.propertyName),
             rootCollectionName: inputDescriptor.rootCollectionName
         };
     }
@@ -160,16 +148,10 @@ export class PickByMinMaxStep<
     private addObjectAtPath(
         descriptor: DescriptorNode,
         path: string[],
-        objectDesc: { name: string; type: DescriptorNode }
+        objectDesc: ObjectDescriptor
     ): DescriptorNode {
         if (path.length === 0) {
-            return {
-                ...descriptor,
-                objects: [
-                    ...(descriptor.objects || []),
-                    objectDesc
-                ]
-            };
+            return appendObjectIfMissing(descriptor, objectDesc);
         }
 
         const [first, ...rest] = path;

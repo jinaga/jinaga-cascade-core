@@ -109,6 +109,50 @@ describe('Aggregate Functions', () => {
             group = output.find(g => g.category === 'A');
             expect(group?.totalPrice).toBe(400);
         });
+
+        it('should sum derived mutable fields after regrouping', () => {
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{
+                    attendeePublicKey: string;
+                    createdAt: string;
+                    a0: number;
+                    a1: number;
+                }, 'allocations'>('allocations')
+                    .groupBy(['attendeePublicKey'], 'attendees')
+                    .pickByMax('allocations', 'createdAt', 'latestAllocation')
+                    .defineProperty('a0', row => row?.latestAllocation?.a0 ?? 0, ['latestAllocation'])
+                    .defineProperty('a1', row => row?.latestAllocation?.a1 ?? 0, ['latestAllocation'])
+                    .defineProperty('eventId', () => 0)
+                    .groupBy(['eventId'], 'events')
+                    .sum('attendees', 'a0', 't0')
+                    .sum('attendees', 'a1', 't1')
+            );
+
+            pipeline.add('1', {
+                attendeePublicKey: 'A',
+                createdAt: '2026-03-25T16:39:14.577Z',
+                a0: 10000,
+                a1: 2000
+            });
+            pipeline.add('2', {
+                attendeePublicKey: 'B',
+                createdAt: '2025-10-07T20:03:25.704Z',
+                a0: 20000,
+                a1: 3000
+            });
+            pipeline.add('3', {
+                attendeePublicKey: 'C',
+                createdAt: '2026-03-23T02:50:27.855Z',
+                a0: 10000,
+                a1: 0
+            });
+
+            const output = getOutput();
+            expect(output).toHaveLength(1);
+            expect(output[0].eventId).toBe(0);
+            expect(output[0].t0).toBe(40000);
+            expect(output[0].t1).toBe(5000);
+        });
     });
 
     describe('count', () => {
