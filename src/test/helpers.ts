@@ -10,10 +10,10 @@ import {
 
 // Helper function that uses type inference to set up a test pipeline
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, any>>(
+export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, any, any, any>>(
     builderFactory: () => TBuilder
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): [Pipeline<any>, () => PipelinePlainOutput<TBuilder>[]] {
+): [Pipeline<any, any>, () => PipelinePlainOutput<TBuilder>[]] {
     const builder = builderFactory();
     type RowType = PipelineOutput<TBuilder>;
     const [ getState, setState ] = simulateState<KeyedArray<RowType>>([]);
