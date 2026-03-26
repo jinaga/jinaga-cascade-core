@@ -58,3 +58,12 @@ import {
     expectType<KeyedArray<{ venue: string; capacity: number }>>({} as RowInner['items']);
     expectType<{ venue: string; capacity: number }[]>({} as PlainInner['items']);
 }
+
+// Ordinary arrays (not KeyedArray) stay arrays through PipelinePlainOutput, not mapped object types
+{
+    const builder = createPipeline<{ id: string }>()
+        .defineProperty('tags', () => [] as string[], []);
+
+    type Plain = PipelinePlainOutput<typeof builder>;
+    expectType<readonly string[]>({} as Plain['tags']);
+}

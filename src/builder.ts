@@ -27,17 +27,22 @@ export type Transform<T> = (state: T) => T;
 /**
  * Recursively replaces each {@link KeyedArray} with a plain array of the item type.
  * Use {@link PipelinePlainOutput} to apply this to a builder; see also {@link PipelineOutput}.
+ *
+ * Ordinary arrays/tuples (not {@link KeyedArray}) recurse element-wise only so we do not map
+ * them as objects (which would turn e.g. `string[]` into a `{ length; [n]: ... }` shape).
  */
 type KeyedRecursivePlain<T> =
     T extends KeyedArray<infer U>
         ? KeyedRecursivePlain<U>[]
-        : T extends object
-            ? {
-                  [K in keyof T]: T[K] extends KeyedArray<infer U>
-                      ? KeyedRecursivePlain<U>[]
-                      : KeyedRecursivePlain<T[K]>
-              }
-            : T;
+        : T extends readonly (infer U)[]
+            ? readonly KeyedRecursivePlain<U>[]
+            : T extends object
+                ? {
+                      [K in keyof T]: T[K] extends KeyedArray<infer V>
+                          ? KeyedRecursivePlain<V>[]
+                          : KeyedRecursivePlain<T[K]>
+                  }
+                : T;
 
 /**
  * Root item shape produced by a pipeline: the `T` in `KeyedArray<T>` passed to `.build(setState)`.
