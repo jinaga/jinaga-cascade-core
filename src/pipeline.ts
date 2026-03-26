@@ -1,6 +1,17 @@
-export interface PipelineInput<T> {
+export type PipelineSources<TSources extends Record<string, unknown>> = {
+    [K in keyof TSources]:
+        TSources[K] extends { primary: infer TSourcePrimary; sources?: infer TSourceChildren }
+            ? PipelineInput<
+                TSourcePrimary,
+                TSourceChildren extends Record<string, unknown> ? TSourceChildren : {}
+            >
+            : never;
+};
+
+export interface PipelineInput<T, TSources extends Record<string, unknown> = {}> {
     add(key: string, immutableProps: T): void;
     remove(key: string, immutableProps: T): void;
+    sources: PipelineSources<TSources>;
 }
 
 export interface PipelineRuntimeDiagnostic {
@@ -10,7 +21,11 @@ export interface PipelineRuntimeDiagnostic {
         | 'missing_parent_add_dropped'
         | 'missing_parent_remove_dropped'
         | 'missing_parent_modify_dropped'
-        | 'missing_item_modify_dropped';
+        | 'missing_item_modify_dropped'
+        | 'unknown_secondary_source_dropped'
+        | 'enrich_key_arity_mismatch'
+        | 'enrich_invalid_primary_key_property'
+        | 'enrich_secondary_collection_key_missing';
     message: string;
     operationType?: 'add' | 'remove' | 'modify';
     segmentPath?: string[];
@@ -30,9 +45,8 @@ export interface PipelineRuntimeDisposeOptions {
     flush?: boolean;
 }
 
-export interface Pipeline<TStart> {
-    add(key: string, immutableProps: TStart): void;
-    remove(key: string, immutableProps: TStart): void;
+export interface Pipeline<TStart, TSources extends Record<string, unknown> = {}>
+    extends PipelineInput<TStart, TSources> {
     flush(): void;
     dispose(options?: PipelineRuntimeDisposeOptions): void;
     isDisposed(): boolean;

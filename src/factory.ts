@@ -1,17 +1,19 @@
-import { PipelineBuilder } from './builder.js';
-import type { AddedHandler, ImmutableProps, PipelineInput, RemovedHandler, Step } from './pipeline.js';
+import { PipelineBuilder, type KeyedArray } from './builder.js';
+import type { AddedHandler, ImmutableProps, PipelineInput, PipelineSources, RemovedHandler, Step } from './pipeline.js';
 import { type TypeDescriptor, type ScalarDescriptor } from './pipeline.js';
 
 // Private class (not exported)
-class InputPipeline<T> implements PipelineInput<T>, Step {
+class InputPipeline<T> implements PipelineInput<T, {}>, Step {
     private addedHandlers: AddedHandler[] = [];
     private removedHandlers: RemovedHandler[] = [];
     private rootCollectionName: string;
     private sourceScalars: ScalarDescriptor[];
+    readonly sources: PipelineSources<{}>;
 
     constructor(rootCollectionName: string, sourceScalars: ScalarDescriptor[] = []) {
         this.rootCollectionName = rootCollectionName;
         this.sourceScalars = sourceScalars;
+        this.sources = {} as PipelineSources<{}>;
     }
 
     getTypeDescriptor(): TypeDescriptor {
@@ -51,6 +53,49 @@ class InputPipeline<T> implements PipelineInput<T>, Step {
 
 }
 
+function createSourceInputFacade<
+    TSourceSpec extends { primary: unknown; sources?: Record<string, unknown> }
+>(
+    sourceSpec: TSourceSpec
+): PipelineInput<
+    TSourceSpec['primary'] & object,
+    TSourceSpec['sources'] extends Record<string, unknown> ? TSourceSpec['sources'] : {}
+> {
+    type TChildSources = TSourceSpec['sources'] extends Record<string, unknown> ? TSourceSpec['sources'] : {};
+    const childSources = (sourceSpec.sources ?? {}) as TChildSources;
+    const nestedEntries = Object.entries(childSources).map(([name, value]) => {
+        return [name, createSourceInputFacade(value as { primary: unknown; sources?: Record<string, unknown> })];
+    });
+    const nested = Object.fromEntries(nestedEntries) as PipelineSources<TChildSources>;
+
+    const state: KeyedArray<TSourceSpec['primary'] & object> = [];
+
+    return {
+        add: (_key: string, immutableProps: TSourceSpec['primary'] & object) => {
+            state.push({ key: '', value: immutableProps });
+        },
+        remove: (_key: string, immutableProps: TSourceSpec['primary'] & object) => {
+            const index = state.findIndex(item => item.value === immutableProps);
+            if (index >= 0) {
+                state.splice(index, 1);
+            }
+        },
+        sources: nested
+    };
+}
+
+export function createSourceInputs<TSources extends Record<string, unknown>>(
+    sourceSpecs: TSources
+): PipelineSources<TSources> {
+    const entries = Object.entries(sourceSpecs).map(([sourceName, sourceSpec]) => {
+        return [
+            sourceName,
+            createSourceInputFacade(sourceSpec as { primary: unknown; sources?: Record<string, unknown> })
+        ];
+    });
+    return Object.fromEntries(entries) as PipelineSources<TSources>;
+}
+
 export function createPipeline<TStart extends object>(): PipelineBuilder<TStart, TStart, [], 'items'>;
 export function createPipeline<TStart extends object, TRootScopeName extends string>(
     rootScopeName: TRootScopeName,
@@ -64,8 +109,8 @@ export function createPipeline<TStart extends object, TRootScopeName extends str
 export function createPipeline<TStart extends object>(
     rootScopeName: string = 'items',
     sourceScalars: ScalarDescriptor[] = []
-): PipelineBuilder<TStart, TStart, [], string> {
+): PipelineBuilder<TStart, TStart, [], string, {}> {
     const start = new InputPipeline<TStart>(rootScopeName, sourceScalars);
-    return new PipelineBuilder<TStart, TStart, [], string>(start, start);
+    return new PipelineBuilder<TStart, TStart, [], string, {}>(start, start);
 }
 
