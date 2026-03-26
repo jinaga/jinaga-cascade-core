@@ -1,6 +1,17 @@
-export interface PipelineInput<T> {
+export type PipelineSources<TSources extends Record<string, unknown>> = {
+    [K in keyof TSources]:
+        TSources[K] extends { primary: infer TSourcePrimary; sources?: infer TSourceChildren }
+            ? PipelineInput<
+                TSourcePrimary,
+                TSourceChildren extends Record<string, unknown> ? TSourceChildren : {}
+            >
+            : never;
+};
+
+export interface PipelineInput<T, TSources extends Record<string, unknown> = {}> {
     add(key: string, immutableProps: T): void;
     remove(key: string, immutableProps: T): void;
+    sources: PipelineSources<TSources>;
 }
 
 export interface PipelineRuntimeDiagnostic {
@@ -30,9 +41,8 @@ export interface PipelineRuntimeDisposeOptions {
     flush?: boolean;
 }
 
-export interface Pipeline<TStart> {
-    add(key: string, immutableProps: TStart): void;
-    remove(key: string, immutableProps: TStart): void;
+export interface Pipeline<TStart, TSources extends Record<string, unknown> = {}>
+    extends PipelineInput<TStart, TSources> {
     flush(): void;
     dispose(options?: PipelineRuntimeDisposeOptions): void;
     isDisposed(): boolean;

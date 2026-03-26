@@ -1,17 +1,19 @@
 import { PipelineBuilder } from './builder.js';
-import type { AddedHandler, ImmutableProps, PipelineInput, RemovedHandler, Step } from './pipeline.js';
+import type { AddedHandler, ImmutableProps, PipelineInput, PipelineSources, RemovedHandler, Step } from './pipeline.js';
 import { type TypeDescriptor, type ScalarDescriptor } from './pipeline.js';
 
 // Private class (not exported)
-class InputPipeline<T> implements PipelineInput<T>, Step {
+class InputPipeline<T> implements PipelineInput<T, {}>, Step {
     private addedHandlers: AddedHandler[] = [];
     private removedHandlers: RemovedHandler[] = [];
     private rootCollectionName: string;
     private sourceScalars: ScalarDescriptor[];
+    readonly sources: PipelineSources<{}>;
 
     constructor(rootCollectionName: string, sourceScalars: ScalarDescriptor[] = []) {
         this.rootCollectionName = rootCollectionName;
         this.sourceScalars = sourceScalars;
+        this.sources = {} as PipelineSources<{}>;
     }
 
     getTypeDescriptor(): TypeDescriptor {
@@ -64,8 +66,8 @@ export function createPipeline<TStart extends object, TRootScopeName extends str
 export function createPipeline<TStart extends object>(
     rootScopeName: string = 'items',
     sourceScalars: ScalarDescriptor[] = []
-): PipelineBuilder<TStart, TStart, [], string> {
+): PipelineBuilder<TStart, TStart, [], string, {}> {
     const start = new InputPipeline<TStart>(rootScopeName, sourceScalars);
-    return new PipelineBuilder<TStart, TStart, [], string>(start, start);
+    return new PipelineBuilder<TStart, TStart, [], string, {}>(start, start);
 }
 
