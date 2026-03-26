@@ -9,17 +9,25 @@ import {
 } from '../index.js';
 
 // Helper function that uses type inference to set up a test pipeline
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createTestPipeline<TBuilder extends PipelineBuilder<any, any, any, any, any>>(
-    builderFactory: () => TBuilder
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-): [Pipeline<any, any>, () => PipelinePlainOutput<TBuilder>[]] {
+export function createTestPipeline<
+    T extends object,
+    TStart,
+    Path extends string[],
+    RootScopeName extends string,
+    TSources extends Record<string, unknown>
+>(
+    builderFactory: () => PipelineBuilder<T, TStart, Path, RootScopeName, TSources>
+): [
+    Pipeline<TStart, TSources>,
+    () => PipelinePlainOutput<PipelineBuilder<T, TStart, Path, RootScopeName, TSources>>[]
+] {
     const builder = builderFactory();
-    type RowType = PipelineOutput<TBuilder>;
+    type BuilderType = PipelineBuilder<T, TStart, Path, RootScopeName, TSources>;
+    type RowType = PipelineOutput<BuilderType>;
     const [ getState, setState ] = simulateState<KeyedArray<RowType>>([]);
     const typeDescriptor = builder.getTypeDescriptor();
     const pipeline = builder.build(setState);
-    const getOutput = (): PipelinePlainOutput<TBuilder>[] => {
+    const getOutput = (): PipelinePlainOutput<BuilderType>[] => {
         // Flush any pending batched updates before reading state
         // This ensures all changes are applied before test assertions
         pipeline.flush();
