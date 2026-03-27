@@ -164,7 +164,7 @@ Behavior:
 PipelineBuilder<T, TStart, Path, RootScopeName, TSources>
 ```
 
-`TSources` defaults to `{}` and is only populated by `enrich` calls. All existing builder methods (`defineProperty`, `groupBy`, `filter`, `sum`, `count`, `min`, `max`, `average`, `pickByMin`, `pickByMax`, `in`) pass `TSources` through unchanged. Application code that does not use `enrich` is unaffected: the parameter is inferred, never written by the caller, and `{}` produces `Pipeline<TStart>` with no `sources` property visible at the type level.
+`TSources` defaults to `{}` and is only populated by `enrich` calls. All existing builder methods (`defineProperty`, `groupBy`, `filter`, `sum`, `count`, `min`, `max`, `average`, `pickByMin`, `pickByMax`, `in`) pass `TSources` through unchanged. Application code that does not use `enrich` is unaffected: the parameter is inferred, never written by the caller, and `{}` produces `Pipeline<TStart>` where `sources` is present but has an empty object type (no keys) when no `enrich` calls are used.
 
 ## Runtime Step Design
 
