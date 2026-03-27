@@ -319,10 +319,6 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         }
         console.warn(`Warning: ${diagnostic.message}`);
     }
-
-    getDiagnosticEmitter(): (diagnostic: PipelineRuntimeDiagnostic) => void {
-        return diagnostic => this.emitDiagnostic(diagnostic);
-    }
 }
 
 // Type utility to expand intersection types into a single object type for better IDE display
