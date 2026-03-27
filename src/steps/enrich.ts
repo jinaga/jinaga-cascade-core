@@ -41,7 +41,8 @@ interface PrimaryRecord {
     keyPath: string[];
     primaryKey: string;
     immutableProps: ImmutableProps;
-    joinKeyHash: string;
+    /** Serialized join tuple when indexed; null when the row has no valid join (same as add skipped). */
+    joinKeyHash: string | null;
 }
 
 interface SecondaryRecord {
@@ -73,6 +74,13 @@ export class EnrichStep implements Step {
         this.input.onRemoved(this.scopeSegments, (keyPath, key, immutableProps) => {
             this.handlePrimaryRemoved(keyPath, key, immutableProps);
         });
+
+        const primaryKeyColumns = new Set(this.primaryKey);
+        for (const propertyName of primaryKeyColumns) {
+            this.input.onModified(this.scopeSegments, propertyName, (keyPath, key, _oldValue, newValue) => {
+                this.handlePrimaryJoinKeyPropertyModified(keyPath, key, propertyName, newValue);
+            });
+        }
 
         const secondaryDescriptor = this.secondary.getTypeDescriptor();
         const secondaryPaths = getAllPathSegmentsFromDescriptor(secondaryDescriptor);
@@ -268,6 +276,9 @@ export class EnrichStep implements Step {
             return;
         }
         this.primaryRowsById.delete(id);
+        if (existing.joinKeyHash === null) {
+            return;
+        }
         const ids = this.primaryIdsByJoinKey.get(existing.joinKeyHash);
         if (!ids) {
             return;
@@ -276,6 +287,63 @@ export class EnrichStep implements Step {
         if (ids.size === 0) {
             this.primaryIdsByJoinKey.delete(existing.joinKeyHash);
         }
+    }
+
+    private handlePrimaryJoinKeyPropertyModified(
+        keyPath: string[],
+        key: string,
+        propertyName: string,
+        newValue: unknown
+    ): void {
+        const id = this.primaryId(keyPath, key);
+        const record = this.primaryRowsById.get(id);
+        if (!record) {
+            return;
+        }
+
+        const mergedRow = { ...record.immutableProps, [propertyName]: newValue };
+        const newJoinHash = this.primaryJoinFromPrimaryRow(mergedRow);
+        const oldJoinHash = record.joinKeyHash;
+
+        record.immutableProps = mergedRow;
+
+        if (oldJoinHash === newJoinHash) {
+            return;
+        }
+
+        const oldEnrichment = this.resolveEnrichmentFromJoinHash(oldJoinHash);
+        const newEnrichment = this.resolveEnrichmentFromJoinHash(newJoinHash);
+
+        if (oldJoinHash !== null) {
+            const oldSet = this.primaryIdsByJoinKey.get(oldJoinHash);
+            if (oldSet) {
+                oldSet.delete(id);
+                if (oldSet.size === 0) {
+                    this.primaryIdsByJoinKey.delete(oldJoinHash);
+                }
+            }
+        }
+
+        if (newJoinHash !== null) {
+            record.joinKeyHash = newJoinHash;
+            let ids = this.primaryIdsByJoinKey.get(newJoinHash);
+            if (!ids) {
+                ids = new Set<string>();
+                this.primaryIdsByJoinKey.set(newJoinHash, ids);
+            }
+            ids.add(id);
+        } else {
+            record.joinKeyHash = null;
+        }
+
+        const previous = oldEnrichment ?? this.whenMissing;
+        const next = newEnrichment ?? this.whenMissing;
+        if (valuesEqual(previous, next)) {
+            return;
+        }
+        this.modifiedHandlers.forEach(handler => {
+            handler(record.keyPath, record.primaryKey, previous, next);
+        });
     }
 
     private handleSecondaryAddedAtPath(
