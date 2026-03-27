@@ -4,6 +4,7 @@ import {
     type ImmutableProps,
     type Pipeline,
     type PipelineInput,
+    type PipelineSources,
     type PipelineRuntimeDiagnostic,
     type PipelineRuntimeDisposeOptions,
     type PipelineRuntimeOptions,
@@ -19,6 +20,7 @@ import { NavigateToPath, TransformAtPath } from './types/path.js';
 import { MinMaxAggregateStep } from './steps/min-max-aggregate.js';
 import { AverageAggregateStep } from './steps/average-aggregate.js';
 import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
+import { EnrichStep } from './steps/enrich.js';
 
 // Public types
 export type KeyedArray<T> = { key: string, value: T }[];
@@ -53,7 +55,20 @@ type KeyedRecursivePlain<T> =
  * type Row = PipelineOutput<typeof builder>;
  */
 export type PipelineOutput<TBuilder> =
-    TBuilder extends PipelineBuilder<infer T, infer _S, infer _Path, infer _Root> ? T : never;
+    TBuilder extends PipelineBuilder<infer T, infer _S, infer _Path, infer _Root, infer _Sources> ? T : never;
+
+type PreserveStringLiterals<T extends readonly string[]> = T;
+
+/**
+ * Property type after {@link PipelineBuilder.enrich}: omitting `whenMissing` (or passing
+ * `undefined`) allows `undefined` when there is no matching secondary row; passing a `TSecondary`
+ * object uses that value whenever unmatched.
+ */
+export type EnrichedAs<TSecondary extends object, TWhenMissing extends TSecondary | undefined> = [
+    TWhenMissing
+] extends [undefined]
+    ? TSecondary | undefined
+    : TSecondary;
 
 /**
  * Same structure as {@link PipelineOutput} but with every {@link KeyedArray} replaced by a plain array.
@@ -86,9 +101,11 @@ interface RuntimeApplyContext {
     emitDiagnostic: (diagnostic: PipelineRuntimeDiagnostic) => void;
 }
 
-class PipelineRuntimeSessionImpl<TState extends object, TStart> implements Pipeline<TStart> {
+class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends Record<string, unknown> = Record<never, never>>
+    implements Pipeline<TStart, TSources> {
     private readonly setState: (transform: Transform<KeyedArray<TState>>) => void;
-    private readonly inputPipeline: PipelineInput<TStart>;
+    private readonly inputPipeline: PipelineInput<TStart, TSources>;
+    readonly sources: PipelineSources<TSources>;
     private readonly runtimeOptions: Required<Pick<PipelineRuntimeOptions, 'batchSize' | 'flushDelayMs'>> &
         Pick<PipelineRuntimeOptions, 'onDiagnostic'>;
     private pendingOperations: PendingOperation[] = [];
@@ -97,11 +114,12 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart> implements Pipel
     private epoch = 1;
 
     constructor(
-        pipeline: PipelineInput<TStart>,
+        pipeline: PipelineInput<TStart, TSources>,
         setState: (transform: Transform<KeyedArray<TState>>) => void,
         runtimeOptions: PipelineRuntimeOptions
     ) {
         this.inputPipeline = pipeline;
+        this.sources = pipeline.sources;
         this.setState = setState;
         this.runtimeOptions = {
             batchSize: runtimeOptions.batchSize ?? 50,
@@ -361,6 +379,17 @@ type CurrentScopeName<Path extends string[], RootScopeName extends string> =
         ? LastSegment
         : RootScopeName;
 
+type DeferredDiagnosticBridge = {
+    emit?: (diagnostic: PipelineRuntimeDiagnostic) => void;
+    pending: PipelineRuntimeDiagnostic[];
+};
+
+function createDeferredDiagnosticBridge(): DeferredDiagnosticBridge {
+    return {
+        pending: []
+    };
+}
+
 function compareMixedPrimitiveValues(left: number | string, right: number | string): number {
     if (typeof left === 'number' && typeof right === 'number') {
         return left - right;
@@ -390,11 +419,26 @@ function compareMixedPrimitiveValues(left: number | string, right: number | stri
  * Removes an array at the specified path from the type.
  */
 
-export class PipelineBuilder<T extends object, TStart, Path extends string[] = [], RootScopeName extends string = 'items'> {
+export class PipelineBuilder<
+    T extends object,
+    TStart,
+    Path extends string[] = [],
+    RootScopeName extends string = 'items',
+    TSources extends Record<string, unknown> = Record<never, never>
+> {
+    private reportDiagnostic(diagnostic: PipelineRuntimeDiagnostic): void {
+        if (this.diagnosticBridge.emit) {
+            this.diagnosticBridge.emit(diagnostic);
+            return;
+        }
+        this.diagnosticBridge.pending.push(diagnostic);
+    }
+
     constructor(
-        private input: PipelineInput<TStart>,
+        private input: PipelineInput<TStart, TSources>,
         private lastStep: Step,
-        private scopeSegments: Path = [] as unknown as Path
+        private scopeSegments: Path = [] as unknown as Path,
+        private diagnosticBridge: DeferredDiagnosticBridge = createDeferredDiagnosticBridge()
     ) {}
 
     /**
@@ -418,7 +462,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<K, U>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         const newStep = new DefinePropertyStep(
             this.lastStep,
@@ -427,7 +472,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             this.scopeSegments as string[],
             mutableProperties
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
 
     dropProperty<K extends keyof NavigateToPath<T, Path>>(propertyName: K): PipelineBuilder<
@@ -436,14 +481,15 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, Expand<Omit<NavigateToPath<T, Path>, K>>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         const newStep = new DropPropertyStep<NavigateToPath<T, Path>, K>(
             this.lastStep,
             propertyName,
             this.scopeSegments as string[]
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
 
     groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
@@ -455,7 +501,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart,
         Path,
-        Path extends [] ? ArrayName : RootScopeName
+        Path extends [] ? ArrayName : RootScopeName,
+        TSources
     > {
         const descriptor = this.lastStep.getTypeDescriptor();
         const inferredChildArrayName = this.scopeSegments.length > 0
@@ -469,7 +516,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             inferredChildArrayName,
             this.scopeSegments as string[]
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
 
     /*
@@ -539,7 +586,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<PropName, TAggregate>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new CommutativeAggregateStep(
@@ -552,7 +600,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             },
             propertyToAggregate
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
 
     /**
@@ -580,7 +628,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         return this.commutativeAggregate(
             arrayName,
@@ -622,7 +671,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         return this.commutativeAggregate(
             arrayName,
@@ -657,7 +707,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new MinMaxAggregateStep(
@@ -667,7 +718,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             propertyName,
             (left, right) => left - right
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
     
     /**
@@ -695,7 +746,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new MinMaxAggregateStep(
@@ -705,7 +757,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             propertyName,
             (left, right) => right - left
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
     
     /**
@@ -733,7 +785,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new AverageAggregateStep(
@@ -742,7 +795,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             outputProperty,
             propertyName
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
     
     /**
@@ -771,7 +824,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new PickByMinMaxStep(
@@ -781,7 +835,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             propertyName,
             compareMixedPrimitiveValues
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
     
     /**
@@ -810,7 +864,8 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
         TStart,
         Path,
-        RootScopeName
+        RootScopeName,
+        TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
         const newStep = new PickByMinMaxStep(
@@ -820,7 +875,7 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
             propertyName,
             (left, right) => compareMixedPrimitiveValues(right, left)
         );
-        return new PipelineBuilder(this.input, newStep);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
     
     /**
@@ -832,11 +887,12 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
      */
     in<NewPath extends string[]>(
         ...pathSegments: NewPath
-    ): PipelineBuilder<T, TStart, [...Path, ...NewPath], RootScopeName> {
-        return new PipelineBuilder<T, TStart, [...Path, ...NewPath], RootScopeName>(
+    ): PipelineBuilder<T, TStart, [...Path, ...NewPath], RootScopeName, TSources> {
+        return new PipelineBuilder<T, TStart, [...Path, ...NewPath], RootScopeName, TSources>(
             this.input,
             this.lastStep,
-            [...this.scopeSegments, ...pathSegments] as [...Path, ...NewPath]
+            [...this.scopeSegments, ...pathSegments] as [...Path, ...NewPath],
+            this.diagnosticBridge
         );
     }
 
@@ -857,14 +913,92 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
     filter(
         predicate: (item: NavigateToPath<T, Path>) => boolean,
         mutableProperties: string[] = []
-    ): PipelineBuilder<T, TStart, Path, RootScopeName> {
+    ): PipelineBuilder<T, TStart, Path, RootScopeName, TSources> {
         const newStep = new FilterStep<NavigateToPath<T, Path>>(
             this.lastStep,
             predicate as (item: unknown) => boolean,
             this.scopeSegments as string[],
             mutableProperties
         );
-        return new PipelineBuilder(this.input, newStep, this.scopeSegments);
+        return new PipelineBuilder(this.input, newStep, this.scopeSegments, this.diagnosticBridge);
+    }
+
+    enrich<
+        TSourceName extends string,
+        TSecondary extends object,
+        TSecondaryStart extends object,
+        TSecondaryRootScopeName extends string,
+        TSecondarySources extends Record<string, unknown>,
+        TPrimaryKey extends keyof NavigateToPath<T, Path> & string,
+        TAs extends string,
+        TWhenMissing extends TSecondary | undefined = undefined
+    >(
+        sourceName: TSourceName,
+        secondaryPipeline: PipelineBuilder<TSecondary, TSecondaryStart, [], TSecondaryRootScopeName, TSecondarySources>,
+        primaryKey: PreserveStringLiterals<readonly TPrimaryKey[]>,
+        as: TAs,
+        whenMissing?: TWhenMissing
+    ): PipelineBuilder<
+        Path extends []
+            ? Expand<T & Record<TAs, EnrichedAs<TSecondary, TWhenMissing>>>
+            : Expand<
+                  TransformAtPath<
+                      T,
+                      Path,
+                      NavigateToPath<T, Path> & Record<TAs, EnrichedAs<TSecondary, TWhenMissing>>
+                  >
+              >,
+        TStart,
+        Path,
+        RootScopeName,
+        TSources & Record<TSourceName, { primary: TSecondaryStart; sources: TSecondarySources }>
+    > {
+        type NewSources = TSources & Record<TSourceName, { primary: TSecondaryStart; sources: TSecondarySources }>;
+        const newStep = new EnrichStep(
+            this.lastStep,
+            secondaryPipeline.lastStep,
+            this.scopeSegments as string[],
+            [...primaryKey],
+            as,
+            whenMissing as ImmutableProps | undefined,
+            diagnostic => {
+                this.reportDiagnostic({
+                    ...diagnostic,
+                    operationType: 'modify'
+                });
+            }
+        );
+
+        const mergedSources = {
+            ...(this.input.sources as Record<string, unknown>),
+            [sourceName]: secondaryPipeline.input
+        } as PipelineSources<NewSources>;
+
+        const inputWithSources: PipelineInput<TStart, NewSources> = {
+            add: (key: string, immutableProps: TStart) => {
+                this.input.add(key, immutableProps);
+            },
+            remove: (key: string, immutableProps: TStart) => {
+                this.input.remove(key, immutableProps);
+            },
+            sources: mergedSources
+        };
+
+        return new PipelineBuilder<
+            Path extends []
+                ? Expand<T & Record<TAs, EnrichedAs<TSecondary, TWhenMissing>>>
+                : Expand<
+                      TransformAtPath<
+                          T,
+                          Path,
+                          NavigateToPath<T, Path> & Record<TAs, EnrichedAs<TSecondary, TWhenMissing>>
+                      >
+                  >,
+            TStart,
+            Path,
+            RootScopeName,
+            NewSources
+        >(inputWithSources, newStep, this.scopeSegments, this.diagnosticBridge);
     }
 
     getTypeDescriptor(): TypeDescriptor {
@@ -878,10 +1012,24 @@ export class PipelineBuilder<T extends object, TStart, Path extends string[] = [
     build(
         setState: (transform: Transform<KeyedArray<T>>) => void,
         runtimeOptions: PipelineRuntimeOptions = {}
-    ): Pipeline<TStart> {
+    ): Pipeline<TStart, TSources> {
+        this.diagnosticBridge.emit = diagnostic => {
+            if (runtimeOptions.onDiagnostic) {
+                runtimeOptions.onDiagnostic(diagnostic);
+                return;
+            }
+            console.warn(`Warning: ${diagnostic.message}`);
+        };
+        if (this.diagnosticBridge.pending.length > 0) {
+            for (const diagnostic of this.diagnosticBridge.pending) {
+                this.diagnosticBridge.emit(diagnostic);
+            }
+            this.diagnosticBridge.pending = [];
+        }
+
         const runtimeDescriptor = this.lastStep.getTypeDescriptor();
         const pathSegments = getPathSegmentsFromDescriptor(runtimeDescriptor);
-        const session = new PipelineRuntimeSessionImpl<T, TStart>(
+        const session = new PipelineRuntimeSessionImpl<T, TStart, TSources>(
             this.input,
             setState,
             runtimeOptions
