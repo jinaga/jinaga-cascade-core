@@ -20,10 +20,6 @@ Balance this with performance. The goal is to minimize fields without increasing
 
 - Do not introduce new runtime modes, options, flags, or alternate API paths unless explicitly requested by the user in this conversation.
 - If a proposed change adds any new degree of freedom, stop and ask for approval before implementing.
-- Before coding, include a short "Degrees of Freedom Check":
-  1. What independently varying domain variable is represented?
-  2. Why can this not be a fixed policy?
-  3. What existing field/API is removed or simplified to offset complexity?
 
 ## Compatibility vs Correctness
 
