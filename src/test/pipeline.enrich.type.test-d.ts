@@ -109,3 +109,44 @@ function noopSetState(): never {
     type SourceNames = keyof typeof built.sources;
     expectType<'customerStatuses' | 'regions'>({} as SourceNames);
 }
+
+{
+    const customerStatusPipeline = createPipeline<CustomerStatus, 'customerStatuses'>('customerStatuses')
+        .groupBy(['customerId'], 'customerStatuses');
+
+    const noDefaultOrders = createPipeline<Order, 'orders'>('orders').enrich(
+        'customerStatuses',
+        customerStatusPipeline,
+        ['customerId'],
+        'customerStatus'
+    );
+    type RowWithoutDefault = PipelineOutput<typeof noDefaultOrders>;
+    expectType<{
+        orderId: string;
+        customerId: string;
+        regionId: string;
+        total: number;
+        customerStatus: PipelineOutput<typeof customerStatusPipeline> | undefined;
+    }>({} as RowWithoutDefault);
+}
+
+{
+    const customerStatusPipeline = createPipeline<CustomerStatus, 'customerStatuses'>('customerStatuses')
+        .groupBy(['customerId'], 'customerStatuses');
+
+    const withDefaultOrders = createPipeline<Order, 'orders'>('orders').enrich(
+        'customerStatuses',
+        customerStatusPipeline,
+        ['customerId'],
+        'customerStatus',
+        { customerId: '', customerStatuses: [] }
+    );
+    type RowWithDefault = PipelineOutput<typeof withDefaultOrders>;
+    expectType<{
+        orderId: string;
+        customerId: string;
+        regionId: string;
+        total: number;
+        customerStatus: PipelineOutput<typeof customerStatusPipeline>;
+    }>({} as RowWithDefault);
+}

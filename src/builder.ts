@@ -60,6 +60,17 @@ export type PipelineOutput<TBuilder> =
 type PreserveStringLiterals<T extends readonly string[]> = T;
 
 /**
+ * Property type after {@link PipelineBuilder.enrich}: omitting `whenMissing` (or passing
+ * `undefined`) allows `undefined` when there is no matching secondary row; passing a `TSecondary`
+ * object uses that value whenever unmatched.
+ */
+export type EnrichedAs<TSecondary extends object, TWhenMissing extends TSecondary | undefined> = [
+    TWhenMissing
+] extends [undefined]
+    ? TSecondary | undefined
+    : TSecondary;
+
+/**
  * Same structure as {@link PipelineOutput} but with every {@link KeyedArray} replaced by a plain array.
  * Useful for snapshot tests and for UI models that use arrays instead of keyed rows.
  */
@@ -923,17 +934,24 @@ export class PipelineBuilder<
         TSecondaryRootScopeName extends string,
         TSecondarySources extends Record<string, unknown>,
         TPrimaryKey extends keyof NavigateToPath<T, Path> & string,
-        TAs extends string
+        TAs extends string,
+        TWhenMissing extends TSecondary | undefined = undefined
     >(
         sourceName: TSourceName,
         secondaryPipeline: PipelineBuilder<TSecondary, TSecondaryStart, [], TSecondaryRootScopeName, TSecondarySources>,
         primaryKey: PreserveStringLiterals<readonly TPrimaryKey[]>,
         as: TAs,
-        whenMissing?: TSecondary
+        whenMissing?: TWhenMissing
     ): PipelineBuilder<
         Path extends []
-            ? Expand<T & Record<TAs, TSecondary>>
-            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TAs, TSecondary>>>,
+            ? Expand<T & Record<TAs, EnrichedAs<TSecondary, TWhenMissing>>>
+            : Expand<
+                  TransformAtPath<
+                      T,
+                      Path,
+                      NavigateToPath<T, Path> & Record<TAs, EnrichedAs<TSecondary, TWhenMissing>>
+                  >
+              >,
         TStart,
         Path,
         RootScopeName,
@@ -946,7 +964,7 @@ export class PipelineBuilder<
             this.scopeSegments as string[],
             [...primaryKey],
             as,
-            (whenMissing ?? {}) as ImmutableProps,
+            whenMissing as ImmutableProps | undefined,
             diagnostic => {
                 this.reportDiagnostic({
                     ...diagnostic,
@@ -972,8 +990,14 @@ export class PipelineBuilder<
 
         return new PipelineBuilder<
             Path extends []
-                ? Expand<T & Record<TAs, TSecondary>>
-                : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TAs, TSecondary>>>,
+                ? Expand<T & Record<TAs, EnrichedAs<TSecondary, TWhenMissing>>>
+                : Expand<
+                      TransformAtPath<
+                          T,
+                          Path,
+                          NavigateToPath<T, Path> & Record<TAs, EnrichedAs<TSecondary, TWhenMissing>>
+                      >
+                  >,
             TStart,
             Path,
             RootScopeName,

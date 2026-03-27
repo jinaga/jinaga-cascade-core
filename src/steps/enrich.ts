@@ -58,7 +58,7 @@ export class EnrichStep implements Step {
         private readonly scopeSegments: string[],
         private readonly primaryKey: string[],
         private readonly asProperty: string,
-        private readonly whenMissing: ImmutableProps,
+        private readonly whenMissing: ImmutableProps | undefined,
         private readonly emitDiagnostic?: EmitDiagnostic
     ) {
         this.input.onAdded(this.scopeSegments, (keyPath, key, immutableProps) => {
@@ -222,7 +222,7 @@ export class EnrichStep implements Step {
         return stableSerialize(tuple);
     }
 
-    private resolveEnrichmentFromJoinHash(joinHash: string | null): ImmutableProps {
+    private resolveEnrichmentFromJoinHash(joinHash: string | null): ImmutableProps | undefined {
         if (joinHash === null) {
             return this.whenMissing;
         }
@@ -230,7 +230,7 @@ export class EnrichStep implements Step {
         return matched?.immutableProps ?? this.whenMissing;
     }
 
-    private resolveEnrichmentForPrimary(primaryRow: ImmutableProps): ImmutableProps {
+    private resolveEnrichmentForPrimary(primaryRow: ImmutableProps): ImmutableProps | undefined {
         const joinHash = this.primaryJoinFromPrimaryRow(primaryRow);
         return this.resolveEnrichmentFromJoinHash(joinHash);
     }

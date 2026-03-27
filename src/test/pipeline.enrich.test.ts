@@ -13,6 +13,30 @@ interface CustomerStatus {
 }
 
 describe('pipeline enrich', () => {
+    it('uses undefined for the enriched property when whenMissing is omitted', () => {
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<Order, 'orders'>('orders')
+                .enrich(
+                    'customerStatuses',
+                    createPipeline<CustomerStatus, 'customerStatuses'>('customerStatuses')
+                        .groupBy(['customerId'], 'customerStatuses'),
+                    ['customerId'],
+                    'customerStatus'
+                )
+        );
+
+        pipeline.add('order-1', { orderId: 'order-1', customerId: 'c-1', total: 125 });
+
+        expect(getOutput()).toEqual([
+            {
+                orderId: 'order-1',
+                customerId: 'c-1',
+                total: 125,
+                customerStatus: undefined
+            }
+        ]);
+    });
+
     it('keeps primary rows and applies whenMissing until a secondary match appears', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<Order, 'orders'>('orders')
