@@ -53,10 +53,7 @@ function noopSetState(): never {
         customerId: string;
         regionId: string;
         total: number;
-        customerStatus: {
-            customerId: string;
-            customerStatuses: KeyedArray<{ status: string }>;
-        };
+        customerStatus: PipelineOutput<typeof customerStatusPipeline>;
     }>({} as Row);
 }
 
@@ -127,7 +124,7 @@ function noopSetState(): never {
     type Row = PipelineOutput<typeof scopedBuilder>;
     type NestedOrder = Row['orders'][number]['value'];
     type CustomerStatusOutput = PipelineOutput<typeof customerStatusPipeline>;
-    expectType<CustomerStatusOutput>({} as NestedOrder['customerStatus']);
+    expectType<CustomerStatusOutput | undefined>({} as NestedOrder['customerStatus']);
 
     expectError(
         createPipeline<OrdersByRegion, 'byRegion'>('byRegion')
@@ -173,8 +170,8 @@ function noopSetState(): never {
     type Row = PipelineOutput<typeof ordersPipeline>;
     type CustomerStatusOutput = PipelineOutput<typeof customerStatusWithLoyalty>;
     type LoyaltyOutput = PipelineOutput<typeof loyaltyPipeline>;
-    expectType<CustomerStatusOutput>({} as Row['customerStatus']);
-    expectType<LoyaltyOutput>({} as Row['customerStatus']['loyaltySnapshot']);
+    expectType<CustomerStatusOutput | undefined>({} as Row['customerStatus']);
+    expectType<LoyaltyOutput>({} as NonNullable<Row['customerStatus']>['loyaltySnapshot']);
 
     const pipeline = ordersPipeline.build(noopSetState);
     expectType<(key: string, immutableProps: CustomerStatus) => void>(pipeline.sources.customerStatuses.add);
@@ -195,12 +192,53 @@ function noopSetState(): never {
         .enrich('regions', regionPipeline, ['regionId'], 'regionStatus');
 
     type Row = PipelineOutput<typeof builder>;
-    expectType<PipelineOutput<typeof customerStatusPipeline>>({} as Row['customerStatus']);
-    expectType<PipelineOutput<typeof regionPipeline>>({} as Row['regionStatus']);
+    expectType<PipelineOutput<typeof customerStatusPipeline> | undefined>({} as Row['customerStatus']);
+    expectType<PipelineOutput<typeof regionPipeline> | undefined>({} as Row['regionStatus']);
 
     const pipeline = builder.build(noopSetState);
     expectType<(key: string, immutableProps: CustomerStatus) => void>(pipeline.sources.customerStatuses.add);
     expectType<(key: string, immutableProps: RegionStatus) => void>(pipeline.sources.regions.add);
     type SourceNames = keyof typeof pipeline.sources;
     expectType<'customerStatuses' | 'regions'>({} as SourceNames);
+}
+
+{
+    const customerStatusPipeline = createPipeline<CustomerStatus, 'customerStatuses'>('customerStatuses')
+        .groupBy(['customerId'], 'customerStatuses');
+
+    const noDefaultOrders = createPipeline<Order, 'orders'>('orders').enrich(
+        'customerStatuses',
+        customerStatusPipeline,
+        ['customerId'],
+        'customerStatus'
+    );
+    type RowWithoutDefault = PipelineOutput<typeof noDefaultOrders>;
+    expectType<{
+        orderId: string;
+        customerId: string;
+        regionId: string;
+        total: number;
+        customerStatus: PipelineOutput<typeof customerStatusPipeline> | undefined;
+    }>({} as RowWithoutDefault);
+}
+
+{
+    const customerStatusPipeline = createPipeline<CustomerStatus, 'customerStatuses'>('customerStatuses')
+        .groupBy(['customerId'], 'customerStatuses');
+
+    const withDefaultOrders = createPipeline<Order, 'orders'>('orders').enrich(
+        'customerStatuses',
+        customerStatusPipeline,
+        ['customerId'],
+        'customerStatus',
+        { customerId: '', customerStatuses: [] }
+    );
+    type RowWithDefault = PipelineOutput<typeof withDefaultOrders>;
+    expectType<{
+        orderId: string;
+        customerId: string;
+        regionId: string;
+        total: number;
+        customerStatus: PipelineOutput<typeof customerStatusPipeline>;
+    }>({} as RowWithDefault);
 }

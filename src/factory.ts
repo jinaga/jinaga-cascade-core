@@ -3,17 +3,17 @@ import type { AddedHandler, ImmutableProps, PipelineInput, PipelineSources, Remo
 import { type TypeDescriptor, type ScalarDescriptor } from './pipeline.js';
 
 // Private class (not exported)
-class InputPipeline<T> implements PipelineInput<T, {}>, Step {
+class InputPipeline<T> implements PipelineInput<T, Record<never, never>>, Step {
     private addedHandlers: AddedHandler[] = [];
     private removedHandlers: RemovedHandler[] = [];
     private rootCollectionName: string;
     private sourceScalars: ScalarDescriptor[];
-    readonly sources: PipelineSources<{}>;
+    readonly sources: PipelineSources<Record<never, never>>;
 
     constructor(rootCollectionName: string, sourceScalars: ScalarDescriptor[] = []) {
         this.rootCollectionName = rootCollectionName;
         this.sourceScalars = sourceScalars;
-        this.sources = {} as PipelineSources<{}>;
+        this.sources = {} as PipelineSources<Record<never, never>>;
     }
 
     getTypeDescriptor(): TypeDescriptor {
@@ -66,8 +66,8 @@ export function createPipeline<TStart extends object, TRootScopeName extends str
 export function createPipeline<TStart extends object>(
     rootScopeName: string = 'items',
     sourceScalars: ScalarDescriptor[] = []
-): PipelineBuilder<TStart, TStart, [], string, {}> {
+): PipelineBuilder<TStart, TStart, [], string, Record<never, never>> {
     const start = new InputPipeline<TStart>(rootScopeName, sourceScalars);
-    return new PipelineBuilder<TStart, TStart, [], string, {}>(start, start);
+    return new PipelineBuilder<TStart, TStart, [], string, Record<never, never>>(start, start);
 }
 
