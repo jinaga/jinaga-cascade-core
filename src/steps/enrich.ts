@@ -20,7 +20,13 @@ function stableSerialize(value: unknown): string {
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {
-    return stableSerialize(left) === stableSerialize(right);
+    try {
+        return stableSerialize(left) === stableSerialize(right);
+    } catch {
+        // If either value cannot be serialized (e.g., circular reference, BigInt),
+        // treat them as unequal rather than crashing the pipeline.
+        return false;
+    }
 }
 
 type EmitDiagnostic = (diagnostic: {
