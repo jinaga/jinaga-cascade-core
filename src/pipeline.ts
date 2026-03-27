@@ -24,7 +24,6 @@ export interface PipelineRuntimeDiagnostic {
         | 'missing_parent_remove_dropped'
         | 'missing_parent_modify_dropped'
         | 'missing_item_modify_dropped'
-        | 'unknown_secondary_source_dropped'
         | 'enrich_key_arity_mismatch'
         | 'enrich_invalid_primary_key_property'
         | 'enrich_secondary_collection_key_missing';

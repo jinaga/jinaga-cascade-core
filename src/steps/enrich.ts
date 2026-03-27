@@ -25,7 +25,6 @@ function valuesEqual(left: unknown, right: unknown): boolean {
 
 type EmitDiagnostic = (diagnostic: {
     code:
-        | 'unknown_secondary_source_dropped'
         | 'enrich_key_arity_mismatch'
         | 'enrich_invalid_primary_key_property'
         | 'enrich_secondary_collection_key_missing';
