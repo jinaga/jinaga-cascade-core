@@ -430,10 +430,14 @@ type ArrayPropertyName<T> = {
     [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? K : never
 }[keyof T] & string;
 
+type ParentNonArrayProps<ParentItem> = {
+    [K in keyof ParentItem as ParentItem[K] extends KeyedArray<unknown> ? never : K]: ParentItem[K]
+};
+
 type FlattenMergedItem<ParentItem, ChildArrayName extends string> =
     ChildArrayName extends keyof ParentItem
         ? ParentItem[ChildArrayName] extends KeyedArray<infer ChildItem>
-            ? Expand<Omit<ParentItem, ChildArrayName | keyof ChildItem> & ChildItem>
+            ? Expand<Omit<ParentNonArrayProps<ParentItem>, keyof ChildItem> & ChildItem>
             : never
         : never;
 
@@ -645,7 +649,8 @@ export class PipelineBuilder<
     >(
         parentArrayName: ParentArrayName,
         childArrayName: ChildArrayName,
-        outputArrayName: OutputArrayName
+        outputArrayName: OutputArrayName &
+            (OutputArrayName extends keyof NavigateToPath<T, Path> ? never : unknown)
     ): PipelineBuilder<
         TransformWithFlatten<T, Path, ParentArrayName, OutputArrayName, FlattenedItem>,
         TStart,
