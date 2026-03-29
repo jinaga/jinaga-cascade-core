@@ -21,6 +21,7 @@ import { MinMaxAggregateStep } from './steps/min-max-aggregate.js';
 import { AverageAggregateStep } from './steps/average-aggregate.js';
 import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
 import { EnrichStep } from './steps/enrich.js';
+import { CumulativeSumStep } from './steps/cumulative-sum.js';
 import { ReplaceToDeltaStep } from './steps/replace-to-delta.js';
 
 // Public types
@@ -90,6 +91,53 @@ function finiteNumericContribution(value: unknown): number {
     }
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
+}
+
+function getArrayItemDescriptorAtPath(descriptor: TypeDescriptor, segmentPath: string[]): DescriptorNode | undefined {
+    let current: DescriptorNode = descriptor;
+    for (const segment of segmentPath) {
+        const nextArray = current.arrays.find(array => array.name === segment);
+        if (!nextArray) {
+            return undefined;
+        }
+        current = nextArray.type;
+    }
+    return current;
+}
+
+function assertCumulativeSumConfiguration(
+    descriptor: TypeDescriptor,
+    segmentPath: string[],
+    orderBy: readonly string[],
+    properties: readonly string[]
+): void {
+    const itemDescriptor = getArrayItemDescriptorAtPath(descriptor, segmentPath);
+    if (!itemDescriptor) {
+        throw new Error(`cumulativeSum validation error: array path "${segmentPath.join('.')}" not found in current scope`);
+    }
+    if (orderBy.length === 0) {
+        throw new Error('cumulativeSum validation error: orderBy must include at least one scalar property');
+    }
+    if (properties.length === 0) {
+        throw new Error('cumulativeSum validation error: properties must include at least one mutable scalar property');
+    }
+
+    const scalarNames = new Set(itemDescriptor.scalars.map(scalar => scalar.name));
+    orderBy.forEach(propertyName => {
+        if (!scalarNames.has(propertyName)) {
+            throw new Error(`cumulativeSum validation error: orderBy property "${propertyName}" is not a scalar on the target array item type`);
+        }
+    });
+
+    const mutableProperties = new Set(descriptor.mutableProperties);
+    properties.forEach(propertyName => {
+        if (!scalarNames.has(propertyName)) {
+            throw new Error(`cumulativeSum validation error: property "${propertyName}" is not a scalar on the target array item type`);
+        }
+        if (!mutableProperties.has(propertyName)) {
+            throw new Error(`cumulativeSum validation error: property "${propertyName}" must be mutable`);
+        }
+    });
 }
 
 type PendingOperation =
@@ -639,6 +687,28 @@ export class PipelineBuilder<
             propertyToAggregate
         );
         return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+    }
+
+    cumulativeSum<
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
+        TOrderBy extends keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
+        TProperty extends keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string
+    >(
+        arrayName: ArrayName,
+        orderBy: readonly TOrderBy[],
+        properties: readonly TProperty[]
+    ): PipelineBuilder<T, TStart, Path, RootScopeName, TSources> {
+        const fullSegmentPath = [...this.scopeSegments, arrayName];
+        const inputDescriptor = this.lastStep.getTypeDescriptor();
+        assertCumulativeSumConfiguration(inputDescriptor, fullSegmentPath, orderBy, properties);
+
+        const newStep = new CumulativeSumStep(
+            this.lastStep,
+            fullSegmentPath,
+            [...orderBy],
+            [...properties]
+        );
+        return new PipelineBuilder(this.input, newStep, this.scopeSegments, this.diagnosticBridge);
     }
 
     /**

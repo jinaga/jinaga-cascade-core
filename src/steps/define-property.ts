@@ -1,4 +1,4 @@
-import type { ImmutableProps, ModifiedHandler, Step } from '../pipeline.js';
+import type { DescriptorNode, ImmutableProps, ModifiedHandler, Step } from '../pipeline.js';
 import { type TypeDescriptor } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
 
@@ -38,17 +38,72 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
     
     getTypeDescriptor(): TypeDescriptor {
         const inputDescriptor = this.input.getTypeDescriptor();
+        const withScalar = this.appendDefinedScalarAtScope(inputDescriptor);
+
         // If this property depends on mutable properties, mark it as mutable too
         if (this.mutableProperties.length > 0) {
-            const existingMutableProps = inputDescriptor.mutableProperties;
+            const existingMutableProps = withScalar.mutableProperties;
             if (!existingMutableProps.includes(this.propertyName)) {
                 return {
-                    ...inputDescriptor,
+                    ...withScalar,
                     mutableProperties: [...existingMutableProps, this.propertyName]
                 };
             }
         }
-        return inputDescriptor;
+        return withScalar;
+    }
+
+    private appendDefinedScalarAtScope(inputDescriptor: TypeDescriptor): TypeDescriptor {
+        if (this.scopeSegments.length === 0) {
+            if (inputDescriptor.scalars.some(scalar => scalar.name === this.propertyName)) {
+                return inputDescriptor;
+            }
+            return {
+                ...inputDescriptor,
+                scalars: [
+                    ...inputDescriptor.scalars,
+                    { name: this.propertyName, type: 'unknown' as const }
+                ]
+            };
+        }
+
+        const appendScalarRecursively = (
+            descriptor: DescriptorNode,
+            remainingSegments: string[]
+        ): DescriptorNode => {
+            if (remainingSegments.length === 0) {
+                if (descriptor.scalars.some(scalar => scalar.name === this.propertyName)) {
+                    return descriptor;
+                }
+                return {
+                    ...descriptor,
+                    scalars: [
+                        ...descriptor.scalars,
+                        { name: this.propertyName, type: 'unknown' as const }
+                    ]
+                };
+            }
+
+            const [segment, ...tail] = remainingSegments;
+            return {
+                ...descriptor,
+                arrays: descriptor.arrays.map(arrayDesc => {
+                    if (arrayDesc.name !== segment) {
+                        return arrayDesc;
+                    }
+                    return {
+                        ...arrayDesc,
+                        type: appendScalarRecursively(arrayDesc.type, tail)
+                    };
+                })
+            };
+        };
+
+        const transformed = appendScalarRecursively(inputDescriptor, this.scopeSegments);
+        return {
+            ...transformed,
+            rootCollectionName: inputDescriptor.rootCollectionName
+        };
     }
     
     private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, unknown>): T {
