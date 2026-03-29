@@ -468,7 +468,39 @@ Two events from *different* entities may share the same `orderBy` tuple (e.g., t
 
 ### Two-Primitive Decomposition (LatestAsOfTimeline + CumulativeSum)
 
-Rejected due to the composition correctness flaw described above. A delta-based variant could work but tightly couples the two steps (the first step's output is meaningless without the second), violating composability. The fused single-step design is simpler and correct by construction.
+Rejected due to the composition correctness flaw described in "Why a Two-Primitive Composition Fails" above. This approach emits absolute values per entity per time point, then sums and prefix-sums. The absolute values carry implicit history, causing double-counting.
+
+### Five-Step Delta Decomposition (replaceToDelta + flatten + groupBy + sum + cumulativeSum)
+
+An alternative to the fused design that achieves the same result using five composable primitives:
+
+```ts
+.replaceToDelta('attendees', 'allocations', ['createdAt', 'id'], ['a0', 'a1', ...], ['d0', 'd1', ...])
+.flatten('attendees', 'allocations', 'allDeltas')
+.groupBy(['createdAt', 'id'], 'byTime')
+.in('byTime').commutativeAggregate('allDeltas', 'd0', 't0', sum)
+// (repeat for each aggregated property)
+.cumulativeSum('byTime', ['createdAt', 'id'], ['t0', 't1', ...])
+```
+
+This avoids the absolute-value double-counting flaw because `replaceToDelta` converts each event to its marginal contribution (delta from predecessor within the same entity). Summing deltas across entities per time bucket, then prefix-summing, produces correct aggregates.
+
+**Verification with the counterexample** (A@t1=10, B@t2=5, A@t3=20):
+- After `replaceToDelta`: A's deltas are (t1: 10, t3: 10), B's delta is (t2: 5).
+- After `flatten` + `groupBy` + `sum`: t1=10, t2=5, t3=10.
+- After `cumulativeSum`: t1=10, t2=15, t3=25. Correct.
+
+Each primitive is independently useful:
+- `replaceToDelta` — general-purpose conversion from replace semantics to delta semantics.
+- `flatten` — general-purpose structural step, inverse of `groupBy`.
+- `cumulativeSum` — general-purpose running total, useful for balances, cumulative distributions, etc.
+
+**Trade-offs vs. the fused design:**
+- Pro: Maximum composability; three new general-purpose primitives; each step is small and independently testable.
+- Con: Five pipeline steps instead of one; more intermediate state; more event propagation hops. `cumulativeSum` has O(N) worst-case per event (suffix update), though amortized cost is lower for append-heavy workloads.
+- Both designs achieve O(N) memory and order-independent convergence.
+
+Architecture documents: `replace-to-delta-step.md`, `flatten-step.md`, `cumulative-sum-step.md`.
 
 ### Client-Side Replay
 
