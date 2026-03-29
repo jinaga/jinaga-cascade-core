@@ -88,11 +88,11 @@ The corrected design fuses these concerns into a single step.
 For a given parent context (e.g., a class group):
 
 - **Entities** are items in the entity collection. Each entity has an event sub-array.
-- **Events** are items in the event sub-array, ordered by `(orderProperty, tieBreaker)`.
-- **Time points** are the distinct `(orderProperty, tieBreaker)` values across all entities in the parent context.
+- **Events** are items in the event sub-array, ordered lexicographically by the `orderBy` properties.
+- **Time points** are the distinct `orderBy` tuples across all entities in the parent context.
 - **Output** is one row per time point, where each row contains the sum of all entities' "latest as of" values for each aggregated property.
 
-The entity's "latest value as of time T" for a property P is: the value of P on the entity's most recent event with sort key ≤ T. If the entity has no event at or before T, its contribution is 0.
+The entity's "latest value as of time T" for a property P is: the value of P on the entity's most recent event with `orderBy` tuple ≤ T. If the entity has no event at or before T, its contribution is 0.
 
 ## Public API
 
@@ -100,11 +100,10 @@ The entity's "latest value as of time T" for a property P is: the value of P on 
 timelineAggregate(
   entityArrayName: string,
   eventArrayName: string,
-  orderProperty: string,
+  orderBy: string[],
   outputArrayName: string,
   properties: string[],
-  outputProperties: string[],
-  options?: { tieBreaker?: string }
+  outputProperties: string[]
 )
 ```
 
@@ -112,19 +111,18 @@ Parameter roles:
 
 - `entityArrayName` — the child array containing entities (e.g., `"attendees"`). Each entity in this array has a nested sub-array of events.
 - `eventArrayName` — the sub-array within each entity containing time-ordered events (e.g., `"allocations"`).
-- `orderProperty` — the property on each event used for chronological ordering (e.g., `"createdAt"`).
+- `orderBy` — one or more properties on each event that define chronological ordering. The first element is the primary sort key; subsequent elements break ties in order (e.g., `["createdAt", "id"]`). Must contain at least one property.
 - `outputArrayName` — the name for the emitted timeline array (e.g., `"timeline"`).
 - `properties` — which numeric properties on each event to aggregate (e.g., `["a0", "a1", "a2"]`).
 - `outputProperties` — names for the aggregate values in the output (e.g., `["t0", "t1", "t2"]`). Must be same length as `properties`.
-- `options.tieBreaker` — secondary sort key for deterministic ordering when `orderProperty` values collide (e.g., `"id"`).
 
 Validation:
 
+- `orderBy.length` must be at least 1.
+- Every property in `orderBy` must be a scalar in the event type.
 - `properties.length` must equal `outputProperties.length`.
 - `entityArrayName` must reference a child array in the current scope.
 - `eventArrayName` must reference a child array within the entity type.
-- `orderProperty` must be a scalar in the event type.
-- If `tieBreaker` is specified, it must be a scalar in the event type.
 
 ## Type Transformation
 
@@ -146,11 +144,11 @@ Output type:
 ```
 {
   effectiveClass: string,
-  timeline: KeyedArray<{ timeKey: string, t0: number, t1: number }>
+  timeline: KeyedArray<{ createdAt: string, id: string, t0: number, t1: number }>
 }
 ```
 
-The entity array (`attendees`) is replaced by the timeline array (`timeline`). Parent-level scalars (`effectiveClass`) are preserved.
+The entity array (`attendees`) is replaced by the timeline array (`timeline`). Parent-level scalars (`effectiveClass`) are preserved. Each timeline row carries the `orderBy` properties (`createdAt`, `id`) under their original names and types, plus the aggregate output properties.
 
 ## TypeDescriptor Transformation
 
@@ -158,13 +156,15 @@ The step transforms its input descriptor:
 
 1. Remove the entity array descriptor (the array named `entityArrayName`).
 2. Add a new array descriptor named `outputArrayName` with:
-   - `collectionKey: ["timeKey"]`
-   - `scalars: [{name: "timeKey"}, {name: outputProperties[0]}, {name: outputProperties[1]}, ...]`
+   - `collectionKey: [...orderBy]` (the `orderBy` properties are the bucket identity)
+   - `scalars`: the `orderBy` properties (copied from the event type's scalar descriptors) followed by the output properties: `[...orderByScalars, {name: outputProperties[0]}, {name: outputProperties[1]}, ...]`
    - `mutableProperties: [...outputProperties]` (aggregate values change as events arrive)
    - `arrays: []`, `objects: []`
 3. Preserve all other parent-level scalars, arrays, objects, and mutableProperties.
 
-Adding `outputProperties` to `mutableProperties` is required because the aggregate at a time bucket can change after the bucket is initially emitted (when subsequent events modify the aggregate).
+The `orderBy` properties become the `collectionKey` of the output array. This is the same pattern used by `groupBy`, where the grouping properties become the collection key. No synthetic `timeKey` field is needed — each timeline row carries the original ordering properties under their original names and types, and the pipeline's existing `collectionKey` mechanism handles identity and lookup.
+
+Adding `outputProperties` to `mutableProperties` is required because the aggregate at a time bucket can change after the bucket is initially emitted (when subsequent events modify the aggregate). The `orderBy` properties are not mutable on the output — they are the bucket's identity.
 
 ## Step Taxonomy Classification
 
@@ -184,14 +184,14 @@ Per parent context (e.g., per class group):
 entityEvents: Map<entityKey, SortedList<Event>>
 ```
 
-Each entity's events, maintained in sort order by `(orderProperty, tieBreaker)`. Supports O(log N) insert/remove and O(1) predecessor/successor lookup.
+Each entity's events, maintained in sort order by lexicographic comparison of the `orderBy` tuple. Supports O(log N) insert/remove and O(1) predecessor/successor lookup.
 
 ```
-timeBuckets: SortedMap<timeKey, BucketState>
+timeBuckets: SortedMap<OrderByTuple, BucketState>
 ```
 
-Where `BucketState` holds:
-- `referenceCount: number` — how many events across all entities share this time key
+Where `OrderByTuple` is the composite key formed by the values of the `orderBy` properties (e.g., `["2026-01-01T10:00:00Z", "alloc-1"]` for `orderBy: ["createdAt", "id"]`), and `BucketState` holds:
+- `referenceCount: number` — how many events across all entities share this `orderBy` tuple
 - `aggregateValues: Record<string, number>` — the current aggregate for each output property
 
 The `referenceCount` tracks how many events define this time point. A bucket exists while its reference count > 0. When the last event at a time point is removed, the bucket is removed.
@@ -250,7 +250,7 @@ If an event's aggregated property changes via `onModified(property, oldValue, ne
 
 ## Commutativity Guarantee
 
-**Claim**: For any two orderings of add/remove operations on the same multiset of entities and events, the `TimelineAggregateStep` produces the same final set of (timeKey, aggregateValues) rows.
+**Claim**: For any two orderings of add/remove operations on the same multiset of entities and events, the `TimelineAggregateStep` produces the same final set of (`orderBy` tuple, aggregateValues) rows.
 
 **Proof**:
 
@@ -264,7 +264,7 @@ If an event's aggregated property changes via `onModified(property, oldValue, ne
    aggregate(T) = Σ over entities E of (E's latest value as of T)
    ```
 
-   Each entity's "latest value as of T" is a deterministic function of E's current event set (the event with the greatest sort key ≤ T). Summation is commutative. Therefore the aggregate is a deterministic function of the current entity/event sets, independent of arrival order.
+   Each entity's "latest value as of T" is a deterministic function of E's current event set (the event with the greatest `orderBy` tuple ≤ T). Summation is commutative. Therefore the aggregate is a deterministic function of the current entity/event sets, independent of arrival order.
 
 4. **Therefore**: same entity/event sets → same internal state → same output, regardless of operation order. QED.
 
@@ -310,11 +310,10 @@ const timelinePipeline = createPipeline<AllocationData, 'allocations'>('allocati
     .timelineAggregate(
         'attendees',                                      // entity collection
         'allocations',                                    // event sub-array per entity
-        'createdAt',                                      // order property
+        ['createdAt', 'id'],                              // orderBy (lexicographic)
         'timeline',                                       // output array
         ['a0', 'a1', 'a2', 'a3', 'a4', 'a5'],           // properties to sum
-        ['t0', 't1', 't2', 't3', 't4', 't5'],           // output property names
-        { tieBreaker: 'id' }
+        ['t0', 't1', 't2', 't3', 't4', 't5']            // output property names
     );
 ```
 
@@ -323,12 +322,12 @@ Output structure per class:
 ```
 [
   { effectiveClass: "general", timeline: [
-    { timeKey: "2026-01-01T10:00:00Z|alloc-1", t0: 10, t1: 0, ... },
-    { timeKey: "2026-01-01T10:05:00Z|alloc-3", t0: 25, t1: 5, ... },
+    { createdAt: "2026-01-01T10:00:00Z", id: "alloc-1", t0: 10, t1: 0, ... },
+    { createdAt: "2026-01-01T10:05:00Z", id: "alloc-3", t0: 25, t1: 5, ... },
     ...
   ]},
   { effectiveClass: "investor", timeline: [
-    { timeKey: "2026-01-01T10:02:00Z|alloc-2", t0: 15, t1: 0, ... },
+    { createdAt: "2026-01-01T10:02:00Z", id: "alloc-2", t0: 15, t1: 0, ... },
     ...
   ]}
 ]
@@ -385,7 +384,7 @@ The step subscribes to its input using the resolved paths:
    - `onAdded`: new event for an entity. Update sorted list and time buckets.
    - `onRemoved`: event removed. Inverse update.
 
-3. **Event property modifications** (if `orderProperty` or any aggregated property is mutable):
+3. **Event property modifications** (if any `orderBy` property or any aggregated property is mutable):
    - `onModified` at the event path for each relevant property name.
 
 ## Handler Forwarding
@@ -407,13 +406,13 @@ This follows the aggregate step pattern: the step owns the output array path and
 
 ## Total Ordering Requirement
 
-Time keys must be totally ordered and deterministic. Using `orderProperty` alone may be insufficient if timestamp collisions occur (multiple entities' events at the same time). The `tieBreaker` option provides a secondary sort key.
+The `orderBy` tuple must be totally ordered and deterministic. Comparison is lexicographic: the first property in `orderBy` is the primary sort key; only when values are equal does comparison proceed to the next property, and so on.
 
-The composite sort key `(orderProperty, tieBreaker)` determines:
+The `orderBy` tuple determines:
 - The chronological order of events within each entity.
-- The identity of time buckets in the output (the `timeKey` value).
+- The identity of time buckets in the output (the `collectionKey` of the timeline array).
 
-If `tieBreaker` is not specified, events with identical `orderProperty` values from different entities share a single time bucket (the aggregate at that bucket includes all of their contributions). Events from the same entity with identical `orderProperty` values are ordered arbitrarily but deterministically (e.g., by insertion key).
+If the `orderBy` properties do not fully disambiguate events (e.g., `orderBy: ["createdAt"]` and two events from different entities share the same `createdAt`), those events share a single time bucket whose aggregate includes all of their contributions. Events from the same entity with identical `orderBy` tuples are ordered arbitrarily but deterministically (e.g., by insertion key). Adding more properties to `orderBy` (e.g., `["createdAt", "id"]`) increases disambiguation.
 
 ## Test Matrix
 
@@ -429,8 +428,8 @@ If `tieBreaker` is not specified, events with identical `orderProperty` values f
 | 6 | Replace semantics: A@t1=10, A@t3=20, B@t2=5 | t1=10, t2=15, t3=25 (the double-counting counterexample, verified correct) |
 | 7 | Event removed (was latest for subsequent buckets) | Affected buckets' aggregates revert |
 | 8 | Add then remove same event | Returns to prior state exactly |
-| 9 | Timestamp collision (same orderProperty, different entities) | Single bucket with sum of both entities' values |
-| 10 | Timestamp collision with tieBreaker | Distinct buckets ordered by tieBreaker |
+| 9 | Collision on all `orderBy` properties (different entities) | Single bucket with sum of both entities' values |
+| 10 | Primary `orderBy` property equal, secondary resolves | Distinct buckets ordered by secondary property |
 
 ### Entity-Level Operations
 
