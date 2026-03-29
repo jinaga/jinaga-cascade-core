@@ -66,12 +66,14 @@ export class FlattenStep implements Step {
 
     private readonly parentScalarsByParentIdentity: Map<string, ImmutableProps> = new Map();
     private readonly childKeysByParentIdentity: Map<string, Set<string>> = new Map();
+    private readonly childPropertyCountsByParentIdentity: Map<string, Map<string, number>> = new Map();
 
     private readonly scopePath: string[];
     private readonly parentArrayName: string;
     private readonly childArrayName: string;
     private readonly outputArrayName: string;
     private readonly outputDepth: number;
+    private readonly childScalarNames: Set<string>;
 
     constructor(
         private input: Step,
@@ -91,6 +93,7 @@ export class FlattenStep implements Step {
         this.childArrayName = this.childPath[this.childPath.length - 1];
         this.outputArrayName = this.outputPath[this.outputPath.length - 1];
         this.outputDepth = this.outputPath.length;
+        this.childScalarNames = this.getChildScalarNames(this.input.getTypeDescriptor());
 
         this.assertValidConfiguration(this.input.getTypeDescriptor());
 
@@ -210,6 +213,25 @@ export class FlattenStep implements Step {
         }
     }
 
+    private getChildScalarNames(descriptor: TypeDescriptor): Set<string> {
+        const scopeNode = this.navigateToScopeNode(descriptor, [...this.scopePath]);
+        if (!scopeNode) {
+            return new Set<string>();
+        }
+
+        const parentArray = scopeNode.arrays.find(arrayDescriptor => arrayDescriptor.name === this.parentArrayName);
+        if (!parentArray) {
+            return new Set<string>();
+        }
+
+        const childArray = parentArray.type.arrays.find(arrayDescriptor => arrayDescriptor.name === this.childArrayName);
+        if (!childArray) {
+            return new Set<string>();
+        }
+
+        return new Set(childArray.type.scalars.map(scalar => scalar.name));
+    }
+
     private navigateToScopeNode(node: DescriptorNode, remainingSegments: string[]): DescriptorNode | null {
         if (remainingSegments.length === 0) {
             return node;
@@ -316,6 +338,7 @@ export class FlattenStep implements Step {
         const id = parentIdentity(keyPath, parentKey);
         this.parentScalarsByParentIdentity.delete(id);
         this.childKeysByParentIdentity.delete(id);
+        this.childPropertyCountsByParentIdentity.delete(id);
     }
 
     private handleChildAdded(keyPath: string[], childKey: string, childProps: ImmutableProps): void {
@@ -337,6 +360,15 @@ export class FlattenStep implements Step {
             this.childKeysByParentIdentity.set(id, childKeys);
         }
         childKeys.add(childKey);
+
+        let propertyCounts = this.childPropertyCountsByParentIdentity.get(id);
+        if (!propertyCounts) {
+            propertyCounts = new Map<string, number>();
+            this.childPropertyCountsByParentIdentity.set(id, propertyCounts);
+        }
+        for (const propertyName of Object.keys(childProps)) {
+            propertyCounts.set(propertyName, (propertyCounts.get(propertyName) ?? 0) + 1);
+        }
 
         const flatKey = compositeChildKey(parentKey, childKey);
         const mergedProps = { ...parentProps, ...childProps };
@@ -360,6 +392,23 @@ export class FlattenStep implements Step {
 
         const childKeys = this.childKeysByParentIdentity.get(id);
         childKeys?.delete(childKey);
+        const propertyCounts = this.childPropertyCountsByParentIdentity.get(id);
+        if (propertyCounts) {
+            for (const propertyName of Object.keys(childProps)) {
+                const count = propertyCounts.get(propertyName);
+                if (!count) {
+                    continue;
+                }
+                if (count <= 1) {
+                    propertyCounts.delete(propertyName);
+                } else {
+                    propertyCounts.set(propertyName, count - 1);
+                }
+            }
+            if (propertyCounts.size === 0) {
+                this.childPropertyCountsByParentIdentity.delete(id);
+            }
+        }
 
         const flatKey = compositeChildKey(parentKey, childKey);
         const mergedProps = { ...parentProps, ...childProps };
@@ -376,6 +425,11 @@ export class FlattenStep implements Step {
         newValue: unknown
     ): void {
         const id = parentIdentity(keyPath, parentKey);
+        // Child scalar values win on collision. Parent modifications for colliding names
+        // should not fan out to flattened children.
+        if (this.childScalarNames.has(propertyName) || this.parentHasChildProperty(id, propertyName)) {
+            return;
+        }
         const parentProps = this.parentScalarsByParentIdentity.get(id);
         if (parentProps) {
             this.parentScalarsByParentIdentity.set(id, {
@@ -400,6 +454,14 @@ export class FlattenStep implements Step {
                 handler(keyPath, flatKey, oldValue, newValue);
             });
         });
+    }
+
+    private parentHasChildProperty(parentId: string, propertyName: string): boolean {
+        const propertyCounts = this.childPropertyCountsByParentIdentity.get(parentId);
+        if (!propertyCounts) {
+            return false;
+        }
+        return (propertyCounts.get(propertyName) ?? 0) > 0;
     }
 
     private handleChildModified(
