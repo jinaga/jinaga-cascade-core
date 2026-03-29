@@ -149,6 +149,7 @@ export class ReplaceToDeltaStep implements Step {
     private readonly eventSegmentPath: string[];
     private readonly propertyToOutput: Map<string, string>;
     private readonly outputPropertiesSet: Set<string>;
+    private readonly orderBySet: Set<string>;
 
     private readonly entities: Map<string, EntityState> = new Map();
     private readonly addedHandlers: AddedHandler[] = [];
@@ -171,6 +172,7 @@ export class ReplaceToDeltaStep implements Step {
             this.propertyToOutput.set(property, this.outputProperties[index]);
         });
         this.outputPropertiesSet = new Set(this.outputProperties);
+        this.orderBySet = new Set(this.orderBy);
 
         this.input.onAdded(this.eventSegmentPath, (keyPath, key, immutableProps) => {
             this.handleEventAdded(keyPath, key, immutableProps);
@@ -178,9 +180,9 @@ export class ReplaceToDeltaStep implements Step {
         this.input.onRemoved(this.eventSegmentPath, (keyPath, key, immutableProps) => {
             this.handleEventRemoved(keyPath, key, immutableProps);
         });
-        for (const property of new Set(this.properties)) {
+        for (const property of new Set([...this.properties, ...this.orderBy])) {
             this.input.onModified(this.eventSegmentPath, property, (keyPath, key, oldValue, newValue) => {
-                this.handlePropertyModified(keyPath, key, property, oldValue, newValue);
+                this.handleTrackedPropertyModified(keyPath, key, property, oldValue, newValue);
             });
         }
     }
@@ -230,6 +232,15 @@ export class ReplaceToDeltaStep implements Step {
         }
         if (this.properties.length !== this.outputProperties.length) {
             throw new Error('ReplaceToDeltaStep requires properties and outputProperties to have equal length.');
+        }
+        const seenProperties = new Set<string>();
+        for (const property of this.properties) {
+            if (seenProperties.has(property)) {
+                throw new Error(
+                    `ReplaceToDeltaStep properties contains duplicate property "${property}".`
+                );
+            }
+            seenProperties.add(property);
         }
 
         const inputDescriptor = this.input.getTypeDescriptor();
@@ -370,7 +381,21 @@ export class ReplaceToDeltaStep implements Step {
         this.emitRemoved(parentKeyPath, eventKey, record.immutableProps, deltas);
     }
 
-    private handlePropertyModified(
+    private handleTrackedPropertyModified(
+        parentKeyPath: string[],
+        eventKey: string,
+        propertyName: string,
+        oldValue: unknown,
+        newValue: unknown
+    ): void {
+        if (this.orderBySet.has(propertyName)) {
+            this.handleOrderByPropertyModified(parentKeyPath, eventKey, propertyName, newValue);
+            return;
+        }
+        this.handleValuePropertyModified(parentKeyPath, eventKey, propertyName, oldValue, newValue);
+    }
+
+    private handleValuePropertyModified(
         parentKeyPath: string[],
         eventKey: string,
         propertyName: string,
@@ -427,6 +452,35 @@ export class ReplaceToDeltaStep implements Step {
                 this.emitModified(parentKeyPath, successorKey, outputProperty, oldSuccessorDelta, newSuccessorDelta);
             }
         }
+    }
+
+    private handleOrderByPropertyModified(
+        parentKeyPath: string[],
+        eventKey: string,
+        propertyName: string,
+        newValue: unknown
+    ): void {
+        const entity = this.entities.get(computeKeyPathHash(parentKeyPath));
+        if (!entity) {
+            return;
+        }
+        const record = entity.eventsByKey.get(eventKey);
+        if (!record) {
+            return;
+        }
+        const eventIndex = entity.sortedEventKeys.indexOf(eventKey);
+        if (eventIndex < 0) {
+            return;
+        }
+
+        const previousSnapshot = this.snapshotEntityDeltas(entity);
+
+        record.mutableValues.set(propertyName, newValue);
+        entity.sortedEventKeys.splice(eventIndex, 1);
+        this.insertEventKey(entity, eventKey);
+
+        const nextSnapshot = this.snapshotEntityDeltas(entity);
+        this.emitDeltaSnapshotChanges(parentKeyPath, previousSnapshot, nextSnapshot);
     }
 
     private emitSuccessorDeltaChanges(
@@ -495,6 +549,40 @@ export class ReplaceToDeltaStep implements Step {
         handlers.forEach(handler => {
             handler(parentKeyPath, eventKey, oldValue, newValue);
         });
+    }
+
+    private snapshotEntityDeltas(entity: EntityState): Map<string, Record<string, number>> {
+        const snapshot = new Map<string, Record<string, number>>();
+        let predecessor: EventRecord | undefined;
+        for (const key of entity.sortedEventKeys) {
+            const record = entity.eventsByKey.get(key);
+            if (!record) {
+                continue;
+            }
+            snapshot.set(key, this.computeAllDeltas(record, predecessor));
+            predecessor = record;
+        }
+        return snapshot;
+    }
+
+    private emitDeltaSnapshotChanges(
+        parentKeyPath: string[],
+        previousSnapshot: Map<string, Record<string, number>>,
+        nextSnapshot: Map<string, Record<string, number>>
+    ): void {
+        for (const [key, nextDeltas] of nextSnapshot.entries()) {
+            const previousDeltas = previousSnapshot.get(key);
+            if (!previousDeltas) {
+                continue;
+            }
+            for (const outputProperty of this.outputProperties) {
+                const oldValue = previousDeltas[outputProperty];
+                const newValue = nextDeltas[outputProperty];
+                if (!Object.is(oldValue, newValue)) {
+                    this.emitModified(parentKeyPath, key, outputProperty, oldValue, newValue);
+                }
+            }
+        }
     }
 
     private getOrCreateEntity(parentKeyPath: string[]): EntityState {

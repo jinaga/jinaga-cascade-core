@@ -404,6 +404,21 @@ describe('pipeline replaceToDelta', () => {
                 );
         }).toThrow();
     });
+
+    it('should reject duplicate properties with a meaningful error', () => {
+        expect(() => {
+            createPipeline<AllocationRow>()
+                .groupBy(['effectiveClass'], 'attendees')
+                .in('items').groupBy(['attendeeId'], 'attendees')
+                .replaceToDelta(
+                    'attendees',
+                    'items',
+                    ['createdAt', 'eventId'],
+                    ['amount', 'amount'],
+                    ['deltaAmountA', 'deltaAmountB']
+                );
+        }).toThrow('duplicate');
+    });
 });
 
 describe('ReplaceToDeltaStep internals', () => {
@@ -449,5 +464,35 @@ describe('ReplaceToDeltaStep internals', () => {
                 ['delta']
             );
         }).toThrow();
+    });
+
+    it('should recompute deltas when a mutable orderBy field changes', () => {
+        const fakeInput = new FakeStep(fakeDescriptorForReplaceToDelta(['id']));
+        const step = new ReplaceToDeltaStep(
+            fakeInput,
+            ['entities'],
+            'events',
+            ['time', 'id'],
+            ['amount'],
+            ['delta']
+        );
+
+        const modifiedEvents: Array<{ key: string; oldValue: unknown; newValue: unknown }> = [];
+        step.onModified(['entities', 'events'], 'delta', (_keyPath, key, oldValue, newValue) => {
+            modifiedEvents.push({ key, oldValue, newValue });
+        });
+
+        fakeInput.emitAdded(['entities'], [], 'entity-1', { entityId: 'E1' });
+        fakeInput.emitAdded(['entities', 'events'], ['entity-1'], 'event-1', { time: 1, id: 't1', amount: 10 });
+        fakeInput.emitAdded(['entities', 'events'], ['entity-1'], 'event-2', { time: 2, id: 't2', amount: 15 });
+
+        // Move event-1 after event-2 by changing mutable orderBy field.
+        // Expected:
+        // - event-2 becomes baseline delta: 15 (from previous 5)
+        // - event-1 becomes successor delta: -5 (from previous 10)
+        fakeInput.emitModified(['entities', 'events'], 'time', ['entity-1'], 'event-1', 1, 3);
+
+        expect(modifiedEvents).toContainEqual({ key: 'event-2', oldValue: 5, newValue: 15 });
+        expect(modifiedEvents).toContainEqual({ key: 'event-1', oldValue: 10, newValue: -5 });
     });
 });

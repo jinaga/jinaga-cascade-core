@@ -344,6 +344,13 @@ type ArrayPropertyNameOn<T> = {
     [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? K : never
 }[keyof T] & string;
 
+type ArrayItemAtPropertyOn<
+    T,
+    ArrayName extends ArrayPropertyNameOn<T>
+> = T[ArrayName] extends KeyedArray<infer ItemType>
+    ? ItemType
+    : never;
+
 type AddNumericProperties<
     T,
     OutputProps extends readonly string[]
@@ -794,12 +801,13 @@ export class PipelineBuilder<
     replaceToDelta<
         EntityArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         EventArrayName extends ArrayPropertyNameOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>>,
+        EventItem extends ArrayItemAtPropertyOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>, EventArrayName>,
         OutputProps extends readonly string[]
     >(
         entityArrayName: EntityArrayName,
         eventArrayName: EventArrayName,
-        orderBy: readonly string[],
-        properties: readonly string[],
+        orderBy: readonly (keyof EventItem & string)[],
+        properties: readonly (keyof EventItem & string)[],
         outputProperties: OutputProps
     ): PipelineBuilder<
         Path extends []
