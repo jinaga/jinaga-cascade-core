@@ -21,6 +21,7 @@ import { MinMaxAggregateStep } from './steps/min-max-aggregate.js';
 import { AverageAggregateStep } from './steps/average-aggregate.js';
 import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
 import { EnrichStep } from './steps/enrich.js';
+import { ReplaceToDeltaStep } from './steps/replace-to-delta.js';
 
 // Public types
 export type KeyedArray<T> = { key: string, value: T }[];
@@ -338,6 +339,36 @@ type ArrayItemAtCurrentPath<
 > = NavigateToPath<T, Path>[ArrayName] extends KeyedArray<infer ItemType>
     ? ItemType
     : never;
+
+type ArrayPropertyNameOn<T> = {
+    [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? K : never
+}[keyof T] & string;
+
+type AddNumericProperties<
+    T,
+    OutputProps extends readonly string[]
+> = Expand<T & Record<OutputProps[number], number>>;
+
+type ReplaceToDeltaAtScope<
+    TScope,
+    EntityArrayName extends string,
+    EventArrayName extends string,
+    OutputProps extends readonly string[]
+> = EntityArrayName extends keyof TScope
+    ? TScope[EntityArrayName] extends KeyedArray<infer EntityItem>
+        ? Expand<Omit<TScope, EntityArrayName> & {
+            [K in EntityArrayName]: KeyedArray<
+                EventArrayName extends keyof EntityItem
+                    ? EntityItem[EventArrayName] extends KeyedArray<infer EventItem>
+                        ? Expand<Omit<EntityItem, EventArrayName> & {
+                            [E in EventArrayName]: KeyedArray<AddNumericProperties<EventItem, OutputProps>>
+                        }>
+                        : EntityItem
+                    : EntityItem
+            >
+        }>
+        : TScope
+    : TScope;
 
 /**
  * Replaces an array property with an aggregate property at a specific level.
@@ -756,6 +787,48 @@ export class PipelineBuilder<
             outputProperty,
             propertyName,
             (left, right) => right - left
+        );
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+    }
+
+    replaceToDelta<
+        EntityArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
+        EventArrayName extends ArrayPropertyNameOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>>,
+        OutputProps extends readonly string[]
+    >(
+        entityArrayName: EntityArrayName,
+        eventArrayName: EventArrayName,
+        orderBy: readonly string[],
+        properties: readonly string[],
+        outputProperties: OutputProps
+    ): PipelineBuilder<
+        Path extends []
+            ? ReplaceToDeltaAtScope<T, EntityArrayName, EventArrayName, OutputProps>
+            : Expand<
+                TransformAtPath<
+                    T,
+                    Path,
+                    ReplaceToDeltaAtScope<
+                        NavigateToPath<T, Path>,
+                        EntityArrayName,
+                        EventArrayName,
+                        OutputProps
+                    >
+                >
+            >,
+        TStart,
+        Path,
+        RootScopeName,
+        TSources
+    > {
+        const fullEntitySegmentPath = [...this.scopeSegments, entityArrayName];
+        const newStep = new ReplaceToDeltaStep(
+            this.lastStep,
+            fullEntitySegmentPath,
+            eventArrayName,
+            [...orderBy],
+            [...properties],
+            [...outputProperties]
         );
         return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
