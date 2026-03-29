@@ -21,6 +21,9 @@ import { MinMaxAggregateStep } from './steps/min-max-aggregate.js';
 import { AverageAggregateStep } from './steps/average-aggregate.js';
 import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
 import { EnrichStep } from './steps/enrich.js';
+import { CumulativeSumStep } from './steps/cumulative-sum.js';
+import { ReplaceToDeltaStep } from './steps/replace-to-delta.js';
+import { FlattenStep } from './steps/flatten.js';
 
 // Public types
 export type KeyedArray<T> = { key: string, value: T }[];
@@ -89,6 +92,53 @@ function finiteNumericContribution(value: unknown): number {
     }
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
+}
+
+function getArrayItemDescriptorAtPath(descriptor: TypeDescriptor, segmentPath: string[]): DescriptorNode | undefined {
+    let current: DescriptorNode = descriptor;
+    for (const segment of segmentPath) {
+        const nextArray = current.arrays.find(array => array.name === segment);
+        if (!nextArray) {
+            return undefined;
+        }
+        current = nextArray.type;
+    }
+    return current;
+}
+
+function assertCumulativeSumConfiguration(
+    descriptor: TypeDescriptor,
+    segmentPath: string[],
+    orderBy: readonly string[],
+    properties: readonly string[]
+): void {
+    const itemDescriptor = getArrayItemDescriptorAtPath(descriptor, segmentPath);
+    if (!itemDescriptor) {
+        throw new Error(`cumulativeSum validation error: array path "${segmentPath.join('.')}" not found in current scope`);
+    }
+    if (orderBy.length === 0) {
+        throw new Error('cumulativeSum validation error: orderBy must include at least one scalar property');
+    }
+    if (properties.length === 0) {
+        throw new Error('cumulativeSum validation error: properties must include at least one mutable scalar property');
+    }
+
+    const scalarNames = new Set(itemDescriptor.scalars.map(scalar => scalar.name));
+    orderBy.forEach(propertyName => {
+        if (!scalarNames.has(propertyName)) {
+            throw new Error(`cumulativeSum validation error: orderBy property "${propertyName}" is not a scalar on the target array item type`);
+        }
+    });
+
+    const mutableProperties = new Set(descriptor.mutableProperties);
+    properties.forEach(propertyName => {
+        if (!scalarNames.has(propertyName)) {
+            throw new Error(`cumulativeSum validation error: property "${propertyName}" is not a scalar on the target array item type`);
+        }
+        if (!mutableProperties.has(propertyName)) {
+            throw new Error(`cumulativeSum validation error: property "${propertyName}" must be mutable`);
+        }
+    });
 }
 
 type PendingOperation =
@@ -339,6 +389,77 @@ type ArrayItemAtCurrentPath<
     ? ItemType
     : never;
 
+type ArrayPropertyNameOn<T> = {
+    [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? K : never
+}[keyof T] & string;
+
+type ArrayItemAtPropertyOn<
+    T,
+    ArrayName extends ArrayPropertyNameOn<T>
+> = T[ArrayName] extends KeyedArray<infer ItemType>
+    ? ItemType
+    : never;
+
+type AddNumericProperties<
+    T,
+    OutputProps extends readonly string[]
+> = Expand<T & Record<OutputProps[number], number>>;
+
+type ReplaceToDeltaAtScope<
+    TScope,
+    EntityArrayName extends string,
+    EventArrayName extends string,
+    OutputProps extends readonly string[]
+> = EntityArrayName extends keyof TScope
+    ? TScope[EntityArrayName] extends KeyedArray<infer EntityItem>
+        ? Expand<Omit<TScope, EntityArrayName> & {
+            [K in EntityArrayName]: KeyedArray<
+                EventArrayName extends keyof EntityItem
+                    ? EntityItem[EventArrayName] extends KeyedArray<infer EventItem>
+                        ? Expand<Omit<EntityItem, EventArrayName> & {
+                            [E in EventArrayName]: KeyedArray<AddNumericProperties<EventItem, OutputProps>>
+                        }>
+                        : EntityItem
+                    : EntityItem
+            >
+        }>
+        : TScope
+    : TScope;
+
+type ArrayPropertyName<T> = {
+    [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? K : never
+}[keyof T] & string;
+
+type ParentNonArrayProps<ParentItem> = {
+    [K in keyof ParentItem as ParentItem[K] extends KeyedArray<unknown> ? never : K]: ParentItem[K]
+};
+
+type FlattenMergedItem<ParentItem, ChildArrayName extends string> =
+    ChildArrayName extends keyof ParentItem
+        ? ParentItem[ChildArrayName] extends KeyedArray<infer ChildItem>
+            ? Expand<Omit<ParentNonArrayProps<ParentItem>, keyof ChildItem> & ChildItem>
+            : never
+        : never;
+
+type TransformWithFlatten<
+    T,
+    Path extends string[],
+    ParentArrayName extends string,
+    OutputArrayName extends string,
+    FlattenedItem
+> = Path extends []
+    ? Expand<Omit<T, ParentArrayName> & Record<OutputArrayName, KeyedArray<FlattenedItem>>>
+    : Expand<
+          TransformAtPath<
+              T,
+              Path,
+              Expand<
+                  Omit<NavigateToPath<T, Path>, ParentArrayName> &
+                  Record<OutputArrayName, KeyedArray<FlattenedItem>>
+              >
+          >
+      >;
+
 /**
  * Replaces an array property with an aggregate property at a specific level.
  */
@@ -519,6 +640,31 @@ export class PipelineBuilder<
         return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
 
+    flatten<
+        ParentArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
+        ParentItem extends ArrayItemAtCurrentPath<T, Path, ParentArrayName> = ArrayItemAtCurrentPath<T, Path, ParentArrayName>,
+        ChildArrayName extends ArrayPropertyName<ParentItem> = ArrayPropertyName<ParentItem>,
+        OutputArrayName extends string = string,
+        FlattenedItem extends FlattenMergedItem<ParentItem, ChildArrayName> = FlattenMergedItem<ParentItem, ChildArrayName>
+    >(
+        parentArrayName: ParentArrayName,
+        childArrayName: ChildArrayName,
+        outputArrayName: OutputArrayName &
+            (OutputArrayName extends keyof NavigateToPath<T, Path> ? never : unknown)
+    ): PipelineBuilder<
+        TransformWithFlatten<T, Path, ParentArrayName, OutputArrayName, FlattenedItem>,
+        TStart,
+        Path,
+        RootScopeName,
+        TSources
+    > {
+        const parentPath = [...this.scopeSegments, parentArrayName];
+        const childPath = [...parentPath, childArrayName];
+        const outputPath = [...this.scopeSegments, outputArrayName];
+        const newStep = new FlattenStep(this.lastStep, parentPath, childPath, outputPath);
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+    }
+
     /*
      * API Design Decision: Mutable Property Detection
      * ===============================================
@@ -601,6 +747,28 @@ export class PipelineBuilder<
             propertyToAggregate
         );
         return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+    }
+
+    cumulativeSum<
+        ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
+        TOrderBy extends keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
+        TProperty extends keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string
+    >(
+        arrayName: ArrayName,
+        orderBy: readonly TOrderBy[],
+        properties: readonly TProperty[]
+    ): PipelineBuilder<T, TStart, Path, RootScopeName, TSources> {
+        const fullSegmentPath = [...this.scopeSegments, arrayName];
+        const inputDescriptor = this.lastStep.getTypeDescriptor();
+        assertCumulativeSumConfiguration(inputDescriptor, fullSegmentPath, orderBy, properties);
+
+        const newStep = new CumulativeSumStep(
+            this.lastStep,
+            fullSegmentPath,
+            [...orderBy],
+            [...properties]
+        );
+        return new PipelineBuilder(this.input, newStep, this.scopeSegments, this.diagnosticBridge);
     }
 
     /**
@@ -756,6 +924,49 @@ export class PipelineBuilder<
             outputProperty,
             propertyName,
             (left, right) => right - left
+        );
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+    }
+
+    replaceToDelta<
+        EntityArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
+        EventArrayName extends ArrayPropertyNameOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>>,
+        EventItem extends ArrayItemAtPropertyOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>, EventArrayName>,
+        OutputProps extends readonly string[]
+    >(
+        entityArrayName: EntityArrayName,
+        eventArrayName: EventArrayName,
+        orderBy: readonly (keyof EventItem & string)[],
+        properties: readonly (keyof EventItem & string)[],
+        outputProperties: OutputProps
+    ): PipelineBuilder<
+        Path extends []
+            ? ReplaceToDeltaAtScope<T, EntityArrayName, EventArrayName, OutputProps>
+            : Expand<
+                TransformAtPath<
+                    T,
+                    Path,
+                    ReplaceToDeltaAtScope<
+                        NavigateToPath<T, Path>,
+                        EntityArrayName,
+                        EventArrayName,
+                        OutputProps
+                    >
+                >
+            >,
+        TStart,
+        Path,
+        RootScopeName,
+        TSources
+    > {
+        const fullEntitySegmentPath = [...this.scopeSegments, entityArrayName];
+        const newStep = new ReplaceToDeltaStep(
+            this.lastStep,
+            fullEntitySegmentPath,
+            eventArrayName,
+            [...orderBy],
+            [...properties],
+            [...outputProperties]
         );
         return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
