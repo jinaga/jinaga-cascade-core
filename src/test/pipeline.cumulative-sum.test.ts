@@ -219,6 +219,22 @@ describe('cumulativeSum (builder)', () => {
             .cumulativeSum('missing' as string, ['time'], ['change'])
         ).toThrow('array');
     });
+
+    it('should allow cumulativeSum over mutable properties introduced by defineProperty', () => {
+        expect(() => createPipeline<{
+            series: string;
+            time: number;
+            change: number;
+        }, 'items'>('items', [
+            { name: 'series', type: 'string' },
+            { name: 'time', type: 'number' },
+            { name: 'change', type: 'number' }
+        ])
+            .groupBy(['series'], 'seriesGroups')
+            .in('items').defineProperty('derivedChange', point => point.change, ['change'])
+            .cumulativeSum('items', ['time'], ['derivedChange'])
+        ).not.toThrow();
+    });
 });
 
 describe('CumulativeSumStep (incremental behavior)', () => {
