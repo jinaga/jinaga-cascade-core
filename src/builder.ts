@@ -23,6 +23,7 @@ import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
 import { EnrichStep } from './steps/enrich.js';
 import { CumulativeSumStep } from './steps/cumulative-sum.js';
 import { ReplaceToDeltaStep } from './steps/replace-to-delta.js';
+import { FlattenStep } from './steps/flatten.js';
 
 // Public types
 export type KeyedArray<T> = { key: string, value: T }[];
@@ -425,6 +426,36 @@ type ReplaceToDeltaAtScope<
         : TScope
     : TScope;
 
+type ArrayPropertyName<T> = {
+    [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? K : never
+}[keyof T] & string;
+
+type FlattenMergedItem<ParentItem, ChildArrayName extends string> =
+    ChildArrayName extends keyof ParentItem
+        ? ParentItem[ChildArrayName] extends KeyedArray<infer ChildItem>
+            ? Expand<Omit<ParentItem, ChildArrayName | keyof ChildItem> & ChildItem>
+            : never
+        : never;
+
+type TransformWithFlatten<
+    T,
+    Path extends string[],
+    ParentArrayName extends string,
+    OutputArrayName extends string,
+    FlattenedItem
+> = Path extends []
+    ? Expand<Omit<T, ParentArrayName> & Record<OutputArrayName, KeyedArray<FlattenedItem>>>
+    : Expand<
+          TransformAtPath<
+              T,
+              Path,
+              Expand<
+                  Omit<NavigateToPath<T, Path>, ParentArrayName> &
+                  Record<OutputArrayName, KeyedArray<FlattenedItem>>
+              >
+          >
+      >;
+
 /**
  * Replaces an array property with an aggregate property at a specific level.
  */
@@ -602,6 +633,30 @@ export class PipelineBuilder<
             inferredChildArrayName,
             this.scopeSegments as string[]
         );
+        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+    }
+
+    flatten<
+        ParentArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
+        ParentItem extends ArrayItemAtCurrentPath<T, Path, ParentArrayName> = ArrayItemAtCurrentPath<T, Path, ParentArrayName>,
+        ChildArrayName extends ArrayPropertyName<ParentItem> = ArrayPropertyName<ParentItem>,
+        OutputArrayName extends string = string,
+        FlattenedItem extends FlattenMergedItem<ParentItem, ChildArrayName> = FlattenMergedItem<ParentItem, ChildArrayName>
+    >(
+        parentArrayName: ParentArrayName,
+        childArrayName: ChildArrayName,
+        outputArrayName: OutputArrayName
+    ): PipelineBuilder<
+        TransformWithFlatten<T, Path, ParentArrayName, OutputArrayName, FlattenedItem>,
+        TStart,
+        Path,
+        RootScopeName,
+        TSources
+    > {
+        const parentPath = [...this.scopeSegments, parentArrayName];
+        const childPath = [...parentPath, childArrayName];
+        const outputPath = [...this.scopeSegments, outputArrayName];
+        const newStep = new FlattenStep(this.lastStep, parentPath, childPath, outputPath);
         return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
     }
 
