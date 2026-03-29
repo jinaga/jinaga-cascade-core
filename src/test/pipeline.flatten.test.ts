@@ -63,6 +63,28 @@ describe('pipeline flatten', () => {
         expect(output[0].flatVenues[0].label).toBe('child-label');
     });
 
+    it('should not overwrite child-colliding scalar values when parent scalar with same name changes', () => {
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ state: string; city: string; score: number; one: number }>()
+                .groupBy(['state'], 'states')
+                .in('items').groupBy(['city'], 'cities')
+                .in('cities').sum('items', 'one', 'score')
+                .flatten('cities', 'items', 'flatRows')
+        );
+
+        pipeline.add('r1', { state: 'TX', city: 'Dallas', score: 101, one: 1 });
+        let output = getOutput();
+        expect(output[0].flatRows).toEqual([{ city: 'Dallas', score: 101, one: 1 }]);
+
+        // Adding a second child updates the parent aggregate "score" from 1 -> 2.
+        // Child-level score values should still win on name collision.
+        pipeline.add('r2', { state: 'TX', city: 'Dallas', score: 202, one: 1 });
+        output = getOutput();
+        const scores = sortByJson(output[0].flatRows.map((row: any) => row.score));
+
+        expect(scores).toEqual(sortByJson([101, 202]));
+    });
+
     it('should remove flattened children when children are removed and when a parent is depleted', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<VenueRow>()
