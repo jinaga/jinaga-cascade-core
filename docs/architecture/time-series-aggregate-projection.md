@@ -120,6 +120,7 @@ Validation:
 
 - `orderBy.length` must be at least 1.
 - Every property in `orderBy` must be a scalar in the event type.
+- `orderBy` must be a superset of the event sub-array's `collectionKey`. This guarantees a total order within each entity (no two events in the same entity can share an `orderBy` tuple), which is verifiable at build time from the type descriptor.
 - `properties.length` must equal `outputProperties.length`.
 - `entityArrayName` must reference a child array in the current scope.
 - `eventArrayName` must reference a child array within the entity type.
@@ -412,7 +413,13 @@ The `orderBy` tuple determines:
 - The chronological order of events within each entity.
 - The identity of time buckets in the output (the `collectionKey` of the timeline array).
 
-If the `orderBy` properties do not fully disambiguate events (e.g., `orderBy: ["createdAt"]` and two events from different entities share the same `createdAt`), those events share a single time bucket whose aggregate includes all of their contributions. Events from the same entity with identical `orderBy` tuples are ordered arbitrarily but deterministically (e.g., by insertion key). Adding more properties to `orderBy` (e.g., `["createdAt", "id"]`) increases disambiguation.
+### Within-entity totality
+
+Because `orderBy` is required to be a superset of the event sub-array's `collectionKey` (see Validation), no two events within the same entity can share an `orderBy` tuple. This eliminates within-entity ambiguity: every entity's events are strictly totally ordered by `orderBy`, with no "arbitrary but deterministic" fallback needed. This is a static guarantee, checkable at build time from the type descriptor.
+
+### Cross-entity collisions
+
+Two events from *different* entities may share the same `orderBy` tuple (e.g., two attendees both allocating at the same `createdAt` with different `id` values that happen to collide, or `orderBy: ["createdAt"]` when multiple entities have events at the same timestamp). In this case the events share a single time bucket whose aggregate includes all of their contributions. This is correct — the bucket sums each entity's latest value at that point. If the caller wants every event to occupy its own bucket, they include a globally unique property in `orderBy` (e.g., a fact hash).
 
 ## Test Matrix
 

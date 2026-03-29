@@ -77,16 +77,26 @@ The step consumes a two-level shape (a collection of entities, each with a time-
 **When** that value is the latest as of some time key  
 **Then** zero shall contribute to the sum like any other number. Missing or undefined values shall behave consistently with sum semantics for the platform (for example treated as zero where that is the established rule).
 
-#### AC7: Lexicographic ordering from `orderBy` array
+#### AC7: Lexicographic ordering and within-entity totality
 
 **Given** an `orderBy` array with at least one property name  
 **When** two events are compared for ordering  
 **Then** the first property in `orderBy` shall be used as the primary ordering key  
-**And** only when values are equal on that property shall comparison proceed to the next property, continuing lexicographically through the array until order is determined.  
+**And** only when values are equal on that property shall comparison proceed to the next property, continuing lexicographically through the array until order is determined.
 
-**Given** multiple events whose `orderBy` tuples are fully equal (all properties match)  
-**When** those events belong to different entities  
-**Then** they shall share a single time bucket whose aggregate includes all of their contributions.
+**Given** an `orderBy` array that is a superset of the event sub-array's `collectionKey`  
+**When** two events belong to the same entity  
+**Then** they shall always have distinct `orderBy` tuples (no within-entity collisions).
+
+**Given** multiple events from different entities whose `orderBy` tuples are fully equal  
+**When** those events map to the same time bucket  
+**Then** the bucket's aggregate shall include all of their contributions.
+
+#### AC9: Validation rejects `orderBy` that does not cover event `collectionKey`
+
+**Given** an `orderBy` array that does not include every property from the event sub-array's `collectionKey`  
+**When** the pipeline is constructed  
+**Then** the step shall reject the configuration with a validation error.
 
 ### Integration with grouping dimensions
 
@@ -101,7 +111,7 @@ The step consumes a two-level shape (a collection of entities, each with a time-
 
 - **Aggregate definition:** For each time key T (in sorted order among all keys in the parent context), each entity contributes the values from its most recent event with sort key ≤ T; entities with no such event contribute zero for each summed property.
 - **Type shape:** Parent-level fields other than the configured entity collection remain; the entity collection is replaced by a timeline array whose `collectionKey` is the `orderBy` properties. Each timeline row carries the `orderBy` properties under their original names and types (copied from the event type) plus one scalar per summed output property. No synthetic key field is needed. Aggregate output properties on timeline rows are mutable because later events can change totals for earlier-looking buckets when replace semantics shift contributions; the `orderBy` properties are immutable (they are the row's identity).
-- **Validation:** The number of input property names to sum must match the number of output property names; referenced arrays and scalar fields must exist on the corresponding types; `orderBy` must contain at least one property name; every `orderBy` property must be a scalar on the event type.
+- **Validation:** The number of input property names to sum must match the number of output property names; referenced arrays and scalar fields must exist on the corresponding types; `orderBy` must contain at least one property name; every `orderBy` property must be a scalar on the event type; `orderBy` must be a superset of the event sub-array's `collectionKey` (guarantees within-entity total ordering, checkable at build time from the type descriptor).
 - **Performance intent:** Per update, work should scale with the number of time buckets affected by an entity’s successor interval, not require a full rescan of all entities for every change at trivial scales.
 
 ## Related Files
