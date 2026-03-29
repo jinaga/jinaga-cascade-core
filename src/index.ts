@@ -35,6 +35,7 @@ export { CommutativeAggregateStep } from './steps/commutative-aggregate.js';
 export { MinMaxAggregateStep } from './steps/min-max-aggregate.js';
 export { AverageAggregateStep } from './steps/average-aggregate.js';
 export { PickByMinMaxStep } from './steps/pick-by-min-max.js';
+export { CumulativeSumStep } from './steps/cumulative-sum.js';
 
 // Filter step
 export { FilterStep } from './steps/filter.js';
