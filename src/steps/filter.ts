@@ -1,5 +1,6 @@
-import type { AddedHandler, ImmutableProps, RemovedHandler, ModifiedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, ImmutableProps, RemovedHandler, ModifiedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { pathsMatch, pathStartsWith } from '../util/path.js';
+import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
 
 /**
  * State tracked for each item seen by the filter step.
@@ -317,5 +318,23 @@ export class FilterStep<T> implements Step {
 
     private isAtScopeSegments(pathSegments: string[]): boolean {
         return pathsMatch(pathSegments, this.scopeSegments);
+    }
+}
+
+export class FilterBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private predicate: (item: unknown) => boolean,
+        private scopeSegments: string[],
+        private mutableProperties: string[]
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+    }
+
+    buildStep(input: Step): Step {
+        return new FilterStep(input, this.predicate, this.scopeSegments, this.mutableProperties);
     }
 }

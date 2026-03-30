@@ -5,11 +5,13 @@ import type {
     ModifiedHandler,
     RemovedHandler,
     Step,
+    StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
 import { appendMutableIfMissing, appendObjectIfMissing } from '../util/descriptor-transform.js';
 import { pathsMatch } from '../util/path.js';
 import { getPathSegmentsFromDescriptor as getAllPathSegmentsFromDescriptor } from '../pipeline.js';
+import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
 
 function keyPathHash(keyPath: string[]): string {
     return keyPath.join('::');
@@ -48,6 +50,42 @@ interface PrimaryRecord {
 interface SecondaryRecord {
     keyPath: string[];
     immutableProps: ImmutableProps;
+}
+
+export class EnrichBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        readonly sourceName: string,
+        readonly secondaryLastBuilder: StepBuilder,
+        readonly scopeSegments: string[],
+        readonly primaryKey: string[],
+        readonly asProperty: string,
+        readonly whenMissing: ImmutableProps | undefined
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+    }
+
+    buildStep(input: Step): Step {
+        // buildStepGraph handles enrich wiring because it must instantiate
+        // the secondary graph and source routing in lockstep.
+        const secondaryDescriptorStep = {
+            getTypeDescriptor: () => this.secondaryLastBuilder.getTypeDescriptor(),
+            onAdded: () => undefined,
+            onRemoved: () => undefined,
+            onModified: () => undefined
+        } as Step;
+        return new EnrichStep(
+            input,
+            secondaryDescriptorStep,
+            this.scopeSegments,
+            this.primaryKey,
+            this.asProperty,
+            this.whenMissing
+        );
+    }
 }
 
 type KeyedArray<T> = { key: string; value: T }[];

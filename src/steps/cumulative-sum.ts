@@ -7,6 +7,8 @@ import type {
     TypeDescriptor
 } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
+import type { StepBuilder } from '../pipeline.js';
+import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
 
 type NormalizedOrderValue = number | string | undefined;
 
@@ -466,5 +468,23 @@ export class CumulativeSumStep<
             }
         }
         return true;
+    }
+}
+
+export class CumulativeSumBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private segmentPath: string[],
+        private orderBy: string[],
+        private properties: string[]
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+    }
+
+    buildStep(input: Step): Step {
+        return new CumulativeSumStep(input, this.segmentPath, this.orderBy, this.properties);
     }
 }

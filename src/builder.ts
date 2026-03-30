@@ -13,21 +13,19 @@ import {
 } from './pipeline.js';
 import { type AddOperator, type SubtractOperator } from './steps/commutative-aggregate.js';
 import { NavigateToPath, TransformAtPath } from './types/path.js';
-import {
-    AverageAggregateBuilder,
-    CommutativeAggregateBuilder,
-    CumulativeSumBuilder,
-    DefinePropertyBuilder,
-    DropPropertyBuilder,
-    EnrichBuilder,
-    FilterBuilder,
-    FlattenBuilder,
-    GroupByBuilder,
-    MinMaxAggregateBuilder,
-    PickByMinMaxBuilder,
-    ReplaceToDeltaBuilder,
-    buildStepGraph
-} from './step-builders.js';
+import { buildStepGraph } from './step-builders.js';
+import { DefinePropertyBuilder } from './steps/define-property.js';
+import { DropPropertyBuilder } from './steps/drop-property.js';
+import { GroupByBuilder } from './steps/group-by.js';
+import { FlattenBuilder } from './steps/flatten.js';
+import { CommutativeAggregateBuilder } from './steps/commutative-aggregate.js';
+import { CumulativeSumBuilder } from './steps/cumulative-sum.js';
+import { MinMaxAggregateBuilder } from './steps/min-max-aggregate.js';
+import { AverageAggregateBuilder } from './steps/average-aggregate.js';
+import { PickByMinMaxBuilder } from './steps/pick-by-min-max.js';
+import { FilterBuilder } from './steps/filter.js';
+import { ReplaceToDeltaBuilder } from './steps/replace-to-delta.js';
+import { EnrichBuilder } from './steps/enrich.js';
 
 // Public types
 export type KeyedArray<T> = { key: string, value: T }[];

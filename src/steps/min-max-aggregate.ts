@@ -1,4 +1,5 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
 
 /**
@@ -193,5 +194,30 @@ export class MinMaxAggregateStep<
         this.modifiedHandlers.forEach(handler => {
             handler([], '', oldAggregate, newAggregate);
         });
+    }
+}
+
+export class MinMaxAggregateBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private segmentPath: string[],
+        private propertyName: string,
+        private numericProperty: string,
+        private comparator: (a: number, b: number) => number
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+    }
+
+    buildStep(input: Step): Step {
+        return new MinMaxAggregateStep(
+            input,
+            this.segmentPath,
+            this.propertyName,
+            this.numericProperty,
+            this.comparator
+        );
     }
 }
