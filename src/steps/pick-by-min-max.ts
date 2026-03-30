@@ -1,6 +1,17 @@
-import type { AddedHandler, DescriptorNode, ImmutableProps, ModifiedHandler, ObjectDescriptor, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type {
+    AddedHandler,
+    DescriptorNode,
+    ImmutableProps,
+    ModifiedHandler,
+    ObjectDescriptor,
+    RemovedHandler,
+    Step,
+    StepBuilder,
+    TypeDescriptor
+} from '../pipeline.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
 import { appendMutableIfMissing, appendObjectIfMissing, emptyDescriptorNode } from '../util/descriptor-transform.js';
+import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
 
 /**
  * Computes a hash key for a key path (for map lookups).
@@ -375,6 +386,31 @@ export class PickByMinMaxStep<
         this.modifiedHandlers.forEach(handler => {
             handler([], '', oldPickedItem, newPickedItem);
         });
+    }
+}
+
+export class PickByMinMaxBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private segmentPath: string[],
+        private propertyName: string,
+        private comparisonProperty: string,
+        private comparator: (value1: number | string, value2: number | string) => number
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+    }
+
+    buildStep(input: Step): Step {
+        return new PickByMinMaxStep(
+            input,
+            this.segmentPath,
+            this.propertyName,
+            this.comparisonProperty,
+            this.comparator
+        );
     }
 }
 

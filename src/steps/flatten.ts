@@ -5,11 +5,13 @@ import type {
     ModifiedHandler,
     RemovedHandler,
     ScalarDescriptor,
+    StepBuilder,
     Step,
     TypeDescriptor
 } from '../pipeline.js';
 import { computeHash } from '../util/hash.js';
 import { pathsMatch, pathStartsWith } from '../util/path.js';
+import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
 
 function parentIdentity(outputKeyPath: string[], parentKey: string): string {
     return JSON.stringify({ outputKeyPath, parentKey });
@@ -490,5 +492,23 @@ export class FlattenStep implements Step {
         handlers.forEach(handler => {
             handler(outputKeyPath, flatKey, oldValue, newValue);
         });
+    }
+}
+
+export class FlattenBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private parentPath: string[],
+        private childPath: string[],
+        private outputPath: string[]
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+    }
+
+    buildStep(input: Step): Step {
+        return new FlattenStep(input, this.parentPath, this.childPath, this.outputPath);
     }
 }

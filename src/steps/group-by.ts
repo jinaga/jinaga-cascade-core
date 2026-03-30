@@ -1,5 +1,4 @@
-import type { AddedHandler, ImmutableProps, RemovedHandler, Step } from '../pipeline.js';
-import { type DescriptorNode, type TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, DescriptorNode, ImmutableProps, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { computeGroupKey } from "../util/hash.js";
 import { pathsMatch, pathStartsWith } from "../util/path.js";
 import { emptyDescriptorNode } from '../util/descriptor-transform.js';
@@ -475,6 +474,42 @@ export class GroupByStep<
                 this.groupKeyToItemKeys.delete(compositeKey);
             }
         }
+    }
+}
+
+export class GroupByBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private groupingProperties: string[],
+        private parentArrayName: string,
+        private childArrayName: string,
+        private scopeSegments: string[]
+    ) {}
+
+    getTypeDescriptor(): TypeDescriptor {
+        const descriptorStep = new GroupByStep<Record<string, unknown>, string, string, string>(
+            {
+                getTypeDescriptor: () => this.upstream.getTypeDescriptor(),
+                onAdded: () => undefined,
+                onRemoved: () => undefined,
+                onModified: () => undefined
+            },
+            this.groupingProperties,
+            this.parentArrayName,
+            this.childArrayName,
+            this.scopeSegments
+        );
+        return descriptorStep.getTypeDescriptor();
+    }
+
+    buildStep(input: Step): Step {
+        return new GroupByStep<Record<string, unknown>, string, string, string>(
+            input,
+            this.groupingProperties,
+            this.parentArrayName,
+            this.childArrayName,
+            this.scopeSegments
+        );
     }
 }
 

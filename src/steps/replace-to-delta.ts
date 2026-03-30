@@ -6,9 +6,11 @@ import type {
     ModifiedHandler,
     RemovedHandler,
     Step,
+    StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
+import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
 
 interface EventRecord {
     immutableProps: ImmutableProps;
@@ -672,5 +674,32 @@ export class ReplaceToDeltaStep implements Step {
             deltas[outputProperty] = this.computeDeltaForProperty(current, predecessor, propertyName);
         });
         return deltas;
+    }
+}
+
+export class ReplaceToDeltaBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private entitySegmentPath: string[],
+        private eventArrayName: string,
+        private orderBy: string[],
+        private properties: string[],
+        private outputProperties: string[]
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+    }
+
+    buildStep(input: Step): Step {
+        return new ReplaceToDeltaStep(
+            input,
+            this.entitySegmentPath,
+            this.eventArrayName,
+            this.orderBy,
+            this.properties,
+            this.outputProperties
+        );
     }
 }

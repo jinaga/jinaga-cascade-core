@@ -1,7 +1,8 @@
-import type { AddedHandler, ModifiedHandler, RemovedHandler, Step } from '../pipeline.js';
-import { type DescriptorNode, type TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import { type DescriptorNode } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
 import { emptyDescriptorNode, filterMetadataByPropertyName } from '../util/descriptor-transform.js';
+import { DescriptorStep } from '../step-builder-utils.js';
 
 export class DropPropertyStep<T, K extends keyof T> implements Step {
     private isArrayProperty: boolean;
@@ -206,6 +207,26 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
             return false;
         }
         return this.fullSegmentPath.every((segment, i) => pathSegments[i] === segment);
+    }
+}
+
+export class DropPropertyBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private propertyName: string,
+        private scopeSegments: string[]
+    ) {}
+
+    getTypeDescriptor(): TypeDescriptor {
+        return new DropPropertyStep(
+            new DescriptorStep(this.upstream.getTypeDescriptor()),
+            this.propertyName as never,
+            this.scopeSegments
+        ).getTypeDescriptor();
+    }
+
+    buildStep(input: Step): Step {
+        return new DropPropertyStep(input as never, this.propertyName as never, this.scopeSegments);
     }
 }
 
