@@ -4,10 +4,10 @@ import type {
     BuildContext,
     BuiltStepGraph,
     ImmutableProps,
-    PipelineInput,
     PipelineSources,
     RemovedHandler,
     ScalarDescriptor,
+    SourceBindableInput,
     Step,
     StepBuilder,
     TypeDescriptor
@@ -17,11 +17,11 @@ type EmptySources = Record<never, never>;
 
 // Kept in factory for createPipeline initialization.
 export class InputStep<T, TSources extends Record<string, unknown> = EmptySources>
-    implements PipelineInput<T, TSources>, Step {
+    implements SourceBindableInput<T, TSources>, Step {
     private addedHandlers: AddedHandler[] = [];
     private removedHandlers: RemovedHandler[] = [];
 
-    readonly sources: PipelineSources<TSources>;
+    sources: PipelineSources<TSources>;
 
     constructor() {
         this.sources = {} as PipelineSources<TSources>;
@@ -55,8 +55,8 @@ export class InputStep<T, TSources extends Record<string, unknown> = EmptySource
         // No modifications at the input step.
     }
 
-    setSources<TNewSources extends Record<string, unknown>>(sources: PipelineSources<TNewSources>): void {
-        (this as unknown as { sources: PipelineSources<TNewSources> }).sources = sources;
+    setSources(sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>>): void {
+        this.sources = sources as unknown as PipelineSources<TSources>;
     }
 }
 

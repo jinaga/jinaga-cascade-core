@@ -134,9 +134,9 @@ export class EnrichBuilder implements StepBuilder {
         const primary = this.upstream.buildGraph(ctx);
         const secondary = this.secondaryLastBuilder.buildGraph(ctx);
         const secondaryDescriptor = this.secondaryLastBuilder.getTypeDescriptor();
+        secondary.rootInput.setSources(secondary.sources);
         const mergedSources = {
             ...primary.sources,
-            ...secondary.sources,
             [this.sourceName]: secondary.rootInput
         };
         return {

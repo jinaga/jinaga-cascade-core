@@ -31,5 +31,6 @@ Default to semantic and type-system correctness over backward compatibility when
 
 - Do not preserve legacy behavior via wrappers, compatibility helpers, static bridge APIs, or dual paths unless explicitly requested by the user in this conversation.
 - Prefer one semantically correct API over transitional dual APIs.
+- When choosing between a minimal/low-risk patch and a semantically correct, type-system-enforced design, always choose semantic and type-system correctness.
 - Do not argue for keeping an existing public interface solely to avoid breaking changes.
 - When multiple valid designs exist (for example strict vs lenient behavior or old vs new API), present options and get user selection before implementing.

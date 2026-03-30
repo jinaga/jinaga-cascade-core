@@ -16,6 +16,11 @@ export interface PipelineInput<T, TSources extends Record<string, unknown> = Emp
     sources: PipelineSources<TSources>;
 }
 
+export interface SourceBindableInput<T, TSources extends Record<string, unknown> = EmptySources>
+    extends PipelineInput<T, TSources> {
+    setSources(sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>>): void;
+}
+
 export interface PipelineRuntimeDiagnostic {
     code:
         | 'operation_after_dispose'
@@ -169,9 +174,9 @@ export interface Step {
 }
 
 export interface BuiltStepGraph {
-    rootInput: PipelineInput<unknown, Record<string, unknown>>;
+    rootInput: SourceBindableInput<unknown, Record<string, unknown>>;
     lastStep: Step;
-    sources: Record<string, PipelineInput<unknown, Record<string, unknown>>>;
+    sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>>;
 }
 
 export interface BuildContext {
