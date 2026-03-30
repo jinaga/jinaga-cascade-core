@@ -77,9 +77,9 @@ File: `src/steps/<step-name>.ts`
 
 Read [step-patterns.md](references/step-patterns.md) for the detailed reference on each pattern below.
 
-**Constructor** — Accept `input: Step`, `segmentPath`, `propertyName`, and step-specific config. Register `input.onAdded(segmentPath, ...)` and `input.onRemoved(segmentPath, ...)`. Auto-detect mutable properties from `input.getTypeDescriptor().mutableProperties` and register `input.onModified(segmentPath, propName, ...)` when needed. Step constructors are called by the Builder's `buildGraph(ctx)` method during `build()`, not during the fluent method chain.
+**Constructor** — Accept `input: Step`, `segmentPath`, `propertyName`, step-specific config, and any descriptor metadata required at runtime (for example upstream `TypeDescriptor` or derived mutable-property lists). Register `input.onAdded(segmentPath, ...)` and `input.onRemoved(segmentPath, ...)`. Register `input.onModified(...)` based on constructor metadata. Step constructors are called by the Builder's `buildGraph(ctx)` method during `build()`, not during the fluent method chain.
 
-**getTypeDescriptor()** — Transform the input descriptor. Use helpers from `src/util/descriptor-transform.ts` (`appendObjectIfMissing`, `appendMutableIfMissing`, `emptyDescriptorNode`). Always add the output property to `mutableProperties` if it can change after initial add.
+**Descriptor transform** — Keep descriptor shaping in Builder code (`getTypeDescriptor()`) as a pure transform from `this.upstream.getTypeDescriptor()`. Use helpers from `src/util/descriptor-transform.ts` (`appendObjectIfMissing`, `appendMutableIfMissing`, `emptyDescriptorNode`). Always add the output property to `mutableProperties` if it can change after initial add.
 
 **onAdded/onRemoved** — Forward to `this.input` unless this step augments the payload at the matching scope (Transform/Join pattern) or manages structural layers (GroupBy pattern).
 
@@ -115,17 +115,21 @@ export class MyNewStepBuilder implements StepBuilder {
     ) {}
 
     getTypeDescriptor(): TypeDescriptor {
-        return getDescriptorFromFactory(
-            this.upstream.getTypeDescriptor(),
-            input => new MyNewStep(input, this.segmentPath, this.propertyName, this.config)
-        );
+        const inputDescriptor = this.upstream.getTypeDescriptor();
+        return transformMyNewStepDescriptor(inputDescriptor, this.segmentPath, this.propertyName, this.config);
     }
 
     buildGraph(ctx: BuildContext): BuiltStepGraph {
         const up = this.upstream.buildGraph(ctx);
         return {
             ...up,
-            lastStep: new MyNewStep(up.lastStep, this.segmentPath, this.propertyName, this.config)
+            lastStep: new MyNewStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.config,
+                this.upstream.getTypeDescriptor()
+            )
         };
     }
 }

@@ -3,6 +3,112 @@ import { computeGroupKey } from "../util/hash.js";
 import { pathsMatch, pathStartsWith } from "../util/path.js";
 import { emptyDescriptorNode } from '../util/descriptor-transform.js';
 
+function transformDescriptorAtPathWithParentName(
+    descriptor: DescriptorNode,
+    remainingSegments: string[],
+    groupingProperties: string[],
+    parentArrayName: string,
+    childArrayName: string
+): DescriptorNode {
+    if (remainingSegments.length === 0) {
+        return descriptor;
+    }
+
+    const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
+
+    return {
+        ...descriptor,
+        arrays: descriptor.arrays.map(arrayDesc => {
+            if (arrayDesc.name !== currentSegment) {
+                return arrayDesc;
+            }
+
+            if (remainingSegmentsAfter.length === 0) {
+                const groupingKey = groupingProperties;
+                const parentScalars = arrayDesc.type.scalars.filter(s => groupingKey.includes(s.name));
+                const childScalars = arrayDesc.type.scalars.filter(s => !groupingKey.includes(s.name));
+
+                return {
+                    name: parentArrayName,
+                    type: {
+                        ...emptyDescriptorNode(),
+                        collectionKey: groupingProperties,
+                        scalars: parentScalars,
+                        arrays: [
+                            {
+                                name: childArrayName,
+                                type: {
+                                    ...arrayDesc.type,
+                                    scalars: childScalars,
+                                    collectionKey: arrayDesc.type.collectionKey.filter(k => !groupingKey.includes(k))
+                                }
+                            }
+                        ]
+                    }
+                };
+            }
+
+            return {
+                name: arrayDesc.name,
+                type: transformDescriptorAtPathWithParentName(
+                    arrayDesc.type,
+                    remainingSegmentsAfter,
+                    groupingProperties,
+                    parentArrayName,
+                    childArrayName
+                )
+            };
+        })
+    };
+}
+
+function transformGroupByDescriptor(
+    inputDescriptor: TypeDescriptor,
+    groupingProperties: string[],
+    parentArrayName: string,
+    childArrayName: string,
+    scopeSegments: string[]
+): TypeDescriptor {
+    const groupingKey = groupingProperties;
+    const parentScalars = inputDescriptor.scalars.filter(s => groupingKey.includes(s.name));
+    const childScalars = inputDescriptor.scalars.filter(s => !groupingKey.includes(s.name));
+
+    if (scopeSegments.length === 0) {
+        const childDescriptor: DescriptorNode = {
+            ...inputDescriptor,
+            scalars: childScalars,
+            collectionKey: inputDescriptor.collectionKey.filter(k => !groupingKey.includes(k))
+        };
+
+        return {
+            rootCollectionName: parentArrayName,
+            collectionKey: groupingKey,
+            scalars: parentScalars,
+            arrays: [
+                {
+                    name: childArrayName,
+                    type: childDescriptor
+                }
+            ],
+            mutableProperties: [...inputDescriptor.mutableProperties],
+            objects: [...inputDescriptor.objects]
+        };
+    }
+
+    return {
+        ...transformDescriptorAtPathWithParentName(
+            inputDescriptor,
+            [...scopeSegments],
+            groupingProperties,
+            parentArrayName,
+            childArrayName
+        ),
+        rootCollectionName: inputDescriptor.rootCollectionName,
+        mutableProperties: [...inputDescriptor.mutableProperties],
+        objects: [...inputDescriptor.objects]
+    };
+}
+
 export class GroupByStep<
     T extends object,
     K extends keyof T,
@@ -34,7 +140,8 @@ export class GroupByStep<
         private groupingProperties: K[],
         private parentArrayName: ParentArrayName,
         childArrayName: ChildArrayName,
-        private scopeSegments: string[]  // Path segments where this groupBy operates
+        private scopeSegments: string[],  // Path segments where this groupBy operates
+        inputTypeDescriptor: TypeDescriptor
     ) {
         this.childArrayName = childArrayName;
 
@@ -47,7 +154,6 @@ export class GroupByStep<
         });
         
         // Check if any grouping properties are mutable and register for changes
-        const inputTypeDescriptor = this.input.getTypeDescriptor();
         const mutableProperties = inputTypeDescriptor.mutableProperties;
         
         for (const groupProp of this.groupingProperties) {
@@ -59,101 +165,6 @@ export class GroupByStep<
                 });
             }
         }
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        const groupingKey = this.groupingProperties.map(property => property.toString());
-
-        // Split scalars between parent (keys) and child (rest)
-        const parentScalars = inputDescriptor.scalars.filter(s => groupingKey.includes(s.name));
-        const childScalars = inputDescriptor.scalars.filter(s => !groupingKey.includes(s.name));
-
-        if (this.scopeSegments.length === 0) {
-            // Parent name is logical at root. Child keeps the root scope name.
-            // Build child descriptor with non-key scalars
-            const childDescriptor: DescriptorNode = {
-                ...inputDescriptor,
-                scalars: childScalars,
-                collectionKey: inputDescriptor.collectionKey.filter(k => !groupingKey.includes(k))
-            };
-
-            return {
-                rootCollectionName: this.parentArrayName,
-                collectionKey: groupingKey,
-                scalars: parentScalars,
-                arrays: [
-                    {
-                        name: this.childArrayName,
-                        type: childDescriptor
-                    }
-                ],
-                // Preserve root metadata so downstream steps (e.g. sum auto-detection) still see
-                // mutable properties from defineProperty / aggregates after regrouping.
-                mutableProperties: [...inputDescriptor.mutableProperties],
-                objects: [...inputDescriptor.objects]
-            };
-        }
-
-        // Parent name is physical at nested scope: replace the scoped array name.
-        return {
-            ...this.transformDescriptorAtPathWithParentName(inputDescriptor, [...this.scopeSegments]),
-            rootCollectionName: inputDescriptor.rootCollectionName,
-            mutableProperties: [...inputDescriptor.mutableProperties],
-            objects: [...inputDescriptor.objects]
-        };
-    }
-
-    /**
-     * Transforms a scoped array so "into" names the parent array and the original
-     * scoped array name is preserved as the child array within each group.
-     */
-    private transformDescriptorAtPathWithParentName(descriptor: DescriptorNode, remainingSegments: string[]): DescriptorNode {
-        if (remainingSegments.length === 0) {
-            return descriptor;
-        }
-
-        const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
-
-        return {
-            ...descriptor,
-            arrays: descriptor.arrays.map(arrayDesc => {
-                if (arrayDesc.name !== currentSegment) {
-                    return arrayDesc;
-                }
-
-                if (remainingSegmentsAfter.length === 0) {
-                    // Split scalars at this level
-                    const groupingKey = this.groupingProperties.map(property => property.toString());
-                    const parentScalars = arrayDesc.type.scalars.filter(s => groupingKey.includes(s.name));
-                    const childScalars = arrayDesc.type.scalars.filter(s => !groupingKey.includes(s.name));
-
-                    return {
-                        name: this.parentArrayName,
-                        type: {
-                            ...emptyDescriptorNode(),
-                            collectionKey: this.groupingProperties.map(property => property.toString()),
-                            scalars: parentScalars,
-                            arrays: [
-                                {
-                                    name: this.childArrayName,
-                                    type: {
-                                        ...arrayDesc.type,
-                                        scalars: childScalars,
-                                        collectionKey: arrayDesc.type.collectionKey.filter(k => !groupingKey.includes(k))
-                                    }
-                                }
-                            ]
-                        }
-                    };
-                }
-
-                return {
-                    name: arrayDesc.name,
-                    type: this.transformDescriptorAtPathWithParentName(arrayDesc.type, remainingSegmentsAfter)
-                };
-            })
-        };
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -487,19 +498,13 @@ export class GroupByBuilder implements StepBuilder {
     ) {}
 
     getTypeDescriptor(): TypeDescriptor {
-        const descriptorStep = new GroupByStep<Record<string, unknown>, string, string, string>(
-            {
-                getTypeDescriptor: () => this.upstream.getTypeDescriptor(),
-                onAdded: () => undefined,
-                onRemoved: () => undefined,
-                onModified: () => undefined
-            },
+        return transformGroupByDescriptor(
+            this.upstream.getTypeDescriptor(),
             this.groupingProperties,
             this.parentArrayName,
             this.childArrayName,
             this.scopeSegments
         );
-        return descriptorStep.getTypeDescriptor();
     }
 
     buildGraph(ctx: BuildContext): BuiltStepGraph {
@@ -511,7 +516,8 @@ export class GroupByBuilder implements StepBuilder {
                 this.groupingProperties,
                 this.parentArrayName,
                 this.childArrayName,
-                this.scopeSegments
+                this.scopeSegments,
+                this.upstream.getTypeDescriptor()
             )
         };
     }

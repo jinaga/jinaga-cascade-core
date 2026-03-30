@@ -23,22 +23,8 @@ export class InputStep<T, TSources extends Record<string, unknown> = EmptySource
 
     readonly sources: PipelineSources<TSources>;
 
-    constructor(
-        private rootCollectionName: string,
-        private sourceScalars: ScalarDescriptor[] = []
-    ) {
+    constructor() {
         this.sources = {} as PipelineSources<TSources>;
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        return {
-            rootCollectionName: this.rootCollectionName,
-            arrays: [],
-            collectionKey: [],
-            scalars: this.sourceScalars,
-            objects: [],
-            mutableProperties: []
-        };
     }
 
     add(key: string, immutableProps: T): void {
@@ -94,7 +80,7 @@ export class InputBuilder<TStart> implements StepBuilder {
     }
 
     buildGraph(_ctx: BuildContext): BuiltStepGraph {
-        const root = new InputStep<TStart>(this.rootCollectionName, this.sourceScalars);
+        const root = new InputStep<TStart>();
         return { rootInput: root, lastStep: root, sources: {} };
     }
 }

@@ -2,7 +2,6 @@
 import { createPipeline } from '../index';
 import type { ImmutableProps, Step, StepBuilder } from '../pipeline';
 import { AddOperator, CommutativeAggregateStep, SubtractOperator } from '../steps/commutative-aggregate';
-import { DropPropertyStep } from '../steps/drop-property';
 import { PipelineBuilder } from '../builder';
 import { buildStepGraph } from '../step-builders';
 import { createTestPipeline } from './helpers';
@@ -757,10 +756,7 @@ describe('CommutativeAggregateStep', () => {
         it('should NOT remove target array from type descriptor (CommutativeAggregateStep)', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
-            
-            const { lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
-            const inputDescriptor = step.getTypeDescriptor();
+            const inputDescriptor = builder.getTypeDescriptor();
             
             // Input should have 'items' array
             expect(inputDescriptor.arrays.some(a => a.name === 'items')).toBe(true);
@@ -768,14 +764,9 @@ describe('CommutativeAggregateStep', () => {
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
-            const aggregateStep = new CommutativeAggregateStep(
-                step,
-                ['items'],
-                'total',
-                { add: addOp, subtract: subtractOp }
-            );
-            
-            const outputDescriptor = aggregateStep.getTypeDescriptor();
+            const outputDescriptor = builder
+                .commutativeAggregate('items', 'total', addOp, subtractOp)
+                .getTypeDescriptor();
             
             // CommutativeAggregateStep should NOT remove the array (that's DropPropertyStep's job)
             expect(outputDescriptor.arrays.some(a => a.name === 'items')).toBe(true);
@@ -784,10 +775,7 @@ describe('CommutativeAggregateStep', () => {
         it('should remove target array from type descriptor when chained with DropPropertyStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
-            
-            const { lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
-            const inputDescriptor = step.getTypeDescriptor();
+            const inputDescriptor = builder.getTypeDescriptor();
             
             // Input should have 'items' array
             expect(inputDescriptor.arrays.some(a => a.name === 'items')).toBe(true);
@@ -795,18 +783,10 @@ describe('CommutativeAggregateStep', () => {
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
-            const aggregateStep = new CommutativeAggregateStep(
-                step,
-                ['items'],
-                'total',
-                { add: addOp, subtract: subtractOp }
-            );
-            
-            // Chain with DropPropertyStep to remove the array
-            // Note: 'items' exists as an array in the type descriptor at runtime, even if TypeScript can't infer it
-            const dropPropertyStep = new DropPropertyStep(aggregateStep, 'items', []);
-            
-            const outputDescriptor = dropPropertyStep.getTypeDescriptor();
+            const outputDescriptor = builder
+                .commutativeAggregate('items', 'total', addOp, subtractOp)
+                .dropProperty('items')
+                .getTypeDescriptor();
             
             // Output should NOT have 'items' array
             expect(outputDescriptor.arrays.some(a => a.name === 'items')).toBe(false);
@@ -816,10 +796,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ state: string; city: string; venue: string; capacity: number }>()
                 .groupBy(['state'], 'cities')
                 .in('items').groupBy(['city'], 'cities');
-            
-            const { lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
-            const inputDescriptor = step.getTypeDescriptor();
+            const inputDescriptor = builder.getTypeDescriptor();
             
             // Input should have nested structure: cities > items
             expect(inputDescriptor.arrays.some(a => a.name === 'cities')).toBe(true);
@@ -829,18 +806,12 @@ describe('CommutativeAggregateStep', () => {
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { capacity: number }).capacity;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { capacity: number }).capacity;
             
-            const aggregateStep = new CommutativeAggregateStep(
-                step,
-                ['cities', 'items'],
-                'totalCapacity',
-                { add: addOp, subtract: subtractOp }
-            );
-            
-            // Chain with DropPropertyStep to remove the nested array
-            // Note: 'items' exists as an array in the type descriptor at runtime, even if TypeScript can't infer it
-            const dropPropertyStep = new DropPropertyStep(aggregateStep, 'items', ['cities']);
-            
-            const outputDescriptor = dropPropertyStep.getTypeDescriptor();
+            const outputDescriptor = builder
+                .in('cities')
+                .commutativeAggregate('items', 'totalCapacity', addOp, subtractOp)
+                .in('cities')
+                .dropProperty('items')
+                .getTypeDescriptor();
             
             // Output should still have 'cities' but without 'items'
             expect(outputDescriptor.arrays.some(a => a.name === 'cities')).toBe(true);

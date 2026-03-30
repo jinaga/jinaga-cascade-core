@@ -101,11 +101,7 @@ class FakeStep implements Step {
     private readonly removedHandlers = new Map<string, RemovedHandler[]>();
     private readonly modifiedHandlers = new Map<string, ModifiedHandler[]>();
 
-    constructor(private readonly descriptor: TypeDescriptor) {}
-
-    getTypeDescriptor(): TypeDescriptor {
-        return this.descriptor;
-    }
+    constructor(readonly descriptor: TypeDescriptor) {}
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
         const key = JSON.stringify(pathSegments);
@@ -430,7 +426,8 @@ describe('ReplaceToDeltaStep internals', () => {
             'events',
             ['time', 'id'],
             ['amount'],
-            ['delta']
+            ['delta'],
+            fakeInput.descriptor
         );
 
         const modifiedEvents: Array<{ key: string; oldValue: unknown; newValue: unknown }> = [];
@@ -461,7 +458,8 @@ describe('ReplaceToDeltaStep internals', () => {
                 'events',
                 ['time'],
                 ['amount'],
-                ['delta']
+                ['delta'],
+                fakeInput.descriptor
             );
         }).toThrow();
     });
@@ -474,7 +472,8 @@ describe('ReplaceToDeltaStep internals', () => {
             'events',
             ['time', 'id'],
             ['amount'],
-            ['delta']
+            ['delta'],
+            fakeInput.descriptor
         );
 
         const modifiedEvents: Array<{ key: string; oldValue: unknown; newValue: unknown }> = [];

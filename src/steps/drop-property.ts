@@ -12,7 +12,127 @@ import type {
 import { type DescriptorNode } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
 import { emptyDescriptorNode, filterMetadataByPropertyName } from '../util/descriptor-transform.js';
-import { DescriptorStep } from '../step-builder-utils.js';
+
+function navigateDescriptorPath(descriptor: DescriptorNode, segmentPath: string[]): DescriptorNode {
+    if (segmentPath.length === 0) {
+        return descriptor;
+    }
+
+    const [currentSegment, ...remainingSegments] = segmentPath;
+    const arrayDesc = descriptor.arrays.find(a => a.name === currentSegment);
+    if (!arrayDesc) {
+        return emptyDescriptorNode();
+    }
+
+    return navigateDescriptorPath(arrayDesc.type, remainingSegments);
+}
+
+function isArrayInDescriptor(
+    descriptor: TypeDescriptor,
+    segmentPath: string[],
+    propertyName: string
+): boolean {
+    const targetDescriptor = navigateDescriptorPath(descriptor, segmentPath);
+    return targetDescriptor.arrays.some(array => array.name === propertyName);
+}
+
+function transformDescriptorRemovingArray(
+    descriptor: DescriptorNode,
+    remainingSegments: string[]
+): DescriptorNode {
+    if (remainingSegments.length === 0) {
+        return {
+            ...descriptor,
+            collectionKey: descriptor.collectionKey,
+            mutableProperties: descriptor.mutableProperties
+        };
+    }
+
+    const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
+    if (remainingSegmentsAfter.length === 0) {
+        return {
+            ...descriptor,
+            arrays: descriptor.arrays.filter(a => a.name !== currentSegment),
+        };
+    }
+
+    return {
+        ...descriptor,
+        arrays: descriptor.arrays.map(arrayDesc => {
+            if (arrayDesc.name === currentSegment) {
+                return {
+                    name: arrayDesc.name,
+                    type: transformDescriptorRemovingArray(arrayDesc.type, remainingSegmentsAfter)
+                };
+            }
+            return arrayDesc;
+        }),
+    };
+}
+
+function transformDescriptorRemovingScalar(
+    descriptor: DescriptorNode,
+    remainingScopeSegments: string[],
+    droppedPropertyName: string
+): DescriptorNode {
+    if (remainingScopeSegments.length === 0) {
+        const nextCollectionKey = descriptor.collectionKey.includes(droppedPropertyName)
+            ? []
+            : descriptor.collectionKey;
+        const filteredScalars = descriptor.scalars.filter(s => s.name !== droppedPropertyName);
+        return filterMetadataByPropertyName(
+            {
+                ...descriptor,
+                collectionKey: nextCollectionKey,
+                scalars: filteredScalars
+            },
+            droppedPropertyName
+        );
+    }
+
+    const [currentSegment, ...remainingSegmentsAfter] = remainingScopeSegments;
+    return {
+        ...descriptor,
+        arrays: descriptor.arrays.map(arrayDesc => {
+            if (arrayDesc.name !== currentSegment) {
+                return arrayDesc;
+            }
+
+            return {
+                ...arrayDesc,
+                type: transformDescriptorRemovingScalar(
+                    arrayDesc.type,
+                    remainingSegmentsAfter,
+                    droppedPropertyName
+                )
+            };
+        })
+    };
+}
+
+function transformDropPropertyDescriptor(
+    inputDescriptor: TypeDescriptor,
+    propertyName: string,
+    scopeSegments: string[]
+): TypeDescriptor {
+    const fullSegmentPath = [...scopeSegments, propertyName];
+    const arrayProperty = isArrayInDescriptor(inputDescriptor, scopeSegments, propertyName);
+    if (arrayProperty) {
+        return {
+            ...transformDescriptorRemovingArray(inputDescriptor, [...fullSegmentPath]),
+            rootCollectionName: inputDescriptor.rootCollectionName
+        };
+    }
+    const scalarTransformed = transformDescriptorRemovingScalar(
+        inputDescriptor,
+        [...scopeSegments],
+        propertyName
+    );
+    return {
+        ...scalarTransformed,
+        rootCollectionName: inputDescriptor.rootCollectionName
+    };
+}
 
 /**
  * Drops a scalar or array property from the stream at the given scope.
@@ -26,148 +146,12 @@ export class DropPropertyStep implements Step {
     constructor(
         private input: Step,
         private propertyName: string,
-        private scopeSegments: string[]
+        private scopeSegments: string[],
+        inputDescriptor: TypeDescriptor
     ) {
         // Check if the property is an array in the type descriptor
-        const descriptor = this.input.getTypeDescriptor();
         this.fullSegmentPath = [...this.scopeSegments, this.propertyName];
-        this.isArrayProperty = this.isArrayInDescriptor(descriptor, this.scopeSegments, this.propertyName);
-    }
-    
-    /**
-     * Checks if a property name exists as an array in the type descriptor at the given path segments.
-     */
-    private isArrayInDescriptor(
-        descriptor: TypeDescriptor,
-        segmentPath: string[],
-        propertyName: string
-    ): boolean {
-        // Navigate to the scope segments
-        const targetDescriptor = this.navigateToPath(descriptor, segmentPath);
-        
-        // Check if propertyName exists in the arrays at this level
-        return targetDescriptor.arrays.some(array => array.name === propertyName);
-    }
-    
-    /**
-     * Navigates through the type descriptor to reach the target path segments.
-     */
-    private navigateToPath(descriptor: DescriptorNode, segmentPath: string[]): DescriptorNode {
-        if (segmentPath.length === 0) {
-            return descriptor;
-        }
-        
-        const [currentSegment, ...remainingSegments] = segmentPath;
-        const arrayDesc = descriptor.arrays.find(a => a.name === currentSegment);
-        
-        if (!arrayDesc) {
-            // Path segments don't exist - return empty descriptor
-            return emptyDescriptorNode();
-        }
-        
-        return this.navigateToPath(arrayDesc.type, remainingSegments);
-    }
-    
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        if (this.isArrayProperty) {
-            // Remove the array from the descriptor
-            return {
-                ...this.transformDescriptor(inputDescriptor, [...this.fullSegmentPath]),
-                rootCollectionName: inputDescriptor.rootCollectionName
-            };
-        }
-        const scalarTransformed = this.transformDescriptorForScalarDrop(
-            inputDescriptor,
-            [...this.scopeSegments],
-            this.propertyName
-        );
-        return {
-            ...scalarTransformed,
-            rootCollectionName: inputDescriptor.rootCollectionName
-        };
-    }
-    
-    /**
-     * Recursively transforms the type descriptor to remove the target array.
-     * (Same logic as DropArrayStep)
-     */
-    private transformDescriptor(
-        descriptor: DescriptorNode,
-        remainingSegments: string[]
-    ): DescriptorNode {
-        if (remainingSegments.length === 0) {
-            return {
-                ...descriptor,
-                collectionKey: descriptor.collectionKey,
-                mutableProperties: descriptor.mutableProperties
-            };
-        }
-        
-        const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
-        
-        if (remainingSegmentsAfter.length === 0) {
-            // This is the target array - remove it from the descriptor
-            return {
-                ...descriptor,
-                arrays: descriptor.arrays.filter(a => a.name !== currentSegment),
-            };
-        }
-        
-        // Navigate deeper into the tree
-        return {
-            ...descriptor,
-            arrays: descriptor.arrays.map(arrayDesc => {
-                if (arrayDesc.name === currentSegment) {
-                    return {
-                        name: arrayDesc.name,
-                        type: this.transformDescriptor(arrayDesc.type, remainingSegmentsAfter)
-                    };
-                }
-                return arrayDesc;
-            }),
-        };
-    }
-
-    private transformDescriptorForScalarDrop(
-        descriptor: DescriptorNode,
-        remainingScopeSegments: string[],
-        droppedPropertyName: string
-    ): DescriptorNode {
-        if (remainingScopeSegments.length === 0) {
-            const nextCollectionKey = descriptor.collectionKey.includes(droppedPropertyName)
-                ? []
-                : descriptor.collectionKey;
-            // Filter out the dropped scalar
-            const filteredScalars = descriptor.scalars.filter(s => s.name !== droppedPropertyName);
-            return filterMetadataByPropertyName(
-                {
-                    ...descriptor,
-                    collectionKey: nextCollectionKey,
-                    scalars: filteredScalars
-                },
-                droppedPropertyName
-            );
-        }
-
-        const [currentSegment, ...remainingSegmentsAfter] = remainingScopeSegments;
-        return {
-            ...descriptor,
-            arrays: descriptor.arrays.map(arrayDesc => {
-                if (arrayDesc.name !== currentSegment) {
-                    return arrayDesc;
-                }
-
-                return {
-                    ...arrayDesc,
-                    type: this.transformDescriptorForScalarDrop(
-                        arrayDesc.type,
-                        remainingSegmentsAfter,
-                        droppedPropertyName
-                    )
-                };
-            })
-        };
+        this.isArrayProperty = isArrayInDescriptor(inputDescriptor, this.scopeSegments, this.propertyName);
     }
     
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -233,18 +217,23 @@ export class DropPropertyBuilder implements StepBuilder {
     ) {}
 
     getTypeDescriptor(): TypeDescriptor {
-        return new DropPropertyStep(
-            new DescriptorStep(this.upstream.getTypeDescriptor()),
+        return transformDropPropertyDescriptor(
+            this.upstream.getTypeDescriptor(),
             this.propertyName,
             this.scopeSegments
-        ).getTypeDescriptor();
+        );
     }
 
     buildGraph(ctx: BuildContext): BuiltStepGraph {
         const up = this.upstream.buildGraph(ctx);
         return {
             ...up,
-            lastStep: new DropPropertyStep(up.lastStep, this.propertyName, this.scopeSegments)
+            lastStep: new DropPropertyStep(
+                up.lastStep,
+                this.propertyName,
+                this.scopeSegments,
+                this.upstream.getTypeDescriptor()
+            )
         };
     }
 }

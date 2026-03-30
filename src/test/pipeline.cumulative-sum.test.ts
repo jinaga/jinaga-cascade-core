@@ -16,11 +16,7 @@ class FakeInputStep implements Step {
     private readonly removedHandlers: Map<string, RemovedHandler[]> = new Map();
     private readonly modifiedHandlers: Map<string, ModifiedHandler[]> = new Map();
 
-    constructor(private descriptor: TypeDescriptor) {
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        return this.descriptor;
+    constructor(readonly descriptor: TypeDescriptor) {
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -267,7 +263,8 @@ describe('CumulativeSumStep (incremental behavior)', () => {
             fakeInput,
             ['items'],
             ['order'],
-            ['value']
+            ['value'],
+            fakeInput.descriptor
         );
 
         const modified: ModifiedEvent[] = [];

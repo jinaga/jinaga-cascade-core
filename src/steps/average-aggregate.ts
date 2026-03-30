@@ -1,11 +1,35 @@
 import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
-import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 /**
  * Computes a hash key for a key path (for map lookups).
  */
 function computeKeyPathHash(keyPath: string[]): string {
     return keyPath.join('::');
+}
+
+function transformAverageAggregateDescriptor(
+    inputDescriptor: TypeDescriptor,
+    propertyName: string
+): TypeDescriptor {
+    const outputScalar = {
+        name: propertyName,
+        type: 'number' as const
+    };
+    const scalars = inputDescriptor.scalars.some(s => s.name === propertyName)
+        ? inputDescriptor.scalars
+        : [...inputDescriptor.scalars, outputScalar];
+    const mutableProperties = inputDescriptor.mutableProperties;
+    if (!mutableProperties.includes(propertyName)) {
+        return {
+            ...inputDescriptor,
+            scalars,
+            mutableProperties: [...mutableProperties, propertyName]
+        };
+    }
+    return {
+        ...inputDescriptor,
+        scalars
+    };
 }
 
 /**
@@ -53,10 +77,10 @@ export class AverageAggregateStep<
         private input: Step,
         private segmentPath: TPath,
         private propertyName: TPropertyName,
-        private numericProperty: string
+        private numericProperty: string,
+        inputDescriptor: TypeDescriptor
     ) {
         // Auto-detect if property is mutable from TypeDescriptor
-        const inputDescriptor = input.getTypeDescriptor();
         const rootMutableProperties = inputDescriptor.mutableProperties;
         if (rootMutableProperties.includes(numericProperty)) {
             this.isPropertyMutable = true;
@@ -77,33 +101,6 @@ export class AverageAggregateStep<
                 this.handleItemPropertyChanged(keyPath, itemKey, oldValue, newValue);
             });
         }
-    }
-    
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        
-        // Add aggregate output to scalars (idempotent: only add if not already present)
-        const outputScalar = {
-            name: this.propertyName,
-            type: 'number' as const
-        };
-        const scalars = inputDescriptor.scalars.some(s => s.name === this.propertyName)
-            ? inputDescriptor.scalars
-            : [...inputDescriptor.scalars, outputScalar];
-        
-        // Mark the aggregate property as mutable
-        const mutableProperties = inputDescriptor.mutableProperties;
-        if (!mutableProperties.includes(this.propertyName)) {
-            return {
-                ...inputDescriptor,
-                scalars,
-                mutableProperties: [...mutableProperties, this.propertyName]
-            };
-        }
-        return {
-            ...inputDescriptor,
-            scalars
-        };
     }
     
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -368,17 +365,20 @@ export class AverageAggregateBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getDescriptorFromFactory(
-            this.upstream.getTypeDescriptor(),
-            input => new AverageAggregateStep(input, this.segmentPath, this.propertyName, this.numericProperty)
-        );
+        return transformAverageAggregateDescriptor(this.upstream.getTypeDescriptor(), this.propertyName);
     }
 
     buildGraph(ctx: BuildContext): BuiltStepGraph {
         const up = this.upstream.buildGraph(ctx);
         return {
             ...up,
-            lastStep: new AverageAggregateStep(up.lastStep, this.segmentPath, this.propertyName, this.numericProperty)
+            lastStep: new AverageAggregateStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.numericProperty,
+                this.upstream.getTypeDescriptor()
+            )
         };
     }
 }

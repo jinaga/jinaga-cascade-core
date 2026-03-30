@@ -102,7 +102,6 @@ export type RemovedHandler = (keyPath: string[], key: string, immutableProps: Im
 export type ModifiedHandler = (keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void;
 
 export interface Step {
-    getTypeDescriptor(): TypeDescriptor;
     onAdded(pathSegments: string[], handler: AddedHandler): void;
     onRemoved(pathSegments: string[], handler: RemovedHandler): void;
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;
@@ -164,7 +163,6 @@ constructor(private input: Step, private segmentPath: string[], ...) {
 ### Pattern: Auto-detect mutable properties and register for changes
 
 ```typescript
-const inputDescriptor = input.getTypeDescriptor();
 const rootMutableProperties = inputDescriptor.mutableProperties;
 
 if (rootMutableProperties.includes(propertyToWatch)) {
@@ -174,7 +172,7 @@ if (rootMutableProperties.includes(propertyToWatch)) {
 }
 ```
 
-Check `inputDescriptor.mutableProperties` at the root level. Steps like `DefinePropertyStep` and `CommutativeAggregateStep` place their mutable properties at root level even when they logically belong to a nested array, so root-level checking is correct.
+Check upstream `mutableProperties` at the root level. Builders pass descriptor metadata into Step constructors (for example as an `inputDescriptor` constructor argument), and steps use that metadata for registration decisions.
 
 ---
 
@@ -315,13 +313,13 @@ private emitModification(parentKeyPath: string[], oldValue: unknown, newValue: u
 
 ## TypeDescriptor Transformation
 
-Each step transforms its input descriptor to reflect the shape change it applies.
+Each Builder transforms the upstream descriptor to reflect the shape change it applies.
 
 ### Adding a mutable scalar property
 
 ```typescript
 getTypeDescriptor(): TypeDescriptor {
-    const inputDescriptor = this.input.getTypeDescriptor();
+    const inputDescriptor = this.upstream.getTypeDescriptor();
     const mutableProperties = inputDescriptor.mutableProperties.includes(this.propertyName)
         ? inputDescriptor.mutableProperties
         : [...inputDescriptor.mutableProperties, this.propertyName];
@@ -336,11 +334,10 @@ Use helper `appendObjectIfMissing` and `appendMutableIfMissing` from `src/util/d
 ```typescript
 import { appendObjectIfMissing, appendMutableIfMissing } from '../util/descriptor-transform.js';
 
-getTypeDescriptor(): TypeDescriptor {
-    const inputDescriptor = this.input.getTypeDescriptor();
-    const objectDesc = { name: this.propertyName, type: sourceDescriptorNode };
+function transformDescriptor(inputDescriptor: TypeDescriptor): TypeDescriptor {
+    const objectDesc = { name: propertyName, type: sourceDescriptorNode };
     const withObject = appendObjectIfMissing(inputDescriptor, objectDesc);
-    return appendMutableIfMissing(withObject, this.propertyName) as TypeDescriptor;
+    return appendMutableIfMissing(withObject, propertyName) as TypeDescriptor;
 }
 ```
 
@@ -391,9 +388,11 @@ export class MyNewStepBuilder implements StepBuilder {
     ) {}
 
     getTypeDescriptor(): TypeDescriptor {
-        return getDescriptorFromFactory(
+        return transformMyNewStepDescriptor(
             this.upstream.getTypeDescriptor(),
-            input => new MyNewStep(input, this.segmentPath, this.propertyName, this.config)
+            this.segmentPath,
+            this.propertyName,
+            this.config
         );
     }
 
@@ -401,7 +400,13 @@ export class MyNewStepBuilder implements StepBuilder {
         const up = this.upstream.buildGraph(ctx);
         return {
             ...up,
-            lastStep: new MyNewStep(up.lastStep, this.segmentPath, this.propertyName, this.config)
+            lastStep: new MyNewStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.config,
+                this.upstream.getTypeDescriptor()
+            )
         };
     }
 }

@@ -1,5 +1,4 @@
 import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
-import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 /**
  * Operator called when an item is added to the aggregated array.
@@ -41,6 +40,31 @@ interface CommutativeAggregateConfig<TItem, TAggregate> {
  */
 function computeKeyPathHash(keyPath: string[]): string {
     return keyPath.join('::');
+}
+
+function transformCommutativeAggregateDescriptor(
+    inputDescriptor: TypeDescriptor,
+    propertyName: string
+): TypeDescriptor {
+    const outputScalar = {
+        name: propertyName,
+        type: 'number' as const
+    };
+    const scalars = inputDescriptor.scalars.some(s => s.name === propertyName)
+        ? inputDescriptor.scalars
+        : [...inputDescriptor.scalars, outputScalar];
+    const mutableProperties = inputDescriptor.mutableProperties;
+    if (!mutableProperties.includes(propertyName)) {
+        return {
+            ...inputDescriptor,
+            scalars,
+            mutableProperties: [...mutableProperties, propertyName]
+        };
+    }
+    return {
+        ...inputDescriptor,
+        scalars
+    };
 }
 
 /**
@@ -90,7 +114,8 @@ export class CommutativeAggregateStep<
         private segmentPath: TPath,
         private propertyName: TPropertyName,
         private config: CommutativeAggregateConfig<ImmutableProps, TAggregate>,
-        private propertyToAggregate?: string
+        private propertyToAggregate: string | undefined,
+        inputDescriptor?: TypeDescriptor
     ) {
         // Register with input step to receive item add/remove events at the target array level
         this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
@@ -107,8 +132,7 @@ export class CommutativeAggregateStep<
             // Check if the property to aggregate is mutable in the TypeDescriptor
             // Note: DefinePropertyStep and CommutativeAggregateStep add mutable properties at the root level,
             // not at the nested array level, so we check root-level mutableProperties
-            const inputDescriptor = input.getTypeDescriptor();
-            const rootMutableProperties = inputDescriptor.mutableProperties;
+            const rootMutableProperties = inputDescriptor?.mutableProperties ?? [];
             if (rootMutableProperties.includes(propertyToAggregate)) {
                 effectiveMutableProperties = [propertyToAggregate];
                 this.isPropertyMutable = true;
@@ -123,34 +147,6 @@ export class CommutativeAggregateStep<
                 });
             });
         }
-    }
-    
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        
-        // Add aggregate output to scalars (idempotent: only add if not already present)
-        const outputScalar = {
-            name: this.propertyName,
-            type: 'number' as const
-        };
-        const scalars = inputDescriptor.scalars.some(s => s.name === this.propertyName)
-            ? inputDescriptor.scalars
-            : [...inputDescriptor.scalars, outputScalar];
-        
-        // Mark the aggregate property as mutable
-        // The property lives at the parent level of segmentPath
-        const mutableProperties = inputDescriptor.mutableProperties;
-        if (!mutableProperties.includes(this.propertyName)) {
-            return {
-                ...inputDescriptor,
-                scalars,
-                mutableProperties: [...mutableProperties, this.propertyName]
-            };
-        }
-        return {
-            ...inputDescriptor,
-            scalars
-        };
     }
     
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -375,17 +371,21 @@ export class CommutativeAggregateBuilder<TAggregate> implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getDescriptorFromFactory(
-            this.upstream.getTypeDescriptor(),
-            input => new CommutativeAggregateStep(input, this.segmentPath, this.propertyName, this.config, this.propertyToAggregate)
-        );
+        return transformCommutativeAggregateDescriptor(this.upstream.getTypeDescriptor(), this.propertyName);
     }
 
     buildGraph(ctx: BuildContext): BuiltStepGraph {
         const up = this.upstream.buildGraph(ctx);
         return {
             ...up,
-            lastStep: new CommutativeAggregateStep(up.lastStep, this.segmentPath, this.propertyName, this.config, this.propertyToAggregate)
+            lastStep: new CommutativeAggregateStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.config,
+                this.propertyToAggregate,
+                this.upstream.getTypeDescriptor()
+            )
         };
     }
 }

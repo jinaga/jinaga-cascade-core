@@ -1,6 +1,77 @@
 import type { BuildContext, BuiltStepGraph, DescriptorNode, ImmutableProps, ModifiedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
-import { getDescriptorFromFactory } from '../step-builder-utils.js';
+
+function transformDefinePropertyDescriptor(
+    inputDescriptor: TypeDescriptor,
+    propertyName: string,
+    scopeSegments: string[],
+    mutableProperties: string[]
+): TypeDescriptor {
+    const appendDefinedScalarAtScope = (descriptor: TypeDescriptor): TypeDescriptor => {
+        if (scopeSegments.length === 0) {
+            if (descriptor.scalars.some(scalar => scalar.name === propertyName)) {
+                return descriptor;
+            }
+            return {
+                ...descriptor,
+                scalars: [
+                    ...descriptor.scalars,
+                    { name: propertyName, type: 'unknown' as const }
+                ]
+            };
+        }
+
+        const appendScalarRecursively = (
+            nodeDescriptor: DescriptorNode,
+            remainingSegments: string[]
+        ): DescriptorNode => {
+            if (remainingSegments.length === 0) {
+                if (nodeDescriptor.scalars.some(scalar => scalar.name === propertyName)) {
+                    return nodeDescriptor;
+                }
+                return {
+                    ...nodeDescriptor,
+                    scalars: [
+                        ...nodeDescriptor.scalars,
+                        { name: propertyName, type: 'unknown' as const }
+                    ]
+                };
+            }
+
+            const [segment, ...tail] = remainingSegments;
+            return {
+                ...nodeDescriptor,
+                arrays: nodeDescriptor.arrays.map(arrayDesc => {
+                    if (arrayDesc.name !== segment) {
+                        return arrayDesc;
+                    }
+                    return {
+                        ...arrayDesc,
+                        type: appendScalarRecursively(arrayDesc.type, tail)
+                    };
+                })
+            };
+        };
+
+        const transformed = appendScalarRecursively(descriptor, scopeSegments);
+        return {
+            ...transformed,
+            rootCollectionName: descriptor.rootCollectionName
+        };
+    };
+
+    const withScalar = appendDefinedScalarAtScope(inputDescriptor);
+    if (mutableProperties.length > 0) {
+        const existingMutableProps = withScalar.mutableProperties;
+        if (!existingMutableProps.includes(propertyName)) {
+            return {
+                ...withScalar,
+                mutableProperties: [...existingMutableProps, propertyName]
+            };
+        }
+    }
+    return withScalar;
+}
 
 export class DefinePropertyStep<T, K extends string, U> implements Step {
     // Track items and their mutable property values + computed property value
@@ -34,76 +105,6 @@ export class DefinePropertyStep<T, K extends string, U> implements Step {
                 });
             });
         }
-    }
-    
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        const withScalar = this.appendDefinedScalarAtScope(inputDescriptor);
-
-        // If this property depends on mutable properties, mark it as mutable too
-        if (this.mutableProperties.length > 0) {
-            const existingMutableProps = withScalar.mutableProperties;
-            if (!existingMutableProps.includes(this.propertyName)) {
-                return {
-                    ...withScalar,
-                    mutableProperties: [...existingMutableProps, this.propertyName]
-                };
-            }
-        }
-        return withScalar;
-    }
-
-    private appendDefinedScalarAtScope(inputDescriptor: TypeDescriptor): TypeDescriptor {
-        if (this.scopeSegments.length === 0) {
-            if (inputDescriptor.scalars.some(scalar => scalar.name === this.propertyName)) {
-                return inputDescriptor;
-            }
-            return {
-                ...inputDescriptor,
-                scalars: [
-                    ...inputDescriptor.scalars,
-                    { name: this.propertyName, type: 'unknown' as const }
-                ]
-            };
-        }
-
-        const appendScalarRecursively = (
-            descriptor: DescriptorNode,
-            remainingSegments: string[]
-        ): DescriptorNode => {
-            if (remainingSegments.length === 0) {
-                if (descriptor.scalars.some(scalar => scalar.name === this.propertyName)) {
-                    return descriptor;
-                }
-                return {
-                    ...descriptor,
-                    scalars: [
-                        ...descriptor.scalars,
-                        { name: this.propertyName, type: 'unknown' as const }
-                    ]
-                };
-            }
-
-            const [segment, ...tail] = remainingSegments;
-            return {
-                ...descriptor,
-                arrays: descriptor.arrays.map(arrayDesc => {
-                    if (arrayDesc.name !== segment) {
-                        return arrayDesc;
-                    }
-                    return {
-                        ...arrayDesc,
-                        type: appendScalarRecursively(arrayDesc.type, tail)
-                    };
-                })
-            };
-        };
-
-        const transformed = appendScalarRecursively(inputDescriptor, this.scopeSegments);
-        return {
-            ...transformed,
-            rootCollectionName: inputDescriptor.rootCollectionName
-        };
     }
     
     private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, unknown>): T {
@@ -226,9 +227,11 @@ export class DefinePropertyBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getDescriptorFromFactory(
+        return transformDefinePropertyDescriptor(
             this.upstream.getTypeDescriptor(),
-            input => new DefinePropertyStep(input, this.propertyName, this.compute, this.scopeSegments, this.mutableProperties)
+            this.propertyName,
+            this.scopeSegments,
+            this.mutableProperties
         );
     }
 

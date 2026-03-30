@@ -1229,7 +1229,7 @@ export class PipelineBuilder<
                 operationType: 'modify'
             });
         });
-        const runtimeDescriptor = builtGraph.lastStep.getTypeDescriptor();
+        const runtimeDescriptor = this.lastBuilder.getTypeDescriptor();
         const pathSegments = getPathSegmentsFromDescriptor(runtimeDescriptor);
         const session = new PipelineRuntimeSessionImpl<T, TStart, TSources>(
             builtGraph.rootInput as PipelineInput<TStart, TSources>,

@@ -163,7 +163,6 @@ function getPathSegmentsFromNode(descriptor: DescriptorNode): string[][] {
 }
 
 export interface Step {
-    getTypeDescriptor(): TypeDescriptor;
     onAdded(pathSegments: string[], handler: AddedHandler): void;
     onRemoved(pathSegments: string[], handler: RemovedHandler): void;
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;

@@ -13,7 +13,6 @@ import type {
 } from '../pipeline.js';
 import { computeHash } from '../util/hash.js';
 import { pathsMatch, pathStartsWith } from '../util/path.js';
-import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 function parentIdentity(outputKeyPath: string[], parentKey: string): string {
     return JSON.stringify({ outputKeyPath, parentKey });
@@ -63,6 +62,154 @@ function mergedMutableProperties(
     return Array.from(mutable);
 }
 
+function navigateToScopeNode(node: DescriptorNode, remainingSegments: string[]): DescriptorNode | null {
+    if (remainingSegments.length === 0) {
+        return node;
+    }
+
+    const [segment, ...rest] = remainingSegments;
+    const arrayDescriptor = node.arrays.find(array => array.name === segment);
+    if (!arrayDescriptor) {
+        return null;
+    }
+    return navigateToScopeNode(arrayDescriptor.type, rest);
+}
+
+function assertValidFlattenConfiguration(
+    descriptor: TypeDescriptor,
+    scopePath: string[],
+    parentArrayName: string,
+    childArrayName: string,
+    outputArrayName: string
+): void {
+    const scopeNode = navigateToScopeNode(descriptor, [...scopePath]);
+    if (scopeNode === null) {
+        throw new Error(`flatten scope path is invalid: [${scopePath.join('.')}]`);
+    }
+
+    const parentArray = scopeNode.arrays.find(arrayDescriptor => arrayDescriptor.name === parentArrayName);
+    if (!parentArray) {
+        throw new Error(`flatten parent array not found at current scope: "${parentArrayName}"`);
+    }
+
+    const childArray = parentArray.type.arrays.find(arrayDescriptor => arrayDescriptor.name === childArrayName);
+    if (!childArray) {
+        throw new Error(`flatten child array not found within parent array "${parentArrayName}": "${childArrayName}"`);
+    }
+
+    if (scopeNode.arrays.some(arrayDescriptor => arrayDescriptor.name === outputArrayName)) {
+        throw new Error(`flatten output array already exists at current scope: "${outputArrayName}"`);
+    }
+}
+
+function getChildScalarNamesFromDescriptor(
+    descriptor: TypeDescriptor,
+    scopePath: string[],
+    parentArrayName: string,
+    childArrayName: string
+): Set<string> {
+    const scopeNode = navigateToScopeNode(descriptor, [...scopePath]);
+    if (!scopeNode) {
+        return new Set<string>();
+    }
+
+    const parentArray = scopeNode.arrays.find(arrayDescriptor => arrayDescriptor.name === parentArrayName);
+    if (!parentArray) {
+        return new Set<string>();
+    }
+
+    const childArray = parentArray.type.arrays.find(arrayDescriptor => arrayDescriptor.name === childArrayName);
+    if (!childArray) {
+        return new Set<string>();
+    }
+
+    return new Set(childArray.type.scalars.map(scalar => scalar.name));
+}
+
+function transformDescriptorAtScope(
+    node: DescriptorNode,
+    remainingScopePath: string[],
+    parentArrayName: string,
+    childArrayName: string,
+    outputArrayName: string
+): DescriptorNode {
+    if (remainingScopePath.length === 0) {
+        const parentArray = node.arrays.find(arrayDescriptor => arrayDescriptor.name === parentArrayName);
+        if (!parentArray) {
+            return node;
+        }
+        const childArray = parentArray.type.arrays.find(arrayDescriptor => arrayDescriptor.name === childArrayName);
+        if (!childArray) {
+            return node;
+        }
+
+        const mergedScalars = mergeScalarsWithChildPrecedence(parentArray.type.scalars, childArray.type.scalars);
+        const flattenedNode: DescriptorNode = {
+            arrays: childArray.type.arrays,
+            collectionKey: [...parentArray.type.collectionKey, ...childArray.type.collectionKey],
+            scalars: mergedScalars,
+            objects: mergeObjectsWithChildPrecedence(parentArray.type.objects, childArray.type.objects),
+            mutableProperties: mergedMutableProperties(
+                parentArray.type.mutableProperties,
+                childArray.type.mutableProperties,
+                mergedScalars
+            )
+        };
+
+        const arrays = node.arrays.map(arrayDescriptor => {
+            if (arrayDescriptor.name === parentArrayName) {
+                return {
+                    name: outputArrayName,
+                    type: flattenedNode
+                };
+            }
+            return arrayDescriptor;
+        });
+
+        return {
+            ...node,
+            arrays
+        };
+    }
+
+    const [segment, ...rest] = remainingScopePath;
+    return {
+        ...node,
+        arrays: node.arrays.map(arrayDescriptor => {
+            if (arrayDescriptor.name !== segment) {
+                return arrayDescriptor;
+            }
+            return {
+                ...arrayDescriptor,
+                type: transformDescriptorAtScope(
+                    arrayDescriptor.type,
+                    rest,
+                    parentArrayName,
+                    childArrayName,
+                    outputArrayName
+                )
+            };
+        })
+    };
+}
+
+function transformFlattenDescriptor(
+    inputDescriptor: TypeDescriptor,
+    parentPath: string[],
+    childPath: string[],
+    outputPath: string[]
+): TypeDescriptor {
+    const scopePath = outputPath.slice(0, -1);
+    const parentArrayName = parentPath[parentPath.length - 1];
+    const childArrayName = childPath[childPath.length - 1];
+    const outputArrayName = outputPath[outputPath.length - 1];
+    assertValidFlattenConfiguration(inputDescriptor, scopePath, parentArrayName, childArrayName, outputArrayName);
+    return {
+        ...transformDescriptorAtScope(inputDescriptor, [...scopePath], parentArrayName, childArrayName, outputArrayName),
+        rootCollectionName: inputDescriptor.rootCollectionName
+    };
+}
+
 export class FlattenStep implements Step {
     private readonly outputAddedHandlers: AddedHandler[] = [];
     private readonly outputRemovedHandlers: RemovedHandler[] = [];
@@ -83,7 +230,8 @@ export class FlattenStep implements Step {
         private input: Step,
         private parentPath: string[],
         private childPath: string[],
-        private outputPath: string[]
+        private outputPath: string[],
+        inputDescriptor: TypeDescriptor
     ) {
         if (this.parentPath.length === 0 || this.childPath.length === 0 || this.outputPath.length === 0) {
             throw new Error('flatten paths must be non-empty');
@@ -97,9 +245,19 @@ export class FlattenStep implements Step {
         this.childArrayName = this.childPath[this.childPath.length - 1];
         this.outputArrayName = this.outputPath[this.outputPath.length - 1];
         this.outputDepth = this.outputPath.length;
-        this.childScalarNames = this.getChildScalarNames(this.input.getTypeDescriptor());
-
-        this.assertValidConfiguration(this.input.getTypeDescriptor());
+        this.childScalarNames = getChildScalarNamesFromDescriptor(
+            inputDescriptor,
+            this.scopePath,
+            this.parentArrayName,
+            this.childArrayName
+        );
+        assertValidFlattenConfiguration(
+            inputDescriptor,
+            this.scopePath,
+            this.parentArrayName,
+            this.childArrayName,
+            this.outputArrayName
+        );
 
         this.input.onAdded(this.parentPath, (keyPath, key, immutableProps) => {
             this.handleParentAdded(keyPath, key, immutableProps);
@@ -114,7 +272,7 @@ export class FlattenStep implements Step {
             this.handleChildRemoved(keyPath, key, immutableProps);
         });
 
-        const mutableProperties = this.input.getTypeDescriptor().mutableProperties;
+        const mutableProperties = inputDescriptor.mutableProperties;
         for (const propertyName of mutableProperties) {
             this.input.onModified(this.parentPath, propertyName, (keyPath, key, oldValue, newValue) => {
                 this.handleParentModified(keyPath, key, propertyName, oldValue, newValue);
@@ -123,15 +281,6 @@ export class FlattenStep implements Step {
                 this.handleChildModified(keyPath, key, propertyName, oldValue, newValue);
             });
         }
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        this.assertValidConfiguration(inputDescriptor);
-        return {
-            ...this.transformDescriptorAtScope(inputDescriptor, [...this.scopePath]),
-            rootCollectionName: inputDescriptor.rootCollectionName
-        };
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -194,114 +343,6 @@ export class FlattenStep implements Step {
         }
 
         this.input.onModified(pathSegments, propertyName, handler);
-    }
-
-    private assertValidConfiguration(descriptor: TypeDescriptor): void {
-        const scopeNode = this.navigateToScopeNode(descriptor, [...this.scopePath]);
-        if (scopeNode === null) {
-            throw new Error(`flatten scope path is invalid: [${this.scopePath.join('.')}]`);
-        }
-
-        const parentArray = scopeNode.arrays.find(arrayDescriptor => arrayDescriptor.name === this.parentArrayName);
-        if (!parentArray) {
-            throw new Error(`flatten parent array not found at current scope: "${this.parentArrayName}"`);
-        }
-
-        const childArray = parentArray.type.arrays.find(arrayDescriptor => arrayDescriptor.name === this.childArrayName);
-        if (!childArray) {
-            throw new Error(`flatten child array not found within parent array "${this.parentArrayName}": "${this.childArrayName}"`);
-        }
-
-        if (scopeNode.arrays.some(arrayDescriptor => arrayDescriptor.name === this.outputArrayName)) {
-            throw new Error(`flatten output array already exists at current scope: "${this.outputArrayName}"`);
-        }
-    }
-
-    private getChildScalarNames(descriptor: TypeDescriptor): Set<string> {
-        const scopeNode = this.navigateToScopeNode(descriptor, [...this.scopePath]);
-        if (!scopeNode) {
-            return new Set<string>();
-        }
-
-        const parentArray = scopeNode.arrays.find(arrayDescriptor => arrayDescriptor.name === this.parentArrayName);
-        if (!parentArray) {
-            return new Set<string>();
-        }
-
-        const childArray = parentArray.type.arrays.find(arrayDescriptor => arrayDescriptor.name === this.childArrayName);
-        if (!childArray) {
-            return new Set<string>();
-        }
-
-        return new Set(childArray.type.scalars.map(scalar => scalar.name));
-    }
-
-    private navigateToScopeNode(node: DescriptorNode, remainingSegments: string[]): DescriptorNode | null {
-        if (remainingSegments.length === 0) {
-            return node;
-        }
-
-        const [segment, ...rest] = remainingSegments;
-        const arrayDescriptor = node.arrays.find(array => array.name === segment);
-        if (!arrayDescriptor) {
-            return null;
-        }
-        return this.navigateToScopeNode(arrayDescriptor.type, rest);
-    }
-
-    private transformDescriptorAtScope(node: DescriptorNode, remainingScopePath: string[]): DescriptorNode {
-        if (remainingScopePath.length === 0) {
-            const parentArray = node.arrays.find(arrayDescriptor => arrayDescriptor.name === this.parentArrayName);
-            if (!parentArray) {
-                return node;
-            }
-            const childArray = parentArray.type.arrays.find(arrayDescriptor => arrayDescriptor.name === this.childArrayName);
-            if (!childArray) {
-                return node;
-            }
-
-            const mergedScalars = mergeScalarsWithChildPrecedence(parentArray.type.scalars, childArray.type.scalars);
-            const flattenedNode: DescriptorNode = {
-                arrays: childArray.type.arrays,
-                collectionKey: [...parentArray.type.collectionKey, ...childArray.type.collectionKey],
-                scalars: mergedScalars,
-                objects: mergeObjectsWithChildPrecedence(parentArray.type.objects, childArray.type.objects),
-                mutableProperties: mergedMutableProperties(
-                    parentArray.type.mutableProperties,
-                    childArray.type.mutableProperties,
-                    mergedScalars
-                )
-            };
-
-            const arrays = node.arrays.map(arrayDescriptor => {
-                if (arrayDescriptor.name === this.parentArrayName) {
-                    return {
-                        name: this.outputArrayName,
-                        type: flattenedNode
-                    };
-                }
-                return arrayDescriptor;
-            });
-
-            return {
-                ...node,
-                arrays
-            };
-        }
-
-        const [segment, ...rest] = remainingScopePath;
-        return {
-            ...node,
-            arrays: node.arrays.map(arrayDescriptor => {
-                if (arrayDescriptor.name !== segment) {
-                    return arrayDescriptor;
-                }
-                return {
-                    ...arrayDescriptor,
-                    type: this.transformDescriptorAtScope(arrayDescriptor.type, rest)
-                };
-            })
-        };
     }
 
     private isBelowOutputPath(pathSegments: string[]): boolean {
@@ -507,17 +548,20 @@ export class FlattenBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getDescriptorFromFactory(
-            this.upstream.getTypeDescriptor(),
-            input => new FlattenStep(input, this.parentPath, this.childPath, this.outputPath)
-        );
+        return transformFlattenDescriptor(this.upstream.getTypeDescriptor(), this.parentPath, this.childPath, this.outputPath);
     }
 
     buildGraph(ctx: BuildContext): BuiltStepGraph {
         const up = this.upstream.buildGraph(ctx);
         return {
             ...up,
-            lastStep: new FlattenStep(up.lastStep, this.parentPath, this.childPath, this.outputPath)
+            lastStep: new FlattenStep(
+                up.lastStep,
+                this.parentPath,
+                this.childPath,
+                this.outputPath,
+                this.upstream.getTypeDescriptor()
+            )
         };
     }
 }

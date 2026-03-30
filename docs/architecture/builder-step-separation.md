@@ -87,7 +87,8 @@ class GroupByBuilder implements StepBuilder {
         return {
             ...up,
             lastStep: new GroupByStep(up.lastStep, this.groupingProperties,
-                this.parentArrayName, this.childArrayName, this.scopeSegments)
+                this.parentArrayName, this.childArrayName, this.scopeSegments,
+                this.upstream.getTypeDescriptor())
         };
     }
 }
@@ -125,7 +126,7 @@ No `instanceof` checks or special-casing in the graph assembly function. The bui
 
 ### Step Class Changes
 
-Step constructors change from accepting `input: Step` as the upstream (and registering handlers in the constructor) to receiving the upstream Step from `buildGraph`. The Step class itself is unchanged in behavior — it still registers handlers in its constructor, maintains mutable state, and implements the `Step` interface.
+Step constructors accept `input: Step` plus any builder-time descriptor data they need (for example upstream `TypeDescriptor` or precomputed collection keys). `buildGraph` provides those constructor arguments per session. `Step` instances now focus strictly on runtime event propagation (`onAdded`/`onRemoved`/`onModified`) and mutable state.
 
 ## PipelineBuilder Changes
 
@@ -178,7 +179,7 @@ Because every `build()` call constructs new Step instances via `buildGraph`, two
 
 ## Validation
 
-Steps that perform build-time validation (e.g., `CumulativeSumStep` checking that `orderBy` properties are scalars, `ReplaceToDeltaStep` checking for name collisions) perform that validation in the Builder's constructor or `getTypeDescriptor()`. This keeps validation at definition time, not deferred to `build()`.
+Steps that perform build-time validation (e.g., `CumulativeSumStep` checking that `orderBy` properties are scalars, `ReplaceToDeltaStep` checking for name collisions) perform that validation in Builder code (`getTypeDescriptor()` or constructor helpers). This keeps validation at definition time, not deferred to `build()`.
 
 ## Enrich and Source Wiring
 
