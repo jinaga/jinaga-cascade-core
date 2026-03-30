@@ -87,7 +87,7 @@ function transformCommutativeAggregateDescriptor(
  * @template TAggregate - The type of the aggregate value
  */
 export class CommutativeAggregateStep<
-    _TInput,
+    TItem extends ImmutableProps,
     TPath extends string[],
     TPropertyName extends string,
     TAggregate
@@ -113,7 +113,7 @@ export class CommutativeAggregateStep<
         private input: Step,
         private segmentPath: TPath,
         private propertyName: TPropertyName,
-        private config: CommutativeAggregateConfig<ImmutableProps, TAggregate>,
+        private config: CommutativeAggregateConfig<TItem, TAggregate>,
         private propertyToAggregate: string | undefined,
         inputDescriptor?: TypeDescriptor
     ) {
@@ -184,6 +184,10 @@ export class CommutativeAggregateStep<
         
         return pathSegments.every((segment, i) => segment === parentSegments[i]);
     }
+
+    private asAggregateItem(item: ImmutableProps): TItem {
+        return item as TItem;
+    }
     
     /**
      * Handle when an item is added to the target array
@@ -216,7 +220,7 @@ export class CommutativeAggregateStep<
         
         // Compute new aggregate
         const currentAggregate = this.aggregateValues.get(parentKeyHash);
-        const newAggregate = this.config.add(currentAggregate, item);
+        const newAggregate = this.config.add(currentAggregate, this.asAggregateItem(item));
         this.aggregateValues.set(parentKeyHash, newAggregate);
         
         // Emit modification event
@@ -254,7 +258,7 @@ export class CommutativeAggregateStep<
         // (oldValue is undefined, no aggregate yet)
         if (currentAggregate === undefined && oldValue === undefined) {
             // This is the initial value for the property - treat as a fresh add
-            const newItem = { [propertyName]: newValue } as ImmutableProps;
+            const newItem = { [propertyName]: newValue } as TItem;
             const newAggregate = this.config.add(undefined, newItem);
             this.aggregateValues.set(parentKeyHash, newAggregate);
             
@@ -287,8 +291,8 @@ export class CommutativeAggregateStep<
         // This works because sum/count operators extract item[propertyName].
         
         // Create pseudo-items with the old and new values
-        const oldItem = { [propertyName]: oldValue } as ImmutableProps;
-        const newItem = { [propertyName]: newValue } as ImmutableProps;
+        const oldItem = { [propertyName]: oldValue } as TItem;
+        const newItem = { [propertyName]: newValue } as TItem;
         
         // Compute new aggregate: subtract old value, add new value
         const intermediateAggregate = this.config.subtract(currentAggregate, oldItem);
@@ -327,7 +331,7 @@ export class CommutativeAggregateStep<
         }
         
         // Compute new aggregate
-        const newAggregate = this.config.subtract(currentAggregate, item);
+        const newAggregate = this.config.subtract(currentAggregate, this.asAggregateItem(item));
         
         // Update item count and clean up if no items remain
         const currentCount = this.itemCounts.get(parentKeyHash) ?? 0;
@@ -357,14 +361,14 @@ export class CommutativeAggregateStep<
     }
 }
 
-export class CommutativeAggregateBuilder<TAggregate> implements StepBuilder {
+export class CommutativeAggregateBuilder<TItem extends ImmutableProps, TAggregate> implements StepBuilder {
     constructor(
         readonly upstream: StepBuilder,
         private segmentPath: string[],
         private propertyName: string,
         private config: {
-            add: AddOperator<ImmutableProps, TAggregate>;
-            subtract: SubtractOperator<ImmutableProps, TAggregate>;
+            add: AddOperator<TItem, TAggregate>;
+            subtract: SubtractOperator<TItem, TAggregate>;
         },
         private propertyToAggregate?: string
     ) {

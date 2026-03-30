@@ -10,10 +10,21 @@ import type {
     SourceBindableInput,
     Step,
     StepBuilder,
-    TypeDescriptor
+    TypeDescriptor,
+    UntypedPipelineSources
 } from './pipeline.js';
 
 type EmptySources = Record<never, never>;
+
+function createEmptySources<TSources extends Record<string, unknown>>(): PipelineSources<TSources> {
+    return {} as PipelineSources<TSources>;
+}
+
+function bindSources<TSources extends Record<string, unknown>>(
+    sources: UntypedPipelineSources
+): PipelineSources<TSources> {
+    return sources as PipelineSources<TSources>;
+}
 
 // Kept in factory for createPipeline initialization.
 export class InputStep<T, TSources extends Record<string, unknown> = EmptySources>
@@ -21,11 +32,7 @@ export class InputStep<T, TSources extends Record<string, unknown> = EmptySource
     private addedHandlers: AddedHandler[] = [];
     private removedHandlers: RemovedHandler[] = [];
 
-    sources: PipelineSources<TSources>;
-
-    constructor() {
-        this.sources = {} as PipelineSources<TSources>;
-    }
+    sources: PipelineSources<TSources> = createEmptySources<TSources>();
 
     add(key: string, immutableProps: T): void {
         this.addedHandlers.forEach(handler => handler([], key, immutableProps as ImmutableProps));
@@ -55,8 +62,8 @@ export class InputStep<T, TSources extends Record<string, unknown> = EmptySource
         // No modifications at the input step.
     }
 
-    setSources(sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>>): void {
-        this.sources = sources as unknown as PipelineSources<TSources>;
+    setSources(sources: UntypedPipelineSources): void {
+        this.sources = bindSources<TSources>(sources);
     }
 }
 
