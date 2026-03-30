@@ -169,3 +169,9 @@ export interface Step {
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;
 }
 
+export interface StepBuilder {
+    readonly upstream?: StepBuilder;
+    getTypeDescriptor(): TypeDescriptor;
+    buildStep(input: Step): Step;
+}
+
