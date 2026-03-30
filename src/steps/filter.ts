@@ -1,6 +1,6 @@
-import type { AddedHandler, ImmutableProps, RemovedHandler, ModifiedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, RemovedHandler, ModifiedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { pathsMatch, pathStartsWith } from '../util/path.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 /**
  * State tracked for each item seen by the filter step.
@@ -331,10 +331,17 @@ export class FilterBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new FilterStep(input, this.predicate, this.scopeSegments, this.mutableProperties)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new FilterStep(input, this.predicate, this.scopeSegments, this.mutableProperties);
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new FilterStep(up.lastStep, this.predicate, this.scopeSegments, this.mutableProperties)
+        };
     }
 }

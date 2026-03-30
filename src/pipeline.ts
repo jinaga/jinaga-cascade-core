@@ -169,9 +169,25 @@ export interface Step {
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;
 }
 
+export interface BuiltStepGraph {
+    rootInput: PipelineInput<unknown, Record<string, unknown>>;
+    lastStep: Step;
+    sources: Record<string, PipelineInput<unknown, Record<string, unknown>>>;
+}
+
+export interface BuildContext {
+    emitDiagnostic?: (diagnostic: {
+        code:
+            | 'enrich_key_arity_mismatch'
+            | 'enrich_invalid_primary_key_property'
+            | 'enrich_secondary_collection_key_missing';
+        message: string;
+    }) => void;
+}
+
 export interface StepBuilder {
     readonly upstream?: StepBuilder;
     getTypeDescriptor(): TypeDescriptor;
-    buildStep(input: Step): Step;
+    buildGraph(ctx: BuildContext): BuiltStepGraph;
 }
 

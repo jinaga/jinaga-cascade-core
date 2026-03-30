@@ -1,6 +1,8 @@
 import type {
     AddedHandler,
     ArrayDescriptor,
+    BuildContext,
+    BuiltStepGraph,
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
@@ -10,7 +12,7 @@ import type {
     TypeDescriptor
 } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 interface EventRecord {
     immutableProps: ImmutableProps;
@@ -689,17 +691,17 @@ export class ReplaceToDeltaBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new ReplaceToDeltaStep(input, this.entitySegmentPath, this.eventArrayName, this.orderBy, this.properties, this.outputProperties)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new ReplaceToDeltaStep(
-            input,
-            this.entitySegmentPath,
-            this.eventArrayName,
-            this.orderBy,
-            this.properties,
-            this.outputProperties
-        );
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new ReplaceToDeltaStep(up.lastStep, this.entitySegmentPath, this.eventArrayName, this.orderBy, this.properties, this.outputProperties)
+        };
     }
 }

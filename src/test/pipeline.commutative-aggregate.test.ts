@@ -804,7 +804,7 @@ describe('CommutativeAggregateStep', () => {
             
             // Chain with DropPropertyStep to remove the array
             // Note: 'items' exists as an array in the type descriptor at runtime, even if TypeScript can't infer it
-            const dropPropertyStep = new DropPropertyStep<any, any>(aggregateStep, 'items', []);
+            const dropPropertyStep = new DropPropertyStep(aggregateStep, 'items', []);
             
             const outputDescriptor = dropPropertyStep.getTypeDescriptor();
             
@@ -838,7 +838,7 @@ describe('CommutativeAggregateStep', () => {
             
             // Chain with DropPropertyStep to remove the nested array
             // Note: 'items' exists as an array in the type descriptor at runtime, even if TypeScript can't infer it
-            const dropPropertyStep = new DropPropertyStep<any, any>(aggregateStep, 'items', ['cities']);
+            const dropPropertyStep = new DropPropertyStep(aggregateStep, 'items', ['cities']);
             
             const outputDescriptor = dropPropertyStep.getTypeDescriptor();
             

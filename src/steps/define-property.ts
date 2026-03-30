@@ -1,6 +1,6 @@
-import type { DescriptorNode, ImmutableProps, ModifiedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import type { BuildContext, BuiltStepGraph, DescriptorNode, ImmutableProps, ModifiedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 export class DefinePropertyStep<T, K extends string, U> implements Step {
     // Track items and their mutable property values + computed property value
@@ -226,17 +226,18 @@ export class DefinePropertyBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new DefinePropertyStep(input, this.propertyName, this.compute, this.scopeSegments, this.mutableProperties)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new DefinePropertyStep(
-            input,
-            this.propertyName,
-            this.compute,
-            this.scopeSegments,
-            this.mutableProperties
-        );
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new DefinePropertyStep(up.lastStep, this.propertyName, this.compute, this.scopeSegments, this.mutableProperties)
+        };
     }
 }
 

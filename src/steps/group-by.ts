@@ -1,4 +1,4 @@
-import type { AddedHandler, DescriptorNode, ImmutableProps, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, DescriptorNode, ImmutableProps, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { computeGroupKey } from "../util/hash.js";
 import { pathsMatch, pathStartsWith } from "../util/path.js";
 import { emptyDescriptorNode } from '../util/descriptor-transform.js';
@@ -502,14 +502,18 @@ export class GroupByBuilder implements StepBuilder {
         return descriptorStep.getTypeDescriptor();
     }
 
-    buildStep(input: Step): Step {
-        return new GroupByStep<Record<string, unknown>, string, string, string>(
-            input,
-            this.groupingProperties,
-            this.parentArrayName,
-            this.childArrayName,
-            this.scopeSegments
-        );
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new GroupByStep<Record<string, unknown>, string, string, string>(
+                up.lastStep,
+                this.groupingProperties,
+                this.parentArrayName,
+                this.childArrayName,
+                this.scopeSegments
+            )
+        };
     }
 }
 

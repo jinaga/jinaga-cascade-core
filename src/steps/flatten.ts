@@ -1,5 +1,7 @@
 import type {
     AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
@@ -11,7 +13,7 @@ import type {
 } from '../pipeline.js';
 import { computeHash } from '../util/hash.js';
 import { pathsMatch, pathStartsWith } from '../util/path.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 function parentIdentity(outputKeyPath: string[], parentKey: string): string {
     return JSON.stringify({ outputKeyPath, parentKey });
@@ -505,10 +507,17 @@ export class FlattenBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new FlattenStep(input, this.parentPath, this.childPath, this.outputPath)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new FlattenStep(input, this.parentPath, this.childPath, this.outputPath);
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new FlattenStep(up.lastStep, this.parentPath, this.childPath, this.outputPath)
+        };
     }
 }

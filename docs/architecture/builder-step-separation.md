@@ -42,28 +42,39 @@ For each existing Step class, define a corresponding Builder class in the same f
 Every Builder implements:
 
 ```ts
+interface BuiltStepGraph {
+    rootInput: PipelineInput<unknown, Record<string, unknown>>;
+    lastStep: Step;
+    sources: Record<string, PipelineInput<unknown, Record<string, unknown>>>;
+}
+
+interface BuildContext {
+    emitDiagnostic?: (diagnostic: { code: string; message: string }) => void;
+}
+
 interface StepBuilder {
+    readonly upstream?: StepBuilder;
     getTypeDescriptor(): TypeDescriptor;
-    buildStep(input: Step): Step;
+    buildGraph(ctx: BuildContext): BuiltStepGraph;
 }
 ```
 
 - `getTypeDescriptor()` returns the output shape of the step, computed from the configuration and the upstream builder's descriptor. This is called during the fluent method chain to support validation and type inference.
-- `buildStep(input)` constructs a fresh Step wired to the given upstream Step. This is called during `build()` to instantiate the runtime graph.
+- `buildGraph(ctx)` recursively builds the full upstream graph first, then wraps the upstream `lastStep` with a fresh Step for this builder. Returns the complete graph from root to this builder's step. Each builder owns its own wiring; no centralized switch on builder type is needed.
 
-The `InputBuilder` is special: it has no upstream builder. Its `buildStep` creates the `InputStep` that serves as both the root `Step` and the `PipelineInput`.
+The `InputBuilder` is the recursion base case: it has no upstream builder. Its `buildGraph` creates the `InputStep` that serves as both the root `Step` and the `PipelineInput`, with an empty `sources` map.
 
 ### Builder Structure
 
 A Builder captures only the immutable configuration that its Step needs:
 
 ```ts
-class GroupByBuilder<T, K extends keyof T, ParentArrayName extends string, ChildArrayName extends string> {
+class GroupByBuilder implements StepBuilder {
     constructor(
         readonly upstream: StepBuilder,
-        readonly groupingProperties: K[],
-        readonly parentArrayName: ParentArrayName,
-        readonly childArrayName: ChildArrayName,
+        readonly groupingProperties: string[],
+        readonly parentArrayName: string,
+        readonly childArrayName: string,
         readonly scopeSegments: string[]
     ) {}
 
@@ -71,16 +82,50 @@ class GroupByBuilder<T, K extends keyof T, ParentArrayName extends string, Child
         // Compute from upstream.getTypeDescriptor() and configuration
     }
 
-    buildStep(input: Step): Step {
-        return new GroupByStep(input, this.groupingProperties, this.parentArrayName,
-            this.childArrayName, this.scopeSegments);
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new GroupByStep(up.lastStep, this.groupingProperties,
+                this.parentArrayName, this.childArrayName, this.scopeSegments)
+        };
     }
 }
 ```
 
+### EnrichBuilder
+
+`EnrichBuilder` is the graph-branching builder. It builds both its primary upstream graph and its secondary graph, then merges their sources:
+
+```ts
+class EnrichBuilder implements StepBuilder {
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const primary = this.upstream.buildGraph(ctx);
+        const secondary = this.secondaryLastBuilder.buildGraph(ctx);
+        const mergedSources = {
+            ...primary.sources,
+            ...secondary.sources,
+            [this.sourceName]: secondary.rootInput
+        };
+        return {
+            rootInput: primary.rootInput,
+            sources: mergedSources,
+            lastStep: new EnrichStep(
+                primary.lastStep, secondary.lastStep,
+                this.scopeSegments, this.primaryKey,
+                this.asProperty, this.whenMissing,
+                ctx.emitDiagnostic
+            )
+        };
+    }
+}
+```
+
+No `instanceof` checks or special-casing in the graph assembly function. The builder knows how to build itself.
+
 ### Step Class Changes
 
-Step constructors change from accepting `input: Step` as the upstream (and registering handlers in the constructor) to receiving the upstream Step from `buildStep`. The Step class itself is unchanged in behavior — it still registers handlers in its constructor, maintains mutable state, and implements the `Step` interface.
+Step constructors change from accepting `input: Step` as the upstream (and registering handlers in the constructor) to receiving the upstream Step from `buildGraph`. The Step class itself is unchanged in behavior — it still registers handlers in its constructor, maintains mutable state, and implements the `Step` interface.
 
 ## PipelineBuilder Changes
 
@@ -107,25 +152,25 @@ groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
 
 ### build()
 
-`build()` walks the builder chain from root to leaf, calling `buildStep` on each builder to produce a fresh Step graph:
+`build()` calls `buildGraph` on the last builder, which recursively constructs the entire Step graph:
 
 ```ts
 build(
     setState: (transform: Transform<KeyedArray<T>>) => void,
     runtimeOptions: PipelineRuntimeOptions = {}
 ): Pipeline<TStart, TSources> {
-    // 1. Instantiate all Steps from Builders
-    const rootStep = this.rootBuilder.buildStep();
-    const lastStep = this.lastBuilder.buildChain(rootStep);
+    const graph = buildStepGraph(this.lastBuilder, emitDiagnostic);
+    // graph.rootInput is the InputStep (PipelineInput)
+    // graph.lastStep is the final Step in the chain
+    // graph.sources are wired to the root InputStep
 
-    // 2. Wire the last step to a new runtime session
-    const session = new PipelineRuntimeSessionImpl(rootStep, setState, runtimeOptions);
-    // ... register handlers on lastStep for each path segment
+    const session = new PipelineRuntimeSessionImpl(graph.rootInput, setState, runtimeOptions);
+    // ... register handlers on graph.lastStep for each path segment
     return session;
 }
 ```
 
-Because every `build()` call constructs new Step instances, two calls produce two fully independent pipeline graphs.
+Because every `build()` call constructs new Step instances via `buildGraph`, two calls produce two fully independent pipeline graphs.
 
 ### getTypeDescriptor()
 
@@ -137,7 +182,7 @@ Steps that perform build-time validation (e.g., `CumulativeSumStep` checking tha
 
 ## Enrich and Source Wiring
 
-`EnrichBuilder` captures the secondary `StepBuilder` chain (from the secondary `PipelineBuilder`). At `build()` time, the secondary builder chain is also instantiated into fresh Steps. Source routing (the `sources` property on `Pipeline`) is wired to the freshly created secondary `InputStep`.
+`EnrichBuilder` captures the secondary `StepBuilder` chain (from the secondary `PipelineBuilder`). At `build()` time, the secondary builder chain is also instantiated into fresh Steps via `buildGraph`. Source routing (the `sources` property on `Pipeline`) is collected in the `BuiltStepGraph.sources` map by `EnrichBuilder.buildGraph` and wired to the root `InputStep` by `buildStepGraph`.
 
 ## Degrees of Freedom
 

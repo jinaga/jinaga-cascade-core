@@ -1,5 +1,7 @@
 import type {
     AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
@@ -11,7 +13,7 @@ import type {
 } from '../pipeline.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
 import { appendMutableIfMissing, appendObjectIfMissing, emptyDescriptorNode } from '../util/descriptor-transform.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 /**
  * Computes a hash key for a key path (for map lookups).
@@ -400,17 +402,18 @@ export class PickByMinMaxBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new PickByMinMaxStep(input, this.segmentPath, this.propertyName, this.comparisonProperty, this.comparator)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new PickByMinMaxStep(
-            input,
-            this.segmentPath,
-            this.propertyName,
-            this.comparisonProperty,
-            this.comparator
-        );
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new PickByMinMaxStep(up.lastStep, this.segmentPath, this.propertyName, this.comparisonProperty, this.comparator)
+        };
     }
 }
 

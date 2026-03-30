@@ -1,5 +1,7 @@
 import type {
     AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
@@ -11,7 +13,7 @@ import type {
 import { appendMutableIfMissing, appendObjectIfMissing } from '../util/descriptor-transform.js';
 import { pathsMatch } from '../util/path.js';
 import { getPathSegmentsFromDescriptor as getAllPathSegmentsFromDescriptor } from '../pipeline.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import { getDescriptorFromFactory, DescriptorStep } from '../step-builder-utils.js';
 
 function keyPathHash(keyPath: string[]): string {
     return keyPath.join('::');
@@ -65,26 +67,40 @@ export class EnrichBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new EnrichStep(
+                input,
+                new DescriptorStep(this.secondaryLastBuilder.getTypeDescriptor()),
+                this.scopeSegments,
+                this.primaryKey,
+                this.asProperty,
+                this.whenMissing
+            )
+        );
     }
 
-    buildStep(input: Step): Step {
-        // buildStepGraph handles enrich wiring because it must instantiate
-        // the secondary graph and source routing in lockstep.
-        const secondaryDescriptorStep = {
-            getTypeDescriptor: () => this.secondaryLastBuilder.getTypeDescriptor(),
-            onAdded: () => undefined,
-            onRemoved: () => undefined,
-            onModified: () => undefined
-        } as Step;
-        return new EnrichStep(
-            input,
-            secondaryDescriptorStep,
-            this.scopeSegments,
-            this.primaryKey,
-            this.asProperty,
-            this.whenMissing
-        );
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const primary = this.upstream.buildGraph(ctx);
+        const secondary = this.secondaryLastBuilder.buildGraph(ctx);
+        const mergedSources = {
+            ...primary.sources,
+            ...secondary.sources,
+            [this.sourceName]: secondary.rootInput
+        };
+        return {
+            rootInput: primary.rootInput,
+            sources: mergedSources,
+            lastStep: new EnrichStep(
+                primary.lastStep,
+                secondary.lastStep,
+                this.scopeSegments,
+                this.primaryKey,
+                this.asProperty,
+                this.whenMissing,
+                ctx.emitDiagnostic
+            )
+        };
     }
 }
 
