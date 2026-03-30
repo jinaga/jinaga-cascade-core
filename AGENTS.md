@@ -23,10 +23,13 @@ Balance this with performance. The goal is to minimize fields without increasing
 
 ## Compatibility vs Correctness
 
-Default to semantic and type-system correctness over backward compatibility when the two conflict. Do not add compatibility shims, overloads, or transitional behavior unless explicitly requested. When a breaking change is needed to align compile-time and runtime semantics, make the break intentional, minimal, and well-tested.
+This library is pre-1.0 and has no backward-compatibility commitment by default.
+
+Default to semantic and type-system correctness over backward compatibility when the two conflict. Do not add compatibility shims, overloads, transitional behavior, or interface-preserving adapters unless explicitly requested in this conversation. Preserving the existing public interface is not a goal unless the user asks for it directly. When a breaking change is needed to align compile-time and runtime semantics, make the break intentional, minimal, and well-tested.
 
 ### Enforcement
 
 - Do not preserve legacy behavior via wrappers, compatibility helpers, static bridge APIs, or dual paths unless explicitly requested by the user in this conversation.
 - Prefer one semantically correct API over transitional dual APIs.
+- Do not argue for keeping an existing public interface solely to avoid breaking changes.
 - When multiple valid designs exist (for example strict vs lenient behavior or old vs new API), present options and get user selection before implementing.
