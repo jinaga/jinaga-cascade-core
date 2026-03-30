@@ -595,7 +595,7 @@ export class PipelineBuilder<
             this.lastBuilder,
             propertyName,
             compute as (item: unknown) => U,
-            this.scopeSegments as string[],
+            this.scopeSegments,
             mutableProperties
         );
         return this.rootScoped(newBuilder);
@@ -613,7 +613,7 @@ export class PipelineBuilder<
         const newBuilder = new DropPropertyBuilder(
             this.lastBuilder,
             propertyName as string,
-            this.scopeSegments as string[]
+            this.scopeSegments
         );
         return this.rootScoped(newBuilder);
     }
@@ -640,7 +640,7 @@ export class PipelineBuilder<
             groupingProperties as string[],
             arrayName,
             inferredChildArrayName,
-            this.scopeSegments as string[]
+            this.scopeSegments
         );
         return this.rootScoped<
             Path extends []
@@ -1143,7 +1143,7 @@ export class PipelineBuilder<
         const newBuilder = new FilterBuilder(
             this.lastBuilder,
             predicate as (item: unknown) => boolean,
-            this.scopeSegments as string[],
+            this.scopeSegments,
             mutableProperties
         );
         return new PipelineBuilder(this.rootBuilder, newBuilder, this.scopeSegments, this.diagnosticBridge);
@@ -1184,7 +1184,7 @@ export class PipelineBuilder<
             this.lastBuilder,
             sourceName,
             secondaryPipeline.lastBuilder,
-            this.scopeSegments as string[],
+            this.scopeSegments,
             [...primaryKey],
             as,
             whenMissing as ImmutableProps | undefined
