@@ -21,10 +21,16 @@ export class InputStep<T, TSources extends Record<string, unknown> = EmptySource
     private addedHandlers: AddedHandler[] = [];
     private removedHandlers: RemovedHandler[] = [];
 
-    sources: PipelineSources<TSources>;
+    private _sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>> = {};
 
-    constructor() {
-        this.sources = {} as PipelineSources<TSources>;
+    /**
+     * The runtime map stores untyped sources; the cast to PipelineSources<TSources> is sound
+     * because graph-building always populates this with the correct InputStep instances.
+     * TypeScript cannot prove this structurally because PipelineSources uses a conditional mapped
+     * type that the checker cannot relate to a plain Record.
+     */
+    get sources(): PipelineSources<TSources> {
+        return this._sources as unknown as PipelineSources<TSources>;
     }
 
     add(key: string, immutableProps: T): void {
@@ -56,7 +62,7 @@ export class InputStep<T, TSources extends Record<string, unknown> = EmptySource
     }
 
     setSources(sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>>): void {
-        this.sources = sources as unknown as PipelineSources<TSources>;
+        this._sources = sources;
     }
 }
 

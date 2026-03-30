@@ -161,8 +161,21 @@ type KeyedArray<T> = { key: string; value: T }[];
 export class EnrichStep implements Step {
     private readonly primaryRowsById = new Map<string, PrimaryRecord>();
     private readonly primaryIdsByJoinKey = new Map<string, Set<string>>();
+    /**
+     * O(1) join index: secondary collection-key hash → root-level secondary row.
+     * This is maintained alongside `secondaryState` to avoid an O(n) scan of
+     * `secondaryState` on every primary add/remove. The two fields are complementary:
+     * `secondaryState` is the hierarchical source of truth (mutated incrementally via
+     * the keyed-array helpers), while `secondaryRowByJoinKey` indexes its root entries
+     * by join key for fast lookup.
+     */
     private readonly secondaryRowByJoinKey = new Map<string, SecondaryRecord>();
     private readonly modifiedHandlers: ModifiedHandler[] = [];
+    /**
+     * Full hierarchical secondary collection, kept as a `KeyedArray` so nested
+     * sub-arrays can be mutated incrementally. Root-level rows are mirrored into
+     * `secondaryRowByJoinKey` for O(1) enrichment lookups.
+     */
     private secondaryState: KeyedArray<ImmutableProps> = [];
     private readonly secondaryCollectionKey: string[];
 
@@ -551,8 +564,8 @@ function addToKeyedArray<T>(
         return state;
     }
     const existingItem = state[existingItemIndex];
-    const value = existingItem.value as Record<string, unknown>;
-    const existingArray = (value[segment] as KeyedArray<unknown>) || [];
+    const existingValue = existingItem.value as Record<string, unknown>;
+    const existingArray = (existingValue[segment] as KeyedArray<unknown>) || [];
     const modifiedArray = addToKeyedArray(
         existingArray,
         segmentPath.slice(1),
@@ -563,7 +576,7 @@ function addToKeyedArray<T>(
     const modifiedItem = {
         key: parentKey,
         value: {
-            ...value,
+            ...existingValue,
             [segment]: modifiedArray
         } as T
     };

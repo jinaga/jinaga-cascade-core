@@ -357,14 +357,14 @@ export class CommutativeAggregateStep<
     }
 }
 
-export class CommutativeAggregateBuilder<TAggregate> implements StepBuilder {
+export class CommutativeAggregateBuilder<TItem, TAggregate> implements StepBuilder {
     constructor(
         readonly upstream: StepBuilder,
         private segmentPath: string[],
         private propertyName: string,
         private config: {
-            add: AddOperator<ImmutableProps, TAggregate>;
-            subtract: SubtractOperator<ImmutableProps, TAggregate>;
+            add: AddOperator<TItem, TAggregate>;
+            subtract: SubtractOperator<TItem, TAggregate>;
         },
         private propertyToAggregate?: string
     ) {
@@ -376,13 +376,16 @@ export class CommutativeAggregateBuilder<TAggregate> implements StepBuilder {
 
     buildGraph(ctx: BuildContext): BuiltStepGraph {
         const up = this.upstream.buildGraph(ctx);
+        // At runtime, the step receives ImmutableProps from AddedHandler; TItem is a
+        // compile-time refinement that is always a structural subtype of ImmutableProps.
+        const runtimeConfig = this.config as unknown as CommutativeAggregateConfig<ImmutableProps, TAggregate>;
         return {
             ...up,
             lastStep: new CommutativeAggregateStep(
                 up.lastStep,
                 this.segmentPath,
                 this.propertyName,
-                this.config,
+                runtimeConfig,
                 this.propertyToAggregate,
                 this.upstream.getTypeDescriptor()
             )

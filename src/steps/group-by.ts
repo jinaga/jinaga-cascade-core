@@ -123,16 +123,12 @@ export class GroupByStep<
     itemKeyToGroupKey: Map<string, string> = new Map<string, string>();
     // Maps composite key (parent path + group key) to item keys - tracks groups per parent context
     groupKeyToItemKeys: Map<string, Set<string>> = new Map<string, Set<string>>();
-    
+
     // Maps item key to its parent key path for correct emission
     itemKeyToParentKeyPath: Map<string, string[]> = new Map<string, string[]>();
-    // Maps item key to its composite key for removal
-    itemKeyToCompositeKey: Map<string, string> = new Map<string, string>();
-    
-    // Maps item key to its full immutable props (for re-grouping)
+
+    // Maps item key to its full immutable props (for re-grouping on mutable grouping properties)
     itemKeyToImmutableProps: Map<string, ImmutableProps> = new Map<string, ImmutableProps>();
-    // Maps item key to its current grouping values (for re-grouping)
-    itemKeyToGroupingValues: Map<string, ImmutableProps> = new Map<string, ImmutableProps>();
 
     private readonly childArrayName: ChildArrayName;
     constructor(
@@ -311,62 +307,67 @@ export class GroupByStep<
     /**
      * Handle when a mutable grouping property changes - re-group the item if necessary
      */
+    private extractGroupingValues(immutableProps: ImmutableProps): ImmutableProps {
+        const groupingValues: ImmutableProps = {};
+        for (const prop of Object.keys(immutableProps)) {
+            if (this.groupingProperties.includes(prop as K)) {
+                groupingValues[prop] = immutableProps[prop];
+            }
+        }
+        return groupingValues;
+    }
+
     private handleGroupingPropertyChange(keyPath: string[], key: string, propertyName: string, _oldValue: unknown, newValue: unknown): void {
         // Find the item - key is the item key at the scope level
         const itemKey = keyPath.length > 0 ? keyPath[keyPath.length - 1] : key;
-        
-        if (!this.itemKeyToGroupKey.has(itemKey)) {
+
+        const fullImmutableProps = this.itemKeyToImmutableProps.get(itemKey);
+        if (!fullImmutableProps) {
             return; // Item not tracked
         }
-        
-        // Get the current grouping values and update with new value
-        const currentGroupingValues = this.itemKeyToGroupingValues.get(itemKey);
-        if (!currentGroupingValues) {
-            return;
-        }
-        
-        const oldGroupingValues = { ...currentGroupingValues };
-        const newGroupingValues = { ...currentGroupingValues, [propertyName]: newValue };
-        
+
+        const oldGroupingValues = this.extractGroupingValues(fullImmutableProps);
+        const newGroupingValues = { ...oldGroupingValues, [propertyName]: newValue };
+
         // Compute old and new group keys
         const oldGroupKey = computeGroupKey(oldGroupingValues, this.groupingProperties.map(prop => prop.toString()));
         const newGroupKey = computeGroupKey(newGroupingValues, this.groupingProperties.map(prop => prop.toString()));
-        
+
+        // Update stored full props to reflect the new value
+        this.itemKeyToImmutableProps.set(itemKey, { ...fullImmutableProps, [propertyName]: newValue });
+
         // If the group key hasn't changed, no re-grouping needed
         if (oldGroupKey === newGroupKey) {
-            // Just update the stored grouping values
-            this.itemKeyToGroupingValues.set(itemKey, newGroupingValues);
             return;
         }
-        
+
         // Re-group the item: remove from old group, add to new group
         const parentKeyPath = this.itemKeyToParentKeyPath.get(itemKey) || [];
-        const oldCompositeKey = this.itemKeyToCompositeKey.get(itemKey)!;
+        const oldCompositeKey = this.getCompositeGroupKey(parentKeyPath, oldGroupKey);
         const newCompositeKey = this.getCompositeGroupKey(parentKeyPath, newGroupKey);
-        
-        // Get the non-grouping properties for item handlers
-        const fullImmutableProps = this.itemKeyToImmutableProps.get(itemKey) || {};
+
+        // Extract non-grouping props for item handlers
         const nonGroupingProps: ImmutableProps = {};
-        Object.keys(fullImmutableProps).forEach(prop => {
+        for (const prop of Object.keys(fullImmutableProps)) {
             if (!this.groupingProperties.includes(prop as K)) {
                 nonGroupingProps[prop] = fullImmutableProps[prop];
             }
-        });
-        
+        }
+
         // 1. Remove item from old group
         this.itemRemovedHandlers.forEach(handler => handler([...parentKeyPath, oldGroupKey], itemKey, nonGroupingProps));
-        
+
         const oldGroupItems = this.groupKeyToItemKeys.get(oldCompositeKey);
         if (oldGroupItems) {
             oldGroupItems.delete(itemKey);
-            
+
             // If old group is now empty, remove it
             if (oldGroupItems.size === 0) {
                 this.groupRemovedHandlers.forEach(handler => handler(parentKeyPath, oldGroupKey, oldGroupingValues));
                 this.groupKeyToItemKeys.delete(oldCompositeKey);
             }
         }
-        
+
         // 2. Add item to new group
         const isNewGroup = !this.groupKeyToItemKeys.has(newCompositeKey);
         if (isNewGroup) {
@@ -375,113 +376,69 @@ export class GroupByStep<
             this.groupAddedHandlers.forEach(handler => handler(parentKeyPath, newGroupKey, newGroupingValues));
         }
         this.groupKeyToItemKeys.get(newCompositeKey)!.add(itemKey);
-        
+
         // Update item's group mapping
         this.itemKeyToGroupKey.set(itemKey, newGroupKey);
-        this.itemKeyToCompositeKey.set(itemKey, newCompositeKey);
-        this.itemKeyToGroupingValues.set(itemKey, newGroupingValues);
-        
+
         // Notify item handlers of the addition to new group
         this.itemAddedHandlers.forEach(handler => handler([...parentKeyPath, newGroupKey], itemKey, nonGroupingProps));
     }
 
     private handleAdded(keyPath: string[], itemKey: string, immutableProps: ImmutableProps) {
-        // keyPath is the runtime key path at the scope level - store it for emissions
         const parentKeyPath = keyPath;
         this.itemKeyToParentKeyPath.set(itemKey, parentKeyPath);
-        
-        // Store full immutable props for potential re-grouping
         this.itemKeyToImmutableProps.set(itemKey, immutableProps);
-        
-        // Extract the grouping property values from the object
-        const groupingValues: ImmutableProps = {};
-        Object.keys(immutableProps).forEach(prop => {
-            if (this.groupingProperties.includes(prop as K)) {
-                groupingValues[prop] = immutableProps[prop];
-            }
-        });
-        
-        // Store grouping values for potential re-grouping
-        this.itemKeyToGroupingValues.set(itemKey, groupingValues);
-        
-        // Compute the group key from the extracted values
+
+        const groupingValues = this.extractGroupingValues(immutableProps);
         const groupKey = computeGroupKey(groupingValues, this.groupingProperties.map(prop => prop.toString()));
-        
-        // Create composite key that includes parent context for proper group tracking
         const compositeKey = this.getCompositeGroupKey(parentKeyPath, groupKey);
-        
-        // Store item-to-group mapping
+
         this.itemKeyToGroupKey.set(itemKey, groupKey);
-        this.itemKeyToCompositeKey.set(itemKey, compositeKey);
-        
-        // Add item key to group's set - use composite key to track per-parent groups
+
         const isNewGroup = !this.groupKeyToItemKeys.has(compositeKey);
         if (isNewGroup) {
             this.groupKeyToItemKeys.set(compositeKey, new Set<string>());
-            // Notify the group handlers of the new group object at the parent key path
             this.groupAddedHandlers.forEach(handler => handler(parentKeyPath, groupKey, groupingValues));
         }
         this.groupKeyToItemKeys.get(compositeKey)!.add(itemKey);
-        
-        // Extract the non-grouping properties from the object
+
         const nonGroupingProps: ImmutableProps = {};
-        Object.keys(immutableProps).forEach(prop => {
+        for (const prop of Object.keys(immutableProps)) {
             if (!this.groupingProperties.includes(prop as K)) {
                 nonGroupingProps[prop] = immutableProps[prop];
             }
-        });
-        // Notify the item handlers of the new item object at parent key path + groupKey
+        }
         this.itemAddedHandlers.forEach(handler => handler([...parentKeyPath, groupKey], itemKey, nonGroupingProps));
     }
 
     private handleRemoved(keyPath: string[], itemKey: string, immutableProps: ImmutableProps) {
-        // Get the parent key path for this item key
         const parentKeyPath = this.itemKeyToParentKeyPath.get(itemKey) || keyPath;
-        
-        // Look up group key and composite key
         const groupKey = this.itemKeyToGroupKey.get(itemKey);
-        const compositeKey = this.itemKeyToCompositeKey.get(itemKey);
-        if (groupKey === undefined || compositeKey === undefined) {
+        if (groupKey === undefined) {
             throw new Error(`GroupByStep: item with key "${itemKey}" not found`);
         }
-        
-        // Extract the non-grouping properties from the object for item handlers
+        const compositeKey = this.getCompositeGroupKey(parentKeyPath, groupKey);
+
         const nonGroupingProps: ImmutableProps = {};
-        Object.keys(immutableProps).forEach(prop => {
+        for (const prop of Object.keys(immutableProps)) {
             if (!this.groupingProperties.includes(prop as K)) {
                 nonGroupingProps[prop] = immutableProps[prop];
             }
-        });
-        
-        // Notify item removed handlers at parent key path + groupKey
+        }
+
         this.itemRemovedHandlers.forEach(handler => handler([...parentKeyPath, groupKey], itemKey, nonGroupingProps));
-        
-        // Remove item key from tracking
+
         this.itemKeyToGroupKey.delete(itemKey);
         this.itemKeyToParentKeyPath.delete(itemKey);
-        this.itemKeyToCompositeKey.delete(itemKey);
         this.itemKeyToImmutableProps.delete(itemKey);
-        this.itemKeyToGroupingValues.delete(itemKey);
-        
-        // Remove item key from group's set - use composite key for per-parent tracking
+
         const itemKeys = this.groupKeyToItemKeys.get(compositeKey);
         if (itemKeys) {
             itemKeys.delete(itemKey);
-            
-            // Check if group is empty
+
             if (itemKeys.size === 0) {
-                // Extract the grouping property values from the object for group handlers
-                const groupingValues: ImmutableProps = {};
-                Object.keys(immutableProps).forEach(prop => {
-                    if (this.groupingProperties.includes(prop as K)) {
-                        groupingValues[prop] = immutableProps[prop];
-                    }
-                });
-                
-                // Notify group removed handlers at parent key path
+                const groupingValues = this.extractGroupingValues(immutableProps);
                 this.groupRemovedHandlers.forEach(handler => handler(parentKeyPath, groupKey, groupingValues));
-                
-                // Clean up tracking
                 this.groupKeyToItemKeys.delete(compositeKey);
             }
         }

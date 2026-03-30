@@ -33,12 +33,16 @@ function transformAverageAggregateDescriptor(
 }
 
 /**
- * Tracks sum and count separately for computing average incrementally.
+ * Tracks sum and count for computing average incrementally.
+ * Average is derived as sum/count on read; not stored separately.
  */
 interface AverageState {
     sum: number;
     count: number;
-    average: number | undefined;
+}
+
+function averageFromState(state: AverageState): number | undefined {
+    return state.count > 0 ? state.sum / state.count : undefined;
 }
 
 /**
@@ -53,23 +57,20 @@ export class AverageAggregateStep<
     TPath extends string[],
     TPropertyName extends string
 > implements Step {
-    
+
     /** Maps parent key path hash to average state (sum and count) */
     private averageStates: Map<string, AverageState> = new Map();
-    
+
     /** Handlers for modified events at various levels */
     private modifiedHandlers: Array<{
         pathSegments: string[];
         propertyName: string;
         handler: ModifiedHandler;
     }> = [];
-    
-    /** Maps parent key path hash to current average value (for oldValue tracking) */
-    private aggregateValues: Map<string, number | undefined> = new Map();
-    
+
     /** Whether the property being aggregated is mutable (auto-detected) */
     private isPropertyMutable: boolean = false;
-    
+
     /** Maps parent key path hash to Map<itemKey, value> for tracking individual item values */
     private itemValues: Map<string, Map<string, number>> = new Map();
     
@@ -139,63 +140,53 @@ export class AverageAggregateStep<
         return pathSegments.every((segment, i) => segment === parentSegments[i]);
     }
     
+    private emitModified(parentKeyPath: string[], oldAverage: number | undefined, newAverage: number | undefined): void {
+        if (parentKeyPath.length > 0) {
+            const parentKey = parentKeyPath[parentKeyPath.length - 1];
+            const keyPathToParent = parentKeyPath.slice(0, -1);
+            this.modifiedHandlers.forEach(({ handler }) => {
+                handler(keyPathToParent, parentKey, oldAverage, newAverage);
+            });
+        } else {
+            this.modifiedHandlers.forEach(({ handler }) => {
+                handler([], '', oldAverage, newAverage);
+            });
+        }
+    }
+
     /**
      * Handle when an item is added to the target array
      */
     private handleItemAdded(keyPath: string[], itemKey: string, item: ImmutableProps): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        
-        // Initialize itemValues map for this parent if needed
+
         if (!this.itemValues.has(parentKeyHash)) {
             this.itemValues.set(parentKeyHash, new Map());
         }
-        
-        // Extract numeric value (ignore null/undefined)
+
         const value = item[this.numericProperty];
-        
+
         // If property is mutable and value is not available yet, wait for onModified
         if (this.isPropertyMutable && (value === null || value === undefined)) {
-            // Track that this item exists but has no value yet
-            // The value will come via handleItemPropertyChanged
             return;
         }
-        
+
+        const oldAverage = averageFromState(this.averageStates.get(parentKeyHash) ?? { sum: 0, count: 0 });
+
         if (value !== null && value !== undefined) {
             const numValue = Number(value);
             if (Number.isFinite(numValue)) {
-                // Track individual item value
                 this.itemValues.get(parentKeyHash)!.set(itemKey, numValue);
-                
-                // Update sum and count
-                const state = this.averageStates.get(parentKeyHash) || { sum: 0, count: 0, average: undefined };
+                const state = this.averageStates.get(parentKeyHash) ?? { sum: 0, count: 0 };
                 state.sum += numValue;
                 state.count += 1;
-                state.average = state.sum / state.count;
                 this.averageStates.set(parentKeyHash, state);
             }
         }
-        
-        // Compute new average
-        const state = this.averageStates.get(parentKeyHash);
-        const oldAverage = this.aggregateValues.get(parentKeyHash);
-        const newAverage = (state && state.count > 0) ? state.average : undefined;
-        this.aggregateValues.set(parentKeyHash, newAverage);
-        
-        // Emit modification event
-        if (parentKeyPath.length > 0) {
-            const parentKey = parentKeyPath[parentKeyPath.length - 1];
-            const keyPathToParent = parentKeyPath.slice(0, -1);
-            
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, oldAverage, newAverage);
-            });
-        } else {
-            // Parent is at root level
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', oldAverage, newAverage);
-            });
-        }
+
+        const newAverage = averageFromState(this.averageStates.get(parentKeyHash) ?? { sum: 0, count: 0 });
+        this.emitModified(parentKeyPath, oldAverage, newAverage);
     }
     
     /**
@@ -204,80 +195,48 @@ export class AverageAggregateStep<
     private handleItemPropertyChanged(keyPath: string[], itemKey: string, _oldValue: unknown, newValue: unknown): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        
-        // Get or create itemValues map for this parent
+
         if (!this.itemValues.has(parentKeyHash)) {
             this.itemValues.set(parentKeyHash, new Map());
         }
         const itemValuesMap = this.itemValues.get(parentKeyHash)!;
-        
-        // Get old numeric value for this item (if it exists)
+
         const oldNumValue = itemValuesMap.get(itemKey);
         const hadOldValue = oldNumValue !== undefined;
-        
-        // Parse new value
+
         const newNum = (newValue !== null && newValue !== undefined) ? Number(newValue) : NaN;
         const hasNewValue = Number.isFinite(newNum);
-        
-        // Update itemValues map
+
         if (hasNewValue) {
             itemValuesMap.set(itemKey, newNum);
         } else {
             itemValuesMap.delete(itemKey);
         }
-        
-        // Get or create state
+
         let state = this.averageStates.get(parentKeyHash);
         if (!state) {
-            state = { sum: 0, count: 0, average: undefined };
+            state = { sum: 0, count: 0 };
             this.averageStates.set(parentKeyHash, state);
         }
-        
-        const oldAverage = state.average;
-        
-        // Update sum and count based on what changed
+
+        const oldAverage = averageFromState(state);
+
         if (hadOldValue && hasNewValue) {
-            // Value changed: sum = sum - oldValue + newValue (count stays same)
             state.sum = state.sum - oldNumValue + newNum;
         } else if (!hadOldValue && hasNewValue) {
-            // New value added: increment both sum and count
             state.sum += newNum;
             state.count += 1;
         } else if (hadOldValue && !hasNewValue) {
-            // Value removed: decrement both sum and count
             state.sum -= oldNumValue;
             state.count -= 1;
         }
-        
-        // Calculate new average
-        if (state.count > 0) {
-            state.average = state.sum / state.count;
-        } else {
-            state.average = undefined;
+
+        if (state.count === 0) {
             this.averageStates.delete(parentKeyHash);
         }
-        
-        // Update aggregate values cache
-        const newAverage = state.average;
-        if (newAverage !== undefined) {
-            this.aggregateValues.set(parentKeyHash, newAverage);
-        } else {
-            this.aggregateValues.delete(parentKeyHash);
-        }
-        
-        // Emit modification event
-        if (parentKeyPath.length > 0) {
-            const parentKey = parentKeyPath[parentKeyPath.length - 1];
-            const keyPathToParent = parentKeyPath.slice(0, -1);
-            
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, oldAverage, newAverage);
-            });
-        } else {
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', oldAverage, newAverage);
-            });
-        }
+
+        const newAverage = averageFromState(state);
+        this.emitModified(parentKeyPath, oldAverage, newAverage);
     }
     
     /**
@@ -286,12 +245,10 @@ export class AverageAggregateStep<
     private handleItemRemoved(keyPath: string[], itemKey: string, item: ImmutableProps): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        
-        // Get the value to remove - either from itemValues map (for mutable) or from item (for immutable)
+
         let valueToRemove: number | undefined;
-        
+
         if (this.isPropertyMutable) {
-            // For mutable properties, look up the tracked value
             const itemValuesMap = this.itemValues.get(parentKeyHash);
             if (itemValuesMap) {
                 valueToRemove = itemValuesMap.get(itemKey);
@@ -301,7 +258,6 @@ export class AverageAggregateStep<
                 }
             }
         } else {
-            // For immutable properties, read from item
             const value = item[this.numericProperty];
             if (value !== null && value !== undefined) {
                 const numValue = Number(value);
@@ -310,48 +266,21 @@ export class AverageAggregateStep<
                 }
             }
         }
-        
-        // Update sum and count if value was numeric
-        if (valueToRemove !== undefined) {
-            const state = this.averageStates.get(parentKeyHash);
-            if (state) {
-                state.sum -= valueToRemove;
-                state.count -= 1;
-                
-                if (state.count === 0) {
-                    state.average = undefined;
-                    this.averageStates.delete(parentKeyHash);
-                } else {
-                    state.average = state.sum / state.count;
-                    this.averageStates.set(parentKeyHash, state);
-                }
+
+        const stateBefore = this.averageStates.get(parentKeyHash);
+        const oldAverage = averageFromState(stateBefore ?? { sum: 0, count: 0 });
+
+        if (valueToRemove !== undefined && stateBefore) {
+            stateBefore.sum -= valueToRemove;
+            stateBefore.count -= 1;
+            if (stateBefore.count === 0) {
+                this.averageStates.delete(parentKeyHash);
             }
         }
-        
-        // Compute new average
-        const state = this.averageStates.get(parentKeyHash);
-        const oldAverage = this.aggregateValues.get(parentKeyHash);
-        const newAverage = (state && state.count > 0) ? state.average : undefined;
-        
-        if (!state || state.count === 0) {
-            this.aggregateValues.delete(parentKeyHash);
-        } else {
-            this.aggregateValues.set(parentKeyHash, newAverage);
-        }
-        
-        // Emit modification event
-        if (parentKeyPath.length > 0) {
-            const parentKey = parentKeyPath[parentKeyPath.length - 1];
-            const keyPathToParent = parentKeyPath.slice(0, -1);
-            
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, oldAverage, newAverage);
-            });
-        } else {
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', oldAverage, newAverage);
-            });
-        }
+
+        const stateAfter = this.averageStates.get(parentKeyHash);
+        const newAverage = averageFromState(stateAfter ?? { sum: 0, count: 0 });
+        this.emitModified(parentKeyPath, oldAverage, newAverage);
     }
 }
 

@@ -552,7 +552,7 @@ export class PipelineBuilder<
     constructor(
         private rootBuilder: StepBuilder,
         private lastBuilder: StepBuilder,
-        private scopeSegments: Path = [] as unknown as Path,
+        private scopeSegments: string[] = [],
         private diagnosticBridge: DeferredDiagnosticBridge = createDeferredDiagnosticBridge()
     ) {}
 
@@ -587,7 +587,7 @@ export class PipelineBuilder<
             this.scopeSegments as string[],
             mutableProperties
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     dropProperty<K extends keyof NavigateToPath<T, Path>>(propertyName: K): PipelineBuilder<
@@ -604,7 +604,7 @@ export class PipelineBuilder<
             propertyName as string,
             this.scopeSegments as string[]
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
@@ -631,7 +631,7 @@ export class PipelineBuilder<
             inferredChildArrayName,
             this.scopeSegments as string[]
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     flatten<
@@ -658,7 +658,7 @@ export class PipelineBuilder<
         const newBuilder = new FlattenBuilder(this.lastBuilder, parentPath, childPath, outputPath);
         // Preserve definition-time validation semantics for invalid flatten configurations.
         newBuilder.getTypeDescriptor();
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     /*
@@ -736,13 +736,10 @@ export class PipelineBuilder<
             this.lastBuilder,
             fullSegmentPath,
             propertyName,
-            {
-                add: add as AddOperator<ImmutableProps, TAggregate>,
-                subtract: subtract as SubtractOperator<ImmutableProps, TAggregate>
-            },
+            { add, subtract },
             propertyToAggregate
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     cumulativeSum<
@@ -882,7 +879,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => left - right
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -921,7 +918,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => right - left
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     replaceToDelta<
@@ -966,7 +963,7 @@ export class PipelineBuilder<
         );
         // Preserve definition-time validation semantics for invalid replaceToDelta configuration.
         newBuilder.getTypeDescriptor();
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -1004,7 +1001,7 @@ export class PipelineBuilder<
             outputProperty,
             propertyName
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -1044,7 +1041,7 @@ export class PipelineBuilder<
             propertyName,
             compareMixedPrimitiveValues
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -1084,7 +1081,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => compareMixedPrimitiveValues(right, left)
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -1351,9 +1348,7 @@ function addToKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const value = existingItem.value as Record<string, any>;
+        const value = existingItem.value as Record<string, unknown>;
         const existingArray = (value[segment] as KeyedArray<unknown>) || [];
         const modifiedArray = addToKeyedArray(
             existingArray,
@@ -1419,9 +1414,7 @@ function removeFromKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const value = existingItem.value as Record<string, any>;
+        const value = existingItem.value as Record<string, unknown>;
         const existingArray = (value[segment] as KeyedArray<unknown>) || [];
         const modifiedArray = removeFromKeyedArray(
             existingArray,
@@ -1479,8 +1472,7 @@ function modifyInKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const existingValue = existingItem.value as Record<string, any>;
+        const existingValue = existingItem.value as Record<string, unknown>;
         const modifiedItem = {
             key: key,
             value: {
@@ -1520,9 +1512,7 @@ function modifyInKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const existingValue = existingItem.value as Record<string, any>;
+        const existingValue = existingItem.value as Record<string, unknown>;
         const existingArray = (existingValue[segment] as KeyedArray<unknown>) || [];
         const modifiedArray = modifyInKeyedArray(
             existingArray,
