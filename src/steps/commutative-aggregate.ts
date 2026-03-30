@@ -1,4 +1,4 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 
 /**
  * Operator called when an item is added to the aggregated array.
@@ -42,6 +42,31 @@ function computeKeyPathHash(keyPath: string[]): string {
     return keyPath.join('::');
 }
 
+function transformCommutativeAggregateDescriptor(
+    inputDescriptor: TypeDescriptor,
+    propertyName: string
+): TypeDescriptor {
+    const outputScalar = {
+        name: propertyName,
+        type: 'number' as const
+    };
+    const scalars = inputDescriptor.scalars.some(s => s.name === propertyName)
+        ? inputDescriptor.scalars
+        : [...inputDescriptor.scalars, outputScalar];
+    const mutableProperties = inputDescriptor.mutableProperties;
+    if (!mutableProperties.includes(propertyName)) {
+        return {
+            ...inputDescriptor,
+            scalars,
+            mutableProperties: [...mutableProperties, propertyName]
+        };
+    }
+    return {
+        ...inputDescriptor,
+        scalars
+    };
+}
+
 /**
  * A step that computes an aggregate value over items in a nested array.
  *
@@ -62,7 +87,7 @@ function computeKeyPathHash(keyPath: string[]): string {
  * @template TAggregate - The type of the aggregate value
  */
 export class CommutativeAggregateStep<
-    _TInput,
+    TItem extends ImmutableProps,
     TPath extends string[],
     TPropertyName extends string,
     TAggregate
@@ -83,13 +108,20 @@ export class CommutativeAggregateStep<
     
     /** Whether the property being aggregated is mutable (auto-detected) */
     private isPropertyMutable: boolean = false;
+
+    /**
+     * Tracks full item snapshots by parent path so mutable-property updates can
+     * reapply operators with the real TItem shape rather than a partial record.
+     */
+    private itemSnapshots: Map<string, Map<string, TItem>> = new Map();
     
     constructor(
         private input: Step,
         private segmentPath: TPath,
         private propertyName: TPropertyName,
-        private config: CommutativeAggregateConfig<ImmutableProps, TAggregate>,
-        private propertyToAggregate?: string
+        private config: CommutativeAggregateConfig<TItem, TAggregate>,
+        private propertyToAggregate: string | undefined,
+        inputDescriptor?: TypeDescriptor
     ) {
         // Register with input step to receive item add/remove events at the target array level
         this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
@@ -106,8 +138,7 @@ export class CommutativeAggregateStep<
             // Check if the property to aggregate is mutable in the TypeDescriptor
             // Note: DefinePropertyStep and CommutativeAggregateStep add mutable properties at the root level,
             // not at the nested array level, so we check root-level mutableProperties
-            const inputDescriptor = input.getTypeDescriptor();
-            const rootMutableProperties = inputDescriptor.mutableProperties;
+            const rootMutableProperties = inputDescriptor?.mutableProperties ?? [];
             if (rootMutableProperties.includes(propertyToAggregate)) {
                 effectiveMutableProperties = [propertyToAggregate];
                 this.isPropertyMutable = true;
@@ -122,34 +153,6 @@ export class CommutativeAggregateStep<
                 });
             });
         }
-    }
-    
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        
-        // Add aggregate output to scalars (idempotent: only add if not already present)
-        const outputScalar = {
-            name: this.propertyName,
-            type: 'number' as const
-        };
-        const scalars = inputDescriptor.scalars.some(s => s.name === this.propertyName)
-            ? inputDescriptor.scalars
-            : [...inputDescriptor.scalars, outputScalar];
-        
-        // Mark the aggregate property as mutable
-        // The property lives at the parent level of segmentPath
-        const mutableProperties = inputDescriptor.mutableProperties;
-        if (!mutableProperties.includes(this.propertyName)) {
-            return {
-                ...inputDescriptor,
-                scalars,
-                mutableProperties: [...mutableProperties, this.propertyName]
-            };
-        }
-        return {
-            ...inputDescriptor,
-            scalars
-        };
     }
     
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -187,16 +190,32 @@ export class CommutativeAggregateStep<
         
         return pathSegments.every((segment, i) => segment === parentSegments[i]);
     }
+
+    private asAggregateItem(item: ImmutableProps): TItem {
+        return item as TItem;
+    }
+
+    private getItemSnapshotsForParent(parentKeyHash: string): Map<string, TItem> {
+        const existingSnapshots = this.itemSnapshots.get(parentKeyHash);
+        if (existingSnapshots) {
+            return existingSnapshots;
+        }
+        const snapshots = new Map<string, TItem>();
+        this.itemSnapshots.set(parentKeyHash, snapshots);
+        return snapshots;
+    }
     
     /**
      * Handle when an item is added to the target array
      */
-    private handleItemAdded(keyPath: string[], _itemKey: string, item: ImmutableProps): void {
+    private handleItemAdded(keyPath: string[], itemKey: string, item: ImmutableProps): void {
         // keyPath contains the runtime keys leading to this item
         // For segmentPath ['cities', 'venues'], keyPath might be ['hash_TX', 'hash_Dallas']
         
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
+        const itemSnapshots = this.getItemSnapshotsForParent(parentKeyHash);
+        itemSnapshots.set(itemKey, this.asAggregateItem(item));
         
         // Track item count for cleanup
         const currentCount = this.itemCounts.get(parentKeyHash) ?? 0;
@@ -219,7 +238,7 @@ export class CommutativeAggregateStep<
         
         // Compute new aggregate
         const currentAggregate = this.aggregateValues.get(parentKeyHash);
-        const newAggregate = this.config.add(currentAggregate, item);
+        const newAggregate = this.config.add(currentAggregate, this.asAggregateItem(item));
         this.aggregateValues.set(parentKeyHash, newAggregate);
         
         // Emit modification event
@@ -246,9 +265,21 @@ export class CommutativeAggregateStep<
     /**
      * Handle when a mutable property of an aggregated item changes
      */
-    private handleItemPropertyChanged(keyPath: string[], _itemKey: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
+    private handleItemPropertyChanged(keyPath: string[], itemKey: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
+        const itemSnapshots = this.getItemSnapshotsForParent(parentKeyHash);
+        const existingSnapshot = itemSnapshots.get(itemKey);
+
+        if (!existingSnapshot) {
+            return;
+        }
+
+        const updatedSnapshot = this.asAggregateItem({
+            ...existingSnapshot,
+            [propertyName]: newValue
+        });
+        itemSnapshots.set(itemKey, updatedSnapshot);
         
         // Get the current aggregate
         const currentAggregate = this.aggregateValues.get(parentKeyHash);
@@ -256,9 +287,8 @@ export class CommutativeAggregateStep<
         // Handle the case where this is the first value for a mutable property
         // (oldValue is undefined, no aggregate yet)
         if (currentAggregate === undefined && oldValue === undefined) {
-            // This is the initial value for the property - treat as a fresh add
-            const newItem = { [propertyName]: newValue } as ImmutableProps;
-            const newAggregate = this.config.add(undefined, newItem);
+            // This is the initial value for the property - treat as a fresh add.
+            const newAggregate = this.config.add(undefined, updatedSnapshot);
             this.aggregateValues.set(parentKeyHash, newAggregate);
             
             // Emit modification event
@@ -282,20 +312,14 @@ export class CommutativeAggregateStep<
             return;
         }
         
-        // For commutative aggregates, we can update incrementally:
-        // newAggregate = currentAggregate - oldContribution + newContribution
-        //
-        // The config.add and config.subtract operators expect items with properties,
-        // so we create pseudo-items with just the changed property.
-        // This works because sum/count operators extract item[propertyName].
-        
-        // Create pseudo-items with the old and new values
-        const oldItem = { [propertyName]: oldValue } as ImmutableProps;
-        const newItem = { [propertyName]: newValue } as ImmutableProps;
+        const previousSnapshot = this.asAggregateItem({
+            ...updatedSnapshot,
+            [propertyName]: oldValue
+        });
         
         // Compute new aggregate: subtract old value, add new value
-        const intermediateAggregate = this.config.subtract(currentAggregate, oldItem);
-        const newAggregate = this.config.add(intermediateAggregate, newItem);
+        const intermediateAggregate = this.config.subtract(currentAggregate, previousSnapshot);
+        const newAggregate = this.config.add(intermediateAggregate, updatedSnapshot);
         
         // Update stored aggregate
         this.aggregateValues.set(parentKeyHash, newAggregate);
@@ -319,9 +343,10 @@ export class CommutativeAggregateStep<
     /**
      * Handle when an item is removed from the target array
      */
-    private handleItemRemoved(keyPath: string[], _itemKey: string, item: ImmutableProps): void {
+    private handleItemRemoved(keyPath: string[], itemKey: string, item: ImmutableProps): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
+        const itemSnapshots = this.itemSnapshots.get(parentKeyHash);
         
         // Get current aggregate
         const currentAggregate = this.aggregateValues.get(parentKeyHash);
@@ -330,7 +355,8 @@ export class CommutativeAggregateStep<
         }
         
         // Compute new aggregate
-        const newAggregate = this.config.subtract(currentAggregate, item);
+        const removedItem = itemSnapshots?.get(itemKey) ?? this.asAggregateItem(item);
+        const newAggregate = this.config.subtract(currentAggregate, removedItem);
         
         // Update item count and clean up if no items remain
         const currentCount = this.itemCounts.get(parentKeyHash) ?? 0;
@@ -342,6 +368,14 @@ export class CommutativeAggregateStep<
         } else {
             this.itemCounts.delete(parentKeyHash);
             this.aggregateValues.delete(parentKeyHash);
+            this.itemSnapshots.delete(parentKeyHash);
+        }
+
+        if (itemSnapshots) {
+            itemSnapshots.delete(itemKey);
+            if (itemSnapshots.size === 0) {
+                this.itemSnapshots.delete(parentKeyHash);
+            }
         }
         
         // Emit modification event
@@ -357,5 +391,38 @@ export class CommutativeAggregateStep<
                 handler([], '', currentAggregate, newAggregate);
             });
         }
+    }
+}
+
+export class CommutativeAggregateBuilder<TItem extends ImmutableProps, TAggregate> implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private segmentPath: string[],
+        private propertyName: string,
+        private config: {
+            add: AddOperator<TItem, TAggregate>;
+            subtract: SubtractOperator<TItem, TAggregate>;
+        },
+        private propertyToAggregate?: string
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return transformCommutativeAggregateDescriptor(this.upstream.getTypeDescriptor(), this.propertyName);
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new CommutativeAggregateStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.config,
+                this.propertyToAggregate,
+                this.upstream.getTypeDescriptor()
+            )
+        };
     }
 }

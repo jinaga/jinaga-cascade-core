@@ -350,7 +350,7 @@ All timeline points in both class groups are updated to reflect the reclassifica
 
 ## Scope and Path Resolution
 
-The step receives `scopeSegments` from the builder (passed as `this.scopeSegments` at construction time, following the same pattern as `CommutativeAggregateStep` and `GroupByStep`). All internal path computations are relative to this scope.
+The step receives `scopeSegments` from its Builder (captured during the fluent method chain, then passed to the Step constructor when `build()` instantiates fresh Steps). This follows the same pattern as `CommutativeAggregateStep` and `GroupByStep`. All internal path computations are relative to this scope.
 
 Three paths are derived from the scope and the step's parameters:
 
@@ -360,7 +360,7 @@ Three paths are derived from the scope and the step's parameters:
 | Event path | `[...scopeSegments, entityArrayName, eventArrayName]` | Subscribe to event add/remove within each entity |
 | Output path | `[...scopeSegments, outputArrayName]` | Emit timeline bucket add/remove/modify; intercept downstream handler registrations |
 
-When the builder method constructs the step, it computes these paths from its current scope:
+When the `PipelineBuilder` method creates the step's Builder, it captures these paths from its current scope:
 
 ```ts
 const entityPath = [...this.scopeSegments, entityArrayName];

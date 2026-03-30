@@ -1,10 +1,13 @@
 import type {
     AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
     RemovedHandler,
     Step,
+    StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
 import { appendMutableIfMissing, appendObjectIfMissing } from '../util/descriptor-transform.js';
@@ -50,6 +53,109 @@ interface SecondaryRecord {
     immutableProps: ImmutableProps;
 }
 
+function addObjectAtPath(
+    descriptor: DescriptorNode,
+    path: string[],
+    objectDesc: { name: string; type: DescriptorNode }
+): DescriptorNode {
+    if (path.length === 0) {
+        return appendObjectIfMissing(descriptor, objectDesc);
+    }
+
+    const [first, ...rest] = path;
+    return {
+        ...descriptor,
+        arrays: descriptor.arrays.map(arr => {
+            if (arr.name !== first) {
+                return arr;
+            }
+            return {
+                ...arr,
+                type: addObjectAtPath(arr.type, rest, objectDesc)
+            };
+        })
+    };
+}
+
+function transformEnrichDescriptor(
+    inputDescriptor: TypeDescriptor,
+    secondaryDescriptor: TypeDescriptor,
+    scopeSegments: string[],
+    asProperty: string
+): TypeDescriptor {
+    const secondaryRoot: DescriptorNode = {
+        arrays: secondaryDescriptor.arrays,
+        collectionKey: secondaryDescriptor.collectionKey,
+        scalars: secondaryDescriptor.scalars,
+        objects: secondaryDescriptor.objects,
+        mutableProperties: secondaryDescriptor.mutableProperties
+    };
+
+    if (scopeSegments.length === 0) {
+        const withObject = appendObjectIfMissing(inputDescriptor, {
+            name: asProperty,
+            type: secondaryRoot
+        });
+        return appendMutableIfMissing(withObject, asProperty) as TypeDescriptor;
+    }
+
+    const atScope = addObjectAtPath(inputDescriptor, scopeSegments, {
+        name: asProperty,
+        type: secondaryRoot
+    });
+    return {
+        ...appendMutableIfMissing(atScope, asProperty),
+        rootCollectionName: inputDescriptor.rootCollectionName
+    };
+}
+
+export class EnrichBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        readonly sourceName: string,
+        readonly secondaryLastBuilder: StepBuilder,
+        readonly scopeSegments: string[],
+        readonly primaryKey: string[],
+        readonly asProperty: string,
+        readonly whenMissing: ImmutableProps | undefined
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return transformEnrichDescriptor(
+            this.upstream.getTypeDescriptor(),
+            this.secondaryLastBuilder.getTypeDescriptor(),
+            this.scopeSegments,
+            this.asProperty
+        );
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const primary = this.upstream.buildGraph(ctx);
+        const secondary = this.secondaryLastBuilder.buildGraph(ctx);
+        const secondaryDescriptor = this.secondaryLastBuilder.getTypeDescriptor();
+        secondary.rootInput.setSources(secondary.sources);
+        const mergedSources = {
+            ...primary.sources,
+            [this.sourceName]: secondary.rootInput
+        };
+        return {
+            rootInput: primary.rootInput,
+            sources: mergedSources,
+            lastStep: new EnrichStep(
+                primary.lastStep,
+                secondary.lastStep,
+                this.scopeSegments,
+                this.primaryKey,
+                this.asProperty,
+                this.whenMissing,
+                secondaryDescriptor,
+                ctx.emitDiagnostic
+            )
+        };
+    }
+}
+
 type KeyedArray<T> = { key: string; value: T }[];
 
 export class EnrichStep implements Step {
@@ -58,6 +164,7 @@ export class EnrichStep implements Step {
     private readonly secondaryRowByJoinKey = new Map<string, SecondaryRecord>();
     private readonly modifiedHandlers: ModifiedHandler[] = [];
     private secondaryState: KeyedArray<ImmutableProps> = [];
+    private readonly secondaryCollectionKey: string[];
 
     constructor(
         private readonly input: Step,
@@ -66,6 +173,7 @@ export class EnrichStep implements Step {
         private readonly primaryKey: string[],
         private readonly asProperty: string,
         private readonly whenMissing: ImmutableProps | undefined,
+        secondaryDescriptor: TypeDescriptor,
         private readonly emitDiagnostic?: EmitDiagnostic
     ) {
         this.input.onAdded(this.scopeSegments, (keyPath, key, immutableProps) => {
@@ -82,7 +190,7 @@ export class EnrichStep implements Step {
             });
         }
 
-        const secondaryDescriptor = this.secondary.getTypeDescriptor();
+        this.secondaryCollectionKey = secondaryDescriptor.collectionKey;
         const secondaryPaths = getAllPathSegmentsFromDescriptor(secondaryDescriptor);
         const mutableProperties = collectAllMutableProperties(secondaryDescriptor);
 
@@ -99,36 +207,6 @@ export class EnrichStep implements Step {
                 });
             }
         }
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        const secondaryDescriptor = this.secondary.getTypeDescriptor();
-
-        const secondaryRoot: DescriptorNode = {
-            arrays: secondaryDescriptor.arrays,
-            collectionKey: secondaryDescriptor.collectionKey,
-            scalars: secondaryDescriptor.scalars,
-            objects: secondaryDescriptor.objects,
-            mutableProperties: secondaryDescriptor.mutableProperties
-        };
-
-        if (this.scopeSegments.length === 0) {
-            const withObject = appendObjectIfMissing(inputDescriptor, {
-                name: this.asProperty,
-                type: secondaryRoot
-            });
-            return appendMutableIfMissing(withObject, this.asProperty) as TypeDescriptor;
-        }
-
-        const atScope = this.addObjectAtPath(inputDescriptor, this.scopeSegments, {
-            name: this.asProperty,
-            type: secondaryRoot
-        });
-        return {
-            ...appendMutableIfMissing(atScope, this.asProperty),
-            rootCollectionName: inputDescriptor.rootCollectionName
-        };
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -166,36 +244,12 @@ export class EnrichStep implements Step {
         this.input.onModified(pathSegments, propertyName, handler);
     }
 
-    private addObjectAtPath(
-        descriptor: DescriptorNode,
-        path: string[],
-        objectDesc: { name: string; type: DescriptorNode }
-    ): DescriptorNode {
-        if (path.length === 0) {
-            return appendObjectIfMissing(descriptor, objectDesc);
-        }
-
-        const [first, ...rest] = path;
-        return {
-            ...descriptor,
-            arrays: descriptor.arrays.map(arr => {
-                if (arr.name !== first) {
-                    return arr;
-                }
-                return {
-                    ...arr,
-                    type: this.addObjectAtPath(arr.type, rest, objectDesc)
-                };
-            })
-        };
-    }
-
     private primaryId(keyPath: string[], key: string): string {
         return `${keyPathHash(keyPath)}::${key}`;
     }
 
     private secondaryJoinFromSecondaryRow(row: ImmutableProps): string | null {
-        const secondaryCollectionKey = this.secondary.getTypeDescriptor().collectionKey;
+        const secondaryCollectionKey = this.secondaryCollectionKey;
         if (secondaryCollectionKey.length === 0) {
             this.emitDiagnostic?.({
                 code: 'enrich_secondary_collection_key_missing',
@@ -215,7 +269,7 @@ export class EnrichStep implements Step {
     }
 
     private primaryJoinFromPrimaryRow(row: ImmutableProps): string | null {
-        const secondaryCollectionKey = this.secondary.getTypeDescriptor().collectionKey;
+        const secondaryCollectionKey = this.secondaryCollectionKey;
         if (secondaryCollectionKey.length !== this.primaryKey.length) {
             this.emitDiagnostic?.({
                 code: 'enrich_key_arity_mismatch',

@@ -102,7 +102,6 @@ export type RemovedHandler = (keyPath: string[], key: string, immutableProps: Im
 export type ModifiedHandler = (keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void;
 
 export interface Step {
-    getTypeDescriptor(): TypeDescriptor;
     onAdded(pathSegments: string[], handler: AddedHandler): void;
     onRemoved(pathSegments: string[], handler: RemovedHandler): void;
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;
@@ -146,7 +145,7 @@ Every step must return a `TypeDescriptor` describing the shape of data it produc
 
 ## Constructor: Upstream Registration
 
-Every step registers listeners on its upstream `input` step in the constructor. This is build-time wiring — it happens once when the pipeline is assembled, not at runtime.
+Every Step registers listeners on its upstream `input` Step in the constructor. This wiring happens when `build()` instantiates fresh Steps from their Builders. Each `build()` call produces an independent Step graph with its own handler registrations and mutable state.
 
 ### Pattern: Listen for items at the target array level
 
@@ -164,7 +163,6 @@ constructor(private input: Step, private segmentPath: string[], ...) {
 ### Pattern: Auto-detect mutable properties and register for changes
 
 ```typescript
-const inputDescriptor = input.getTypeDescriptor();
 const rootMutableProperties = inputDescriptor.mutableProperties;
 
 if (rootMutableProperties.includes(propertyToWatch)) {
@@ -174,7 +172,7 @@ if (rootMutableProperties.includes(propertyToWatch)) {
 }
 ```
 
-Check `inputDescriptor.mutableProperties` at the root level. Steps like `DefinePropertyStep` and `CommutativeAggregateStep` place their mutable properties at root level even when they logically belong to a nested array, so root-level checking is correct.
+Check upstream `mutableProperties` at the root level. Builders pass descriptor metadata into Step constructors (for example as an `inputDescriptor` constructor argument), and steps use that metadata for registration decisions.
 
 ---
 
@@ -315,13 +313,13 @@ private emitModification(parentKeyPath: string[], oldValue: unknown, newValue: u
 
 ## TypeDescriptor Transformation
 
-Each step transforms its input descriptor to reflect the shape change it applies.
+Each Builder transforms the upstream descriptor to reflect the shape change it applies.
 
 ### Adding a mutable scalar property
 
 ```typescript
 getTypeDescriptor(): TypeDescriptor {
-    const inputDescriptor = this.input.getTypeDescriptor();
+    const inputDescriptor = this.upstream.getTypeDescriptor();
     const mutableProperties = inputDescriptor.mutableProperties.includes(this.propertyName)
         ? inputDescriptor.mutableProperties
         : [...inputDescriptor.mutableProperties, this.propertyName];
@@ -336,11 +334,10 @@ Use helper `appendObjectIfMissing` and `appendMutableIfMissing` from `src/util/d
 ```typescript
 import { appendObjectIfMissing, appendMutableIfMissing } from '../util/descriptor-transform.js';
 
-getTypeDescriptor(): TypeDescriptor {
-    const inputDescriptor = this.input.getTypeDescriptor();
-    const objectDesc = { name: this.propertyName, type: sourceDescriptorNode };
+function transformDescriptor(inputDescriptor: TypeDescriptor): TypeDescriptor {
+    const objectDesc = { name: propertyName, type: sourceDescriptorNode };
     const withObject = appendObjectIfMissing(inputDescriptor, objectDesc);
-    return appendMutableIfMissing(withObject, this.propertyName) as TypeDescriptor;
+    return appendMutableIfMissing(withObject, propertyName) as TypeDescriptor;
 }
 ```
 
@@ -365,17 +362,57 @@ return {
 
 File: `src/builder.ts`, class `PipelineBuilder`
 
+Each pipeline step has two classes: an immutable **Builder** (captures configuration) and a stateful **Step** (maintains runtime state). See [Builder/Step Separation](../../../docs/architecture/builder-step-separation.md).
+
 Each fluent method on `PipelineBuilder`:
-1. Constructs the new `Step` wrapping `this.lastStep`
-2. Returns `new PipelineBuilder(this.input, newStep, scopeSegments, this.diagnosticBridge)`
+1. Constructs a new **Builder** wrapping `this.lastBuilder`
+2. Returns `new PipelineBuilder(this.rootBuilder, newBuilder, scopeSegments, this.diagnosticBridge)`
+
+Builders are immutable and hold no mutable state. Steps are created later by `build()`.
 
 ### Scope segments
 
 - Most methods reset scope to `[]` (the returned builder operates at root)
-- `in(...segments)` extends scope and returns the same `lastStep` (navigation only)
-- The step constructor receives `scopeSegments` to know where in the tree to listen
+- `in(...segments)` extends scope and returns the same `lastBuilder` (navigation only)
+- The Builder captures `scopeSegments` so the Step constructor receives them at `build()` time
 
-### Pattern: Adding a builder method
+### Pattern: Adding a Builder class
+
+```typescript
+export class MyNewStepBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        readonly segmentPath: string[],
+        readonly propertyName: string,
+        readonly config: ...
+    ) {}
+
+    getTypeDescriptor(): TypeDescriptor {
+        return transformMyNewStepDescriptor(
+            this.upstream.getTypeDescriptor(),
+            this.segmentPath,
+            this.propertyName,
+            this.config
+        );
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new MyNewStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.config,
+                this.upstream.getTypeDescriptor()
+            )
+        };
+    }
+}
+```
+
+### Pattern: Adding a PipelineBuilder method
 
 ```typescript
 myNewStep<ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>, PropName extends string>(
@@ -384,23 +421,26 @@ myNewStep<ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>, PropName ex
     ...config
 ): PipelineBuilder<TransformedType, TStart, Path, RootScopeName, TSources> {
     const fullSegmentPath = [...this.scopeSegments, arrayName];
-    const newStep = new MyNewStep(
-        this.lastStep,
+    const newBuilder = new MyNewStepBuilder(
+        this.lastBuilder,
         fullSegmentPath,
         propertyName,
         config
     );
-    return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+    return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
 }
 ```
 
-### How build() wires the final step to the session
+### How build() instantiates Steps and wires the session
 
 `build()` in `PipelineBuilder`:
-1. Gets all path segments from the final step's TypeDescriptor
-2. For each path, registers `onAdded` → `session.enqueueAdd`, `onRemoved` → `session.enqueueRemove`
-3. Collects all mutable properties via `collectAllMutableProperties(descriptor)`
-4. For each mutable property at each path level (including parent), registers `onModified` → `session.enqueueModify`
+1. Calls `buildGraph(ctx)` on the last builder, which recursively builds the entire Step graph from root to leaf
+2. Gets all path segments from the final Step's TypeDescriptor
+3. For each path, registers `onAdded` → `session.enqueueAdd`, `onRemoved` → `session.enqueueRemove`
+4. Collects all mutable properties via `collectAllMutableProperties(descriptor)`
+5. For each mutable property at each path level (including parent), registers `onModified` → `session.enqueueModify`
+
+Because every `build()` call constructs new Step instances, two calls produce fully independent pipeline graphs with no shared state.
 
 ---
 

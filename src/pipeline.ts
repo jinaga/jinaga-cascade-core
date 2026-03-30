@@ -10,10 +10,24 @@ export type PipelineSources<TSources extends Record<string, unknown>> = {
             : never;
 };
 
+type UntypedSourceGraphShape = {
+    [sourceName: string]: {
+        primary: unknown;
+        sources?: UntypedSourceGraphShape;
+    };
+};
+
+export type UntypedPipelineSources = PipelineSources<UntypedSourceGraphShape>;
+
 export interface PipelineInput<T, TSources extends Record<string, unknown> = EmptySources> {
     add(key: string, immutableProps: T): void;
     remove(key: string, immutableProps: T): void;
     sources: PipelineSources<TSources>;
+}
+
+export interface SourceBindableInput<T, TSources extends Record<string, unknown> = EmptySources>
+    extends PipelineInput<T, TSources> {
+    setSources(sources: UntypedPipelineSources): void;
 }
 
 export interface PipelineRuntimeDiagnostic {
@@ -163,9 +177,30 @@ function getPathSegmentsFromNode(descriptor: DescriptorNode): string[][] {
 }
 
 export interface Step {
-    getTypeDescriptor(): TypeDescriptor;
     onAdded(pathSegments: string[], handler: AddedHandler): void;
     onRemoved(pathSegments: string[], handler: RemovedHandler): void;
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;
+}
+
+export interface BuiltStepGraph {
+    rootInput: SourceBindableInput<unknown, Record<string, unknown>>;
+    lastStep: Step;
+    sources: UntypedPipelineSources;
+}
+
+export interface BuildContext {
+    emitDiagnostic?: (diagnostic: {
+        code:
+            | 'enrich_key_arity_mismatch'
+            | 'enrich_invalid_primary_key_property'
+            | 'enrich_secondary_collection_key_missing';
+        message: string;
+    }) => void;
+}
+
+export interface StepBuilder {
+    readonly upstream?: StepBuilder;
+    getTypeDescriptor(): TypeDescriptor;
+    buildGraph(ctx: BuildContext): BuiltStepGraph;
 }
 

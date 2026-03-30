@@ -1,4 +1,4 @@
-import type { AddedHandler, ImmutableProps, RemovedHandler, ModifiedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, RemovedHandler, ModifiedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { pathsMatch, pathStartsWith } from '../util/path.js';
 
 /**
@@ -59,10 +59,6 @@ export class FilterStep<T> implements Step {
                 });
             });
         }
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        return this.input.getTypeDescriptor();
     }
 
     private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, unknown>): T {
@@ -317,5 +313,27 @@ export class FilterStep<T> implements Step {
 
     private isAtScopeSegments(pathSegments: string[]): boolean {
         return pathsMatch(pathSegments, this.scopeSegments);
+    }
+}
+
+export class FilterBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private predicate: (item: unknown) => boolean,
+        private scopeSegments: string[],
+        private mutableProperties: string[]
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return this.upstream.getTypeDescriptor();
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new FilterStep(up.lastStep, this.predicate, this.scopeSegments, this.mutableProperties)
+        };
     }
 }

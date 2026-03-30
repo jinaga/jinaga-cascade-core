@@ -1,9 +1,12 @@
 import type {
     AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
     ImmutableProps,
     ModifiedHandler,
     RemovedHandler,
     Step,
+    StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
@@ -99,7 +102,8 @@ export class CumulativeSumStep<
         private input: Step,
         private segmentPath: TPath,
         private orderBy: readonly string[],
-        private properties: TProperties
+        private properties: TProperties,
+        inputDescriptor: TypeDescriptor
     ) {
         this.cumulativePropertySet = new Set(this.properties);
         this.orderByPropertySet = new Set(this.orderBy);
@@ -112,7 +116,6 @@ export class CumulativeSumStep<
             this.handleItemRemoved(keyPath, itemKey, immutableProps);
         });
 
-        const inputDescriptor = this.input.getTypeDescriptor();
         const listenedProperties = new Set<string>([
             ...this.properties,
             ...this.orderBy,
@@ -124,10 +127,6 @@ export class CumulativeSumStep<
                 this.handleItemModified(keyPath, itemKey, propertyName, oldValue, newValue);
             });
         });
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        return this.input.getTypeDescriptor();
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -466,5 +465,33 @@ export class CumulativeSumStep<
             }
         }
         return true;
+    }
+}
+
+export class CumulativeSumBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private segmentPath: string[],
+        private orderBy: string[],
+        private properties: string[]
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return this.upstream.getTypeDescriptor();
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new CumulativeSumStep(
+                up.lastStep,
+                this.segmentPath,
+                this.orderBy,
+                this.properties,
+                this.upstream.getTypeDescriptor()
+            )
+        };
     }
 }

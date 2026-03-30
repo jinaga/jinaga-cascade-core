@@ -1,4 +1,4 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
 
 /**
@@ -17,6 +17,31 @@ function parseNumericValue(value: unknown): number | undefined {
     }
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function transformMinMaxAggregateDescriptor(
+    inputDescriptor: TypeDescriptor,
+    propertyName: string
+): TypeDescriptor {
+    const outputScalar = {
+        name: propertyName,
+        type: 'number' as const
+    };
+    const scalars = inputDescriptor.scalars.some(s => s.name === propertyName)
+        ? inputDescriptor.scalars
+        : [...inputDescriptor.scalars, outputScalar];
+    const mutableProperties = inputDescriptor.mutableProperties;
+    if (!mutableProperties.includes(propertyName)) {
+        return {
+            ...inputDescriptor,
+            scalars,
+            mutableProperties: [...mutableProperties, propertyName]
+        };
+    }
+    return {
+        ...inputDescriptor,
+        scalars
+    };
 }
 
 /**
@@ -45,9 +70,9 @@ export class MinMaxAggregateStep<
         private segmentPath: TPath,
         private propertyName: TPropertyName,
         private numericProperty: string,
-        private comparator: (a: number, b: number) => number
+        private comparator: (a: number, b: number) => number,
+        inputDescriptor: TypeDescriptor
     ) {
-        const inputDescriptor = input.getTypeDescriptor();
         const rootMutableProperties = inputDescriptor.mutableProperties;
         const isPropertyMutable = rootMutableProperties.includes(numericProperty);
 
@@ -64,32 +89,6 @@ export class MinMaxAggregateStep<
                 this.handleItemPropertyChanged(keyPath, itemKey, newValue);
             });
         }
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        
-        // Add aggregate output to scalars (idempotent: only add if not already present)
-        const outputScalar = {
-            name: this.propertyName,
-            type: 'number' as const
-        };
-        const scalars = inputDescriptor.scalars.some(s => s.name === this.propertyName)
-            ? inputDescriptor.scalars
-            : [...inputDescriptor.scalars, outputScalar];
-        
-        const mutableProperties = inputDescriptor.mutableProperties;
-        if (!mutableProperties.includes(this.propertyName)) {
-            return {
-                ...inputDescriptor,
-                scalars,
-                mutableProperties: [...mutableProperties, this.propertyName]
-            };
-        }
-        return {
-            ...inputDescriptor,
-            scalars
-        };
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -193,5 +192,35 @@ export class MinMaxAggregateStep<
         this.modifiedHandlers.forEach(handler => {
             handler([], '', oldAggregate, newAggregate);
         });
+    }
+}
+
+export class MinMaxAggregateBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private segmentPath: string[],
+        private propertyName: string,
+        private numericProperty: string,
+        private comparator: (a: number, b: number) => number
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return transformMinMaxAggregateDescriptor(this.upstream.getTypeDescriptor(), this.propertyName);
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new MinMaxAggregateStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.numericProperty,
+                this.comparator,
+                this.upstream.getTypeDescriptor()
+            )
+        };
     }
 }

@@ -1,4 +1,4 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 
 /**
  * Computes a hash key for a key path (for map lookups).
@@ -7,13 +7,37 @@ function computeKeyPathHash(keyPath: string[]): string {
     return keyPath.join('::');
 }
 
+function transformAverageAggregateDescriptor(
+    inputDescriptor: TypeDescriptor,
+    propertyName: string
+): TypeDescriptor {
+    const outputScalar = {
+        name: propertyName,
+        type: 'number' as const
+    };
+    const scalars = inputDescriptor.scalars.some(s => s.name === propertyName)
+        ? inputDescriptor.scalars
+        : [...inputDescriptor.scalars, outputScalar];
+    const mutableProperties = inputDescriptor.mutableProperties;
+    if (!mutableProperties.includes(propertyName)) {
+        return {
+            ...inputDescriptor,
+            scalars,
+            mutableProperties: [...mutableProperties, propertyName]
+        };
+    }
+    return {
+        ...inputDescriptor,
+        scalars
+    };
+}
+
 /**
  * Tracks sum and count separately for computing average incrementally.
  */
 interface AverageState {
     sum: number;
     count: number;
-    average: number | undefined;
 }
 
 /**
@@ -39,9 +63,6 @@ export class AverageAggregateStep<
         handler: ModifiedHandler;
     }> = [];
     
-    /** Maps parent key path hash to current average value (for oldValue tracking) */
-    private aggregateValues: Map<string, number | undefined> = new Map();
-    
     /** Whether the property being aggregated is mutable (auto-detected) */
     private isPropertyMutable: boolean = false;
     
@@ -52,10 +73,10 @@ export class AverageAggregateStep<
         private input: Step,
         private segmentPath: TPath,
         private propertyName: TPropertyName,
-        private numericProperty: string
+        private numericProperty: string,
+        inputDescriptor: TypeDescriptor
     ) {
         // Auto-detect if property is mutable from TypeDescriptor
-        const inputDescriptor = input.getTypeDescriptor();
         const rootMutableProperties = inputDescriptor.mutableProperties;
         if (rootMutableProperties.includes(numericProperty)) {
             this.isPropertyMutable = true;
@@ -76,33 +97,6 @@ export class AverageAggregateStep<
                 this.handleItemPropertyChanged(keyPath, itemKey, oldValue, newValue);
             });
         }
-    }
-    
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        
-        // Add aggregate output to scalars (idempotent: only add if not already present)
-        const outputScalar = {
-            name: this.propertyName,
-            type: 'number' as const
-        };
-        const scalars = inputDescriptor.scalars.some(s => s.name === this.propertyName)
-            ? inputDescriptor.scalars
-            : [...inputDescriptor.scalars, outputScalar];
-        
-        // Mark the aggregate property as mutable
-        const mutableProperties = inputDescriptor.mutableProperties;
-        if (!mutableProperties.includes(this.propertyName)) {
-            return {
-                ...inputDescriptor,
-                scalars,
-                mutableProperties: [...mutableProperties, this.propertyName]
-            };
-        }
-        return {
-            ...inputDescriptor,
-            scalars
-        };
     }
     
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -140,6 +134,11 @@ export class AverageAggregateStep<
         
         return pathSegments.every((segment, i) => segment === parentSegments[i]);
     }
+
+    private getAverageForParent(parentKeyHash: string): number | undefined {
+        const state = this.averageStates.get(parentKeyHash);
+        return state && state.count > 0 ? state.sum / state.count : undefined;
+    }
     
     /**
      * Handle when an item is added to the target array
@@ -148,6 +147,8 @@ export class AverageAggregateStep<
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
         
+        const oldAverage = this.getAverageForParent(parentKeyHash);
+
         // Initialize itemValues map for this parent if needed
         if (!this.itemValues.has(parentKeyHash)) {
             this.itemValues.set(parentKeyHash, new Map());
@@ -170,19 +171,15 @@ export class AverageAggregateStep<
                 this.itemValues.get(parentKeyHash)!.set(itemKey, numValue);
                 
                 // Update sum and count
-                const state = this.averageStates.get(parentKeyHash) || { sum: 0, count: 0, average: undefined };
+                const state = this.averageStates.get(parentKeyHash) || { sum: 0, count: 0 };
                 state.sum += numValue;
                 state.count += 1;
-                state.average = state.sum / state.count;
                 this.averageStates.set(parentKeyHash, state);
             }
         }
         
         // Compute new average
-        const state = this.averageStates.get(parentKeyHash);
-        const oldAverage = this.aggregateValues.get(parentKeyHash);
-        const newAverage = (state && state.count > 0) ? state.average : undefined;
-        this.aggregateValues.set(parentKeyHash, newAverage);
+        const newAverage = this.getAverageForParent(parentKeyHash);
         
         // Emit modification event
         if (parentKeyPath.length > 0) {
@@ -231,11 +228,11 @@ export class AverageAggregateStep<
         // Get or create state
         let state = this.averageStates.get(parentKeyHash);
         if (!state) {
-            state = { sum: 0, count: 0, average: undefined };
+            state = { sum: 0, count: 0 };
             this.averageStates.set(parentKeyHash, state);
         }
         
-        const oldAverage = state.average;
+        const oldAverage = this.getAverageForParent(parentKeyHash);
         
         // Update sum and count based on what changed
         if (hadOldValue && hasNewValue) {
@@ -252,20 +249,11 @@ export class AverageAggregateStep<
         }
         
         // Calculate new average
-        if (state.count > 0) {
-            state.average = state.sum / state.count;
-        } else {
-            state.average = undefined;
+        if (state.count <= 0) {
             this.averageStates.delete(parentKeyHash);
         }
         
-        // Update aggregate values cache
-        const newAverage = state.average;
-        if (newAverage !== undefined) {
-            this.aggregateValues.set(parentKeyHash, newAverage);
-        } else {
-            this.aggregateValues.delete(parentKeyHash);
-        }
+        const newAverage = this.getAverageForParent(parentKeyHash);
         
         // Emit modification event
         if (parentKeyPath.length > 0) {
@@ -289,6 +277,8 @@ export class AverageAggregateStep<
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
         
+        const oldAverage = this.getAverageForParent(parentKeyHash);
+
         // Get the value to remove - either from itemValues map (for mutable) or from item (for immutable)
         let valueToRemove: number | undefined;
         
@@ -321,25 +311,15 @@ export class AverageAggregateStep<
                 state.count -= 1;
                 
                 if (state.count === 0) {
-                    state.average = undefined;
                     this.averageStates.delete(parentKeyHash);
                 } else {
-                    state.average = state.sum / state.count;
                     this.averageStates.set(parentKeyHash, state);
                 }
             }
         }
         
         // Compute new average
-        const state = this.averageStates.get(parentKeyHash);
-        const oldAverage = this.aggregateValues.get(parentKeyHash);
-        const newAverage = (state && state.count > 0) ? state.average : undefined;
-        
-        if (!state || state.count === 0) {
-            this.aggregateValues.delete(parentKeyHash);
-        } else {
-            this.aggregateValues.set(parentKeyHash, newAverage);
-        }
+        const newAverage = this.getAverageForParent(parentKeyHash);
         
         // Emit modification event
         if (parentKeyPath.length > 0) {
@@ -354,5 +334,33 @@ export class AverageAggregateStep<
                 handler([], '', oldAverage, newAverage);
             });
         }
+    }
+}
+
+export class AverageAggregateBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private segmentPath: string[],
+        private propertyName: string,
+        private numericProperty: string
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return transformAverageAggregateDescriptor(this.upstream.getTypeDescriptor(), this.propertyName);
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new AverageAggregateStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.numericProperty,
+                this.upstream.getTypeDescriptor()
+            )
+        };
     }
 }

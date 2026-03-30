@@ -1,11 +1,14 @@
 import type {
     AddedHandler,
     ArrayDescriptor,
+    BuildContext,
+    BuiltStepGraph,
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
     RemovedHandler,
     Step,
+    StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
@@ -141,6 +144,90 @@ function addOutputPropertiesToEventNode(node: DescriptorNode, outputProperties: 
     };
 }
 
+function validateReplaceToDeltaConfiguration(
+    inputDescriptor: TypeDescriptor,
+    entitySegmentPath: string[],
+    eventArrayName: string,
+    orderBy: string[],
+    properties: string[],
+    outputProperties: string[]
+): void {
+    if (orderBy.length === 0) {
+        throw new Error('ReplaceToDeltaStep requires at least one orderBy property.');
+    }
+    if (properties.length !== outputProperties.length) {
+        throw new Error('ReplaceToDeltaStep requires properties and outputProperties to have equal length.');
+    }
+    const seenProperties = new Set<string>();
+    for (const property of properties) {
+        if (seenProperties.has(property)) {
+            throw new Error(
+                `ReplaceToDeltaStep properties contains duplicate property "${property}".`
+            );
+        }
+        seenProperties.add(property);
+    }
+
+    const entityArrayDescriptor = navigateToArrayDescriptor(inputDescriptor, entitySegmentPath);
+    if (!entityArrayDescriptor) {
+        throw new Error(
+            `ReplaceToDeltaStep could not find entity array at path [${entitySegmentPath.join('.')}] in descriptor.`
+        );
+    }
+    const eventArrayDescriptor = entityArrayDescriptor.type.arrays.find(array => array.name === eventArrayName);
+    if (!eventArrayDescriptor) {
+        throw new Error(
+            `ReplaceToDeltaStep could not find event array "${eventArrayName}" under entity path [${entitySegmentPath.join('.')}] in descriptor.`
+        );
+    }
+
+    const eventScalarNames = new Set(eventArrayDescriptor.type.scalars.map(scalar => scalar.name));
+    const hasEventScalarMetadata = eventArrayDescriptor.type.scalars.length > 0;
+    const knownEventPropertyNames = new Set<string>([...orderBy, ...properties]);
+    if (hasEventScalarMetadata) {
+        for (const orderProperty of orderBy) {
+            if (!eventScalarNames.has(orderProperty)) {
+                throw new Error(
+                    `ReplaceToDeltaStep orderBy property "${orderProperty}" is not a scalar on event type "${eventArrayName}".`
+                );
+            }
+        }
+        for (const property of properties) {
+            if (!eventScalarNames.has(property)) {
+                throw new Error(
+                    `ReplaceToDeltaStep property "${property}" is not a scalar on event type "${eventArrayName}".`
+                );
+            }
+        }
+    }
+    for (const collectionKeyPart of eventArrayDescriptor.type.collectionKey) {
+        if (!orderBy.includes(collectionKeyPart)) {
+            throw new Error(
+                `ReplaceToDeltaStep orderBy must include collectionKey property "${collectionKeyPart}" for event type "${eventArrayName}".`
+            );
+        }
+    }
+    const seenOutputProperties = new Set<string>();
+    for (const outputProperty of outputProperties) {
+        if (knownEventPropertyNames.has(outputProperty)) {
+            throw new Error(
+                `ReplaceToDeltaStep output property "${outputProperty}" collides with an existing event property.`
+            );
+        }
+        if (hasEventScalarMetadata && eventScalarNames.has(outputProperty)) {
+            throw new Error(
+                `ReplaceToDeltaStep output property "${outputProperty}" collides with an existing scalar on event type "${eventArrayName}".`
+            );
+        }
+        if (seenOutputProperties.has(outputProperty)) {
+            throw new Error(
+                `ReplaceToDeltaStep output property "${outputProperty}" is duplicated in outputProperties.`
+            );
+        }
+        seenOutputProperties.add(outputProperty);
+    }
+}
+
 /**
  * Converts absolute event values into per-event deltas relative to the predecessor
  * event within each entity's sorted event list.
@@ -162,10 +249,18 @@ export class ReplaceToDeltaStep implements Step {
         private readonly eventArrayName: string,
         private readonly orderBy: string[],
         private readonly properties: string[],
-        private readonly outputProperties: string[]
+        private readonly outputProperties: string[],
+        inputDescriptor: TypeDescriptor
     ) {
         this.eventSegmentPath = [...entitySegmentPath, eventArrayName];
-        this.validateConfiguration();
+        validateReplaceToDeltaConfiguration(
+            inputDescriptor,
+            this.entitySegmentPath,
+            this.eventArrayName,
+            this.orderBy,
+            this.properties,
+            this.outputProperties
+        );
 
         this.propertyToOutput = new Map();
         this.properties.forEach((property, index) => {
@@ -185,19 +280,6 @@ export class ReplaceToDeltaStep implements Step {
                 this.handleTrackedPropertyModified(keyPath, key, property, oldValue, newValue);
             });
         }
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-        return {
-            ...addOutputPropertiesAtPath(
-                inputDescriptor,
-                this.entitySegmentPath,
-                this.eventArrayName,
-                this.outputProperties
-            ),
-            rootCollectionName: inputDescriptor.rootCollectionName
-        };
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -224,84 +306,6 @@ export class ReplaceToDeltaStep implements Step {
             return;
         }
         this.input.onModified(pathSegments, propertyName, handler);
-    }
-
-    private validateConfiguration(): void {
-        if (this.orderBy.length === 0) {
-            throw new Error('ReplaceToDeltaStep requires at least one orderBy property.');
-        }
-        if (this.properties.length !== this.outputProperties.length) {
-            throw new Error('ReplaceToDeltaStep requires properties and outputProperties to have equal length.');
-        }
-        const seenProperties = new Set<string>();
-        for (const property of this.properties) {
-            if (seenProperties.has(property)) {
-                throw new Error(
-                    `ReplaceToDeltaStep properties contains duplicate property "${property}".`
-                );
-            }
-            seenProperties.add(property);
-        }
-
-        const inputDescriptor = this.input.getTypeDescriptor();
-        const entityArrayDescriptor = navigateToArrayDescriptor(inputDescriptor, this.entitySegmentPath);
-        if (!entityArrayDescriptor) {
-            throw new Error(
-                `ReplaceToDeltaStep could not find entity array at path [${this.entitySegmentPath.join('.')}] in descriptor.`
-            );
-        }
-        const eventArrayDescriptor = entityArrayDescriptor.type.arrays.find(array => array.name === this.eventArrayName);
-        if (!eventArrayDescriptor) {
-            throw new Error(
-                `ReplaceToDeltaStep could not find event array "${this.eventArrayName}" under entity path [${this.entitySegmentPath.join('.')}] in descriptor.`
-            );
-        }
-
-        const eventScalarNames = new Set(eventArrayDescriptor.type.scalars.map(scalar => scalar.name));
-        const hasEventScalarMetadata = eventArrayDescriptor.type.scalars.length > 0;
-        const knownEventPropertyNames = new Set<string>([...this.orderBy, ...this.properties]);
-        if (hasEventScalarMetadata) {
-            for (const orderProperty of this.orderBy) {
-                if (!eventScalarNames.has(orderProperty)) {
-                    throw new Error(
-                        `ReplaceToDeltaStep orderBy property "${orderProperty}" is not a scalar on event type "${this.eventArrayName}".`
-                    );
-                }
-            }
-            for (const property of this.properties) {
-                if (!eventScalarNames.has(property)) {
-                    throw new Error(
-                        `ReplaceToDeltaStep property "${property}" is not a scalar on event type "${this.eventArrayName}".`
-                    );
-                }
-            }
-        }
-        for (const collectionKeyPart of eventArrayDescriptor.type.collectionKey) {
-            if (!this.orderBy.includes(collectionKeyPart)) {
-                throw new Error(
-                    `ReplaceToDeltaStep orderBy must include collectionKey property "${collectionKeyPart}" for event type "${this.eventArrayName}".`
-                );
-            }
-        }
-        const seenOutputProperties = new Set<string>();
-        for (const outputProperty of this.outputProperties) {
-            if (knownEventPropertyNames.has(outputProperty)) {
-                throw new Error(
-                    `ReplaceToDeltaStep output property "${outputProperty}" collides with an existing event property.`
-                );
-            }
-            if (hasEventScalarMetadata && eventScalarNames.has(outputProperty)) {
-                throw new Error(
-                    `ReplaceToDeltaStep output property "${outputProperty}" collides with an existing scalar on event type "${this.eventArrayName}".`
-                );
-            }
-            if (seenOutputProperties.has(outputProperty)) {
-                throw new Error(
-                    `ReplaceToDeltaStep output property "${outputProperty}" is duplicated in outputProperties.`
-                );
-            }
-            seenOutputProperties.add(outputProperty);
-        }
     }
 
     private handleEventAdded(parentKeyPath: string[], eventKey: string, immutableProps: ImmutableProps): void {
@@ -672,5 +676,54 @@ export class ReplaceToDeltaStep implements Step {
             deltas[outputProperty] = this.computeDeltaForProperty(current, predecessor, propertyName);
         });
         return deltas;
+    }
+}
+
+export class ReplaceToDeltaBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private entitySegmentPath: string[],
+        private eventArrayName: string,
+        private orderBy: string[],
+        private properties: string[],
+        private outputProperties: string[]
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        const inputDescriptor = this.upstream.getTypeDescriptor();
+        validateReplaceToDeltaConfiguration(
+            inputDescriptor,
+            this.entitySegmentPath,
+            this.eventArrayName,
+            this.orderBy,
+            this.properties,
+            this.outputProperties
+        );
+        return {
+            ...addOutputPropertiesAtPath(
+                inputDescriptor,
+                this.entitySegmentPath,
+                this.eventArrayName,
+                this.outputProperties
+            ),
+            rootCollectionName: inputDescriptor.rootCollectionName
+        };
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new ReplaceToDeltaStep(
+                up.lastStep,
+                this.entitySegmentPath,
+                this.eventArrayName,
+                this.orderBy,
+                this.properties,
+                this.outputProperties,
+                this.upstream.getTypeDescriptor()
+            )
+        };
     }
 }

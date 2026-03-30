@@ -15,7 +15,7 @@ This document does not prove correctness yet. It defines:
 
 The current implementation surface includes:
 
-- `InputPipeline` in `src/factory.ts`
+- `InputBuilder` / `InputStep` in `src/factory.ts`
 - step types in `src/steps`:
   - `FilterStep`
   - `DefinePropertyStep`
@@ -86,7 +86,7 @@ These invariants are the basis of all local proofs:
 
 Let `F_step` denote descriptor transfer for a step.
 
-### 1) InputPipeline
+### 1) InputBuilder / InputStep
 
 - `F_input` constructs a root node with:
   - `arrays = []`

@@ -8,22 +8,24 @@ import {
     type PipelineRuntimeDiagnostic,
     type PipelineRuntimeDisposeOptions,
     type PipelineRuntimeOptions,
-    type Step,
+    type StepBuilder,
     type TypeDescriptor
 } from './pipeline.js';
-import { CommutativeAggregateStep, type AddOperator, type SubtractOperator } from './steps/commutative-aggregate.js';
-import { DefinePropertyStep } from './steps/define-property.js';
-import { DropPropertyStep } from './steps/drop-property.js';
-import { FilterStep } from './steps/filter.js';
-import { GroupByStep } from './steps/group-by.js';
+import { type AddOperator, type SubtractOperator } from './steps/commutative-aggregate.js';
 import { NavigateToPath, TransformAtPath } from './types/path.js';
-import { MinMaxAggregateStep } from './steps/min-max-aggregate.js';
-import { AverageAggregateStep } from './steps/average-aggregate.js';
-import { PickByMinMaxStep } from './steps/pick-by-min-max.js';
-import { EnrichStep } from './steps/enrich.js';
-import { CumulativeSumStep } from './steps/cumulative-sum.js';
-import { ReplaceToDeltaStep } from './steps/replace-to-delta.js';
-import { FlattenStep } from './steps/flatten.js';
+import { buildStepGraph } from './step-builders.js';
+import { DefinePropertyBuilder } from './steps/define-property.js';
+import { DropPropertyBuilder } from './steps/drop-property.js';
+import { GroupByBuilder } from './steps/group-by.js';
+import { FlattenBuilder } from './steps/flatten.js';
+import { CommutativeAggregateBuilder } from './steps/commutative-aggregate.js';
+import { CumulativeSumBuilder } from './steps/cumulative-sum.js';
+import { MinMaxAggregateBuilder } from './steps/min-max-aggregate.js';
+import { AverageAggregateBuilder } from './steps/average-aggregate.js';
+import { PickByMinMaxBuilder } from './steps/pick-by-min-max.js';
+import { FilterBuilder } from './steps/filter.js';
+import { ReplaceToDeltaBuilder } from './steps/replace-to-delta.js';
+import { EnrichBuilder } from './steps/enrich.js';
 
 // Public types
 export type KeyedArray<T> = { key: string, value: T }[];
@@ -547,20 +549,23 @@ export class PipelineBuilder<
     RootScopeName extends string = 'items',
     TSources extends Record<string, unknown> = Record<never, never>
 > {
-    private reportDiagnostic(diagnostic: PipelineRuntimeDiagnostic): void {
-        if (this.diagnosticBridge.emit) {
-            this.diagnosticBridge.emit(diagnostic);
-            return;
-        }
-        this.diagnosticBridge.pending.push(diagnostic);
-    }
-
     constructor(
-        private input: PipelineInput<TStart, TSources>,
-        private lastStep: Step,
-        private scopeSegments: Path = [] as unknown as Path,
+        private rootBuilder: StepBuilder,
+        private lastBuilder: StepBuilder,
+        private scopeSegments: string[] = [],
         private diagnosticBridge: DeferredDiagnosticBridge = createDeferredDiagnosticBridge()
     ) {}
+
+    private rootScoped<TNext extends object, TNextRootScopeName extends string = RootScopeName, TNextSources extends Record<string, unknown> = TSources>(
+        nextBuilder: StepBuilder
+    ): PipelineBuilder<TNext, TStart, [], TNextRootScopeName, TNextSources> {
+        return new PipelineBuilder<TNext, TStart, [], TNextRootScopeName, TNextSources>(
+            this.rootBuilder,
+            nextBuilder,
+            [],
+            this.diagnosticBridge
+        );
+    }
 
     /**
      * Adds a computed property to each item at the current path.
@@ -582,18 +587,18 @@ export class PipelineBuilder<
             ? Expand<T & Record<K, U>>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<K, U>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
-        const newStep = new DefinePropertyStep(
-            this.lastStep,
+        const newBuilder = new DefinePropertyBuilder(
+            this.lastBuilder,
             propertyName,
             compute as (item: unknown) => U,
-            this.scopeSegments as string[],
+            this.scopeSegments,
             mutableProperties
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     dropProperty<K extends keyof NavigateToPath<T, Path>>(propertyName: K): PipelineBuilder<
@@ -601,16 +606,16 @@ export class PipelineBuilder<
             ? Expand<Omit<T, K>>
             : Expand<TransformAtPath<T, Path, Expand<Omit<NavigateToPath<T, Path>, K>>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
-        const newStep = new DropPropertyStep<NavigateToPath<T, Path>, K>(
-            this.lastStep,
-            propertyName,
-            this.scopeSegments as string[]
+        const newBuilder = new DropPropertyBuilder(
+            this.lastBuilder,
+            propertyName as string,
+            this.scopeSegments
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
@@ -621,23 +626,28 @@ export class PipelineBuilder<
             ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
             : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart,
-        Path,
+        [],
         Path extends [] ? ArrayName : RootScopeName,
         TSources
     > {
-        const descriptor = this.lastStep.getTypeDescriptor();
+        const descriptor = this.lastBuilder.getTypeDescriptor();
         const inferredChildArrayName = this.scopeSegments.length > 0
             ? this.scopeSegments[this.scopeSegments.length - 1]
             : descriptor.rootCollectionName;
 
-        const newStep = new GroupByStep<NavigateToPath<T, Path> & {}, K, ArrayName, string>(
-            this.lastStep,
-            groupingProperties,
+        const newBuilder = new GroupByBuilder(
+            this.lastBuilder,
+            groupingProperties as string[],
             arrayName,
             inferredChildArrayName,
-            this.scopeSegments as string[]
+            this.scopeSegments
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped<
+            Path extends []
+                ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
+                : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
+            Path extends [] ? ArrayName : RootScopeName
+        >(newBuilder);
     }
 
     flatten<
@@ -654,15 +664,17 @@ export class PipelineBuilder<
     ): PipelineBuilder<
         TransformWithFlatten<T, Path, ParentArrayName, OutputArrayName, FlattenedItem>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const parentPath = [...this.scopeSegments, parentArrayName];
         const childPath = [...parentPath, childArrayName];
         const outputPath = [...this.scopeSegments, outputArrayName];
-        const newStep = new FlattenStep(this.lastStep, parentPath, childPath, outputPath);
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        const newBuilder = new FlattenBuilder(this.lastBuilder, parentPath, childPath, outputPath);
+        // Preserve definition-time validation semantics for invalid flatten configurations.
+        newBuilder.getTypeDescriptor();
+        return this.rootScoped(newBuilder);
     }
 
     /*
@@ -718,35 +730,36 @@ export class PipelineBuilder<
      */
     commutativeAggregate<
         ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
+        TItem extends ArrayItemAtCurrentPath<T, Path, ArrayName> & ImmutableProps,
         PropName extends string,
         TAggregate
     >(
         arrayName: ArrayName,
         propertyName: PropName,
-        add: AddOperator<ArrayItemAtCurrentPath<T, Path, ArrayName>, TAggregate>,
-        subtract: SubtractOperator<ArrayItemAtCurrentPath<T, Path, ArrayName>, TAggregate>,
+        add: AddOperator<TItem, TAggregate>,
+        subtract: SubtractOperator<TItem, TAggregate>,
         propertyToAggregate?: string
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], PropName, TAggregate>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<PropName, TAggregate>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const newStep = new CommutativeAggregateStep(
-            this.lastStep,
+        const newBuilder = new CommutativeAggregateBuilder<TItem, TAggregate>(
+            this.lastBuilder,
             fullSegmentPath,
             propertyName,
             {
-                add: add as AddOperator<ImmutableProps, TAggregate>,
-                subtract: subtract as SubtractOperator<ImmutableProps, TAggregate>
+                add,
+                subtract
             },
             propertyToAggregate
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     cumulativeSum<
@@ -759,16 +772,16 @@ export class PipelineBuilder<
         properties: readonly TProperty[]
     ): PipelineBuilder<T, TStart, Path, RootScopeName, TSources> {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const inputDescriptor = this.lastStep.getTypeDescriptor();
+        const inputDescriptor = this.lastBuilder.getTypeDescriptor();
         assertCumulativeSumConfiguration(inputDescriptor, fullSegmentPath, orderBy, properties);
 
-        const newStep = new CumulativeSumStep(
-            this.lastStep,
+        const newBuilder = new CumulativeSumBuilder(
+            this.lastBuilder,
             fullSegmentPath,
             [...orderBy],
             [...properties]
         );
-        return new PipelineBuilder(this.input, newStep, this.scopeSegments, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, this.scopeSegments, this.diagnosticBridge);
     }
 
     /**
@@ -795,20 +808,20 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         return this.commutativeAggregate(
             arrayName,
             outputProperty,
-            (acc: number | undefined, item: unknown) => {
-                const value = (item as Record<string, unknown>)[propertyName];
+            (acc: number | undefined, item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => {
+                const value = item[propertyName];
                 const numValue = finiteNumericContribution(value);
                 return (acc ?? 0) + numValue;
             },
-            (acc: number, item: unknown) => {
-                const value = (item as Record<string, unknown>)[propertyName];
+            (acc: number, item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => {
+                const value = item[propertyName];
                 const numValue = finiteNumericContribution(value);
                 return acc - numValue;
             },
@@ -838,15 +851,15 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         return this.commutativeAggregate(
             arrayName,
             outputProperty,
-            (acc: number | undefined, _item: unknown) => (acc ?? 0) + 1,
-            (acc: number, _item: unknown) => acc - 1
+            (acc: number | undefined, _item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => (acc ?? 0) + 1,
+            (acc: number, _item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => acc - 1
         );
     }
     
@@ -874,19 +887,19 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const newStep = new MinMaxAggregateStep(
-            this.lastStep,
+        const newBuilder = new MinMaxAggregateBuilder(
+            this.lastBuilder,
             fullSegmentPath,
             outputProperty,
             propertyName,
             (left, right) => left - right
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -913,19 +926,19 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const newStep = new MinMaxAggregateStep(
-            this.lastStep,
+        const newBuilder = new MinMaxAggregateBuilder(
+            this.lastBuilder,
             fullSegmentPath,
             outputProperty,
             propertyName,
             (left, right) => right - left
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     replaceToDelta<
@@ -955,20 +968,22 @@ export class PipelineBuilder<
                 >
             >,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const fullEntitySegmentPath = [...this.scopeSegments, entityArrayName];
-        const newStep = new ReplaceToDeltaStep(
-            this.lastStep,
+        const newBuilder = new ReplaceToDeltaBuilder(
+            this.lastBuilder,
             fullEntitySegmentPath,
             eventArrayName,
             [...orderBy],
             [...properties],
             [...outputProperties]
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        // Preserve definition-time validation semantics for invalid replaceToDelta configuration.
+        newBuilder.getTypeDescriptor();
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -995,18 +1010,18 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const newStep = new AverageAggregateStep(
-            this.lastStep,
+        const newBuilder = new AverageAggregateBuilder(
+            this.lastBuilder,
             fullSegmentPath,
             outputProperty,
             propertyName
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -1034,19 +1049,19 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const newStep = new PickByMinMaxStep(
-            this.lastStep,
+        const newBuilder = new PickByMinMaxBuilder(
+            this.lastBuilder,
             fullSegmentPath,
             outputProperty,
             propertyName,
             compareMixedPrimitiveValues
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -1074,19 +1089,19 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const newStep = new PickByMinMaxStep(
-            this.lastStep,
+        const newBuilder = new PickByMinMaxBuilder(
+            this.lastBuilder,
             fullSegmentPath,
             outputProperty,
             propertyName,
             (left, right) => compareMixedPrimitiveValues(right, left)
         );
-        return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -1100,8 +1115,8 @@ export class PipelineBuilder<
         ...pathSegments: NewPath
     ): PipelineBuilder<T, TStart, [...Path, ...NewPath], RootScopeName, TSources> {
         return new PipelineBuilder<T, TStart, [...Path, ...NewPath], RootScopeName, TSources>(
-            this.input,
-            this.lastStep,
+            this.rootBuilder,
+            this.lastBuilder,
             [...this.scopeSegments, ...pathSegments] as [...Path, ...NewPath],
             this.diagnosticBridge
         );
@@ -1125,13 +1140,13 @@ export class PipelineBuilder<
         predicate: (item: NavigateToPath<T, Path>) => boolean,
         mutableProperties: string[] = []
     ): PipelineBuilder<T, TStart, Path, RootScopeName, TSources> {
-        const newStep = new FilterStep<NavigateToPath<T, Path>>(
-            this.lastStep,
+        const newBuilder = new FilterBuilder(
+            this.lastBuilder,
             predicate as (item: unknown) => boolean,
-            this.scopeSegments as string[],
+            this.scopeSegments,
             mutableProperties
         );
-        return new PipelineBuilder(this.input, newStep, this.scopeSegments, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, this.scopeSegments, this.diagnosticBridge);
     }
 
     enrich<
@@ -1165,35 +1180,15 @@ export class PipelineBuilder<
         TSources & Record<TSourceName, { primary: TSecondaryStart; sources: TSecondarySources }>
     > {
         type NewSources = TSources & Record<TSourceName, { primary: TSecondaryStart; sources: TSecondarySources }>;
-        const newStep = new EnrichStep(
-            this.lastStep,
-            secondaryPipeline.lastStep,
-            this.scopeSegments as string[],
+        const newBuilder = new EnrichBuilder(
+            this.lastBuilder,
+            sourceName,
+            secondaryPipeline.lastBuilder,
+            this.scopeSegments,
             [...primaryKey],
             as,
-            whenMissing as ImmutableProps | undefined,
-            diagnostic => {
-                this.reportDiagnostic({
-                    ...diagnostic,
-                    operationType: 'modify'
-                });
-            }
+            whenMissing as ImmutableProps | undefined
         );
-
-        const mergedSources = {
-            ...(this.input.sources as Record<string, unknown>),
-            [sourceName]: secondaryPipeline.input
-        } as PipelineSources<NewSources>;
-
-        const inputWithSources: PipelineInput<TStart, NewSources> = {
-            add: (key: string, immutableProps: TStart) => {
-                this.input.add(key, immutableProps);
-            },
-            remove: (key: string, immutableProps: TStart) => {
-                this.input.remove(key, immutableProps);
-            },
-            sources: mergedSources
-        };
 
         return new PipelineBuilder<
             Path extends []
@@ -1209,11 +1204,11 @@ export class PipelineBuilder<
             Path,
             RootScopeName,
             NewSources
-        >(inputWithSources, newStep, this.scopeSegments, this.diagnosticBridge);
+        >(this.rootBuilder, newBuilder, this.scopeSegments, this.diagnosticBridge);
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return this.lastStep.getTypeDescriptor();
+        return this.lastBuilder.getTypeDescriptor();
     }
 
     /**
@@ -1238,21 +1233,34 @@ export class PipelineBuilder<
             this.diagnosticBridge.pending = [];
         }
 
-        const runtimeDescriptor = this.lastStep.getTypeDescriptor();
+        const builtGraph = buildStepGraph(this.lastBuilder, diagnostic => {
+            if (this.diagnosticBridge.emit) {
+                this.diagnosticBridge.emit({
+                    ...diagnostic,
+                    operationType: 'modify'
+                });
+                return;
+            }
+            this.diagnosticBridge.pending.push({
+                ...diagnostic,
+                operationType: 'modify'
+            });
+        });
+        const runtimeDescriptor = this.lastBuilder.getTypeDescriptor();
         const pathSegments = getPathSegmentsFromDescriptor(runtimeDescriptor);
         const session = new PipelineRuntimeSessionImpl<T, TStart, TSources>(
-            this.input,
+            builtGraph.rootInput as PipelineInput<TStart, TSources>,
             setState,
             runtimeOptions
         );
 
         // Register handlers for each path the step will emit
         pathSegments.forEach(segmentPath => {
-            this.lastStep.onAdded(segmentPath, (keyPath, key, immutableProps) => {
+            builtGraph.lastStep.onAdded(segmentPath, (keyPath, key, immutableProps) => {
                 session.enqueueAdd(segmentPath, keyPath, key, immutableProps);
             });
             
-            this.lastStep.onRemoved(segmentPath, (keyPath, key, _immutableProps) => {
+            builtGraph.lastStep.onRemoved(segmentPath, (keyPath, key, _immutableProps) => {
                 session.enqueueRemove(segmentPath, keyPath, key);
             });
             
@@ -1268,14 +1276,14 @@ export class PipelineBuilder<
                 // so we register at both the current path and parent paths
                 mutableProperties.forEach(propertyName => {
                     // Register at current path level
-                    this.lastStep.onModified(segmentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
+                    builtGraph.lastStep.onModified(segmentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
                         session.enqueueModify(segmentPath, keyPath, key, propertyName, newValue);
                     });
                     
                     // Also register at parent level (for aggregates that emit at parent level)
                     if (segmentPath.length > 0) {
                         const parentPath = segmentPath.slice(0, -1);
-                        this.lastStep.onModified(parentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
+                        builtGraph.lastStep.onModified(parentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
                             session.enqueueModify(parentPath, keyPath, key, propertyName, newValue);
                         });
                     }
@@ -1319,7 +1327,23 @@ function createKeyToIndexMap<T>(state: KeyedArray<T>): Map<string, number> {
     return keyToIndex;
 }
 
-function addToKeyedArray<T>(
+function getObjectRecord(value: object): Record<string, unknown> {
+    return value as Record<string, unknown>;
+}
+
+function getNestedKeyedArray(value: object, segment: string): KeyedArray<object> {
+    const nestedValue = getObjectRecord(value)[segment];
+    return Array.isArray(nestedValue) ? nestedValue as KeyedArray<object> : [];
+}
+
+function withUpdatedProperty<T extends object>(value: T, propertyName: string, propertyValue: unknown): T {
+    return {
+        ...getObjectRecord(value),
+        [propertyName]: propertyValue
+    } as T;
+}
+
+function addToKeyedArray<T extends object>(
     state: KeyedArray<T>,
     segmentPath: string[],
     keyPath: string[],
@@ -1360,10 +1384,8 @@ function addToKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const value = existingItem.value as Record<string, any>;
-        const existingArray = (value[segment] as KeyedArray<unknown>) || [];
+        const existingValue = existingItem.value;
+        const existingArray = getNestedKeyedArray(existingValue, segment);
         const modifiedArray = addToKeyedArray(
             existingArray,
             segmentPath.slice(1),
@@ -1375,10 +1397,7 @@ function addToKeyedArray<T>(
         );
         const modifiedItem = {
             key: parentKey,
-            value: {
-                ...value,
-                [segmentPath[0]]: modifiedArray
-            } as T
+            value: withUpdatedProperty(existingValue, segment, modifiedArray)
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -1388,7 +1407,7 @@ function addToKeyedArray<T>(
     }
 }
 
-function removeFromKeyedArray<T>(
+function removeFromKeyedArray<T extends object>(
     state: KeyedArray<T>,
     segmentPath: string[],
     keyPath: string[],
@@ -1428,10 +1447,8 @@ function removeFromKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const value = existingItem.value as Record<string, any>;
-        const existingArray = (value[segment] as KeyedArray<unknown>) || [];
+        const existingValue = existingItem.value;
+        const existingArray = getNestedKeyedArray(existingValue, segment);
         const modifiedArray = removeFromKeyedArray(
             existingArray,
             segmentPath.slice(1),
@@ -1442,10 +1459,7 @@ function removeFromKeyedArray<T>(
         );
         const modifiedItem = {
             key: parentKey,
-            value: {
-                ...value,
-                [segmentPath[0]]: modifiedArray
-            } as T
+            value: withUpdatedProperty(existingValue, segment, modifiedArray)
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -1455,7 +1469,7 @@ function removeFromKeyedArray<T>(
     }
 }
 
-function modifyInKeyedArray<T>(
+function modifyInKeyedArray<T extends object>(
     state: KeyedArray<T>,
     segmentPath: string[],
     keyPath: string[],
@@ -1488,14 +1502,10 @@ function modifyInKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const existingValue = existingItem.value as Record<string, any>;
+        const existingValue = existingItem.value;
         const modifiedItem = {
             key: key,
-            value: {
-                ...existingValue,
-                [name]: value
-            } as T
+            value: withUpdatedProperty(existingValue, name, value)
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -1529,10 +1539,8 @@ function modifyInKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const existingValue = existingItem.value as Record<string, any>;
-        const existingArray = (existingValue[segment] as KeyedArray<unknown>) || [];
+        const existingValue = existingItem.value;
+        const existingArray = getNestedKeyedArray(existingValue, segment);
         const modifiedArray = modifyInKeyedArray(
             existingArray,
             segmentPath.slice(1),
@@ -1545,10 +1553,7 @@ function modifyInKeyedArray<T>(
         );
         const modifiedItem = {
             key: parentKey,
-            value: {
-                ...existingValue,
-                [segmentPath[0]]: modifiedArray
-            } as T
+            value: withUpdatedProperty(existingValue, segment, modifiedArray)
         };
         return [
             ...state.slice(0, existingItemIndex),

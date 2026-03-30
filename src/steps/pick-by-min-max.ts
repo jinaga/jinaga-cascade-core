@@ -1,4 +1,16 @@
-import type { AddedHandler, DescriptorNode, ImmutableProps, ModifiedHandler, ObjectDescriptor, RemovedHandler, Step, TypeDescriptor } from '../pipeline.js';
+import type {
+    AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
+    DescriptorNode,
+    ImmutableProps,
+    ModifiedHandler,
+    ObjectDescriptor,
+    RemovedHandler,
+    Step,
+    StepBuilder,
+    TypeDescriptor
+} from '../pipeline.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
 import { appendMutableIfMissing, appendObjectIfMissing, emptyDescriptorNode } from '../util/descriptor-transform.js';
 
@@ -46,6 +58,65 @@ function comparisonValuesEqual(
     return left === right;
 }
 
+function addObjectAtPath(
+    descriptor: DescriptorNode,
+    path: string[],
+    objectDesc: ObjectDescriptor
+): DescriptorNode {
+    if (path.length === 0) {
+        return appendObjectIfMissing(descriptor, objectDesc);
+    }
+
+    const [first, ...rest] = path;
+    return {
+        ...descriptor,
+        arrays: descriptor.arrays.map(arr => {
+            if (arr.name === first) {
+                return {
+                    ...arr,
+                    type: addObjectAtPath(arr.type, rest, objectDesc)
+                };
+            }
+            return arr;
+        }),
+        objects: descriptor.objects
+    };
+}
+
+function transformPickByMinMaxDescriptor(
+    inputDescriptor: TypeDescriptor,
+    segmentPath: string[],
+    propertyName: string
+): TypeDescriptor {
+    let currentDescriptor: DescriptorNode = inputDescriptor;
+    for (let i = 0; i < segmentPath.length - 1; i++) {
+        const segment = segmentPath[i];
+        const array = currentDescriptor.arrays.find(a => a.name === segment);
+        if (array) {
+            currentDescriptor = array.type;
+        }
+    }
+
+    const arrayName = segmentPath[segmentPath.length - 1];
+    const sourceArray = currentDescriptor.arrays.find(a => a.name === arrayName);
+
+    const objectDesc: ObjectDescriptor = {
+        name: propertyName,
+        type: sourceArray?.type ?? emptyDescriptorNode()
+    };
+
+    if (segmentPath.length === 1) {
+        const withObject = appendObjectIfMissing(inputDescriptor, objectDesc);
+        return appendMutableIfMissing(withObject, propertyName) as TypeDescriptor;
+    }
+
+    const result = addObjectAtPath(inputDescriptor, segmentPath.slice(0, -1), objectDesc);
+    return {
+        ...appendMutableIfMissing(result, propertyName),
+        rootCollectionName: inputDescriptor.rootCollectionName
+    };
+}
+
 interface ItemRecord {
     immutableProps: ImmutableProps;
     mutableProps: Record<string, unknown>;
@@ -86,9 +157,9 @@ export class PickByMinMaxStep<
         private segmentPath: TPath,
         private propertyName: TPropertyName,
         private comparisonProperty: string,
-        private comparator: (value1: number | string, value2: number | string) => number
+        private comparator: (value1: number | string, value2: number | string) => number,
+        inputDescriptor: TypeDescriptor
     ) {
-        const inputDescriptor = input.getTypeDescriptor();
         const rootMutableProperties = inputDescriptor.mutableProperties;
         const isPropertyMutable = rootMutableProperties.includes(comparisonProperty);
 
@@ -107,67 +178,6 @@ export class PickByMinMaxStep<
                 });
             }
         }
-    }
-
-    getTypeDescriptor(): TypeDescriptor {
-        const inputDescriptor = this.input.getTypeDescriptor();
-
-        // Navigate through the segment path to find the source array's item type.
-        let currentDescriptor: DescriptorNode = inputDescriptor;
-        for (let i = 0; i < this.segmentPath.length - 1; i++) {
-            const segment = this.segmentPath[i];
-            const array = currentDescriptor.arrays.find(a => a.name === segment);
-            if (array) {
-                currentDescriptor = array.type;
-            }
-        }
-
-        const arrayName = this.segmentPath[this.segmentPath.length - 1];
-        const sourceArray = currentDescriptor.arrays.find(a => a.name === arrayName);
-
-        const objectDesc: ObjectDescriptor = {
-            name: this.propertyName,
-            type: sourceArray?.type ?? emptyDescriptorNode()
-        };
-
-        if (this.segmentPath.length === 1) {
-            const withObject = appendObjectIfMissing(inputDescriptor, objectDesc);
-            return appendMutableIfMissing(withObject, this.propertyName) as TypeDescriptor;
-        }
-
-        const result = this.addObjectAtPath(inputDescriptor, this.segmentPath.slice(0, -1), objectDesc);
-        return {
-            ...appendMutableIfMissing(result, this.propertyName),
-            rootCollectionName: inputDescriptor.rootCollectionName
-        };
-    }
-
-    /**
-     * Recursively clones the type descriptor and adds an object descriptor at the specified path.
-     */
-    private addObjectAtPath(
-        descriptor: DescriptorNode,
-        path: string[],
-        objectDesc: ObjectDescriptor
-    ): DescriptorNode {
-        if (path.length === 0) {
-            return appendObjectIfMissing(descriptor, objectDesc);
-        }
-
-        const [first, ...rest] = path;
-        return {
-            ...descriptor,
-            arrays: descriptor.arrays.map(arr => {
-                if (arr.name === first) {
-                    return {
-                        ...arr,
-                        type: this.addObjectAtPath(arr.type, rest, objectDesc)
-                    };
-                }
-                return arr;
-            }),
-            objects: descriptor.objects
-        };
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -375,6 +385,40 @@ export class PickByMinMaxStep<
         this.modifiedHandlers.forEach(handler => {
             handler([], '', oldPickedItem, newPickedItem);
         });
+    }
+}
+
+export class PickByMinMaxBuilder implements StepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        private segmentPath: string[],
+        private propertyName: string,
+        private comparisonProperty: string,
+        private comparator: (value1: number | string, value2: number | string) => number
+    ) {
+    }
+
+    getTypeDescriptor(): TypeDescriptor {
+        return transformPickByMinMaxDescriptor(
+            this.upstream.getTypeDescriptor(),
+            this.segmentPath,
+            this.propertyName
+        );
+    }
+
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new PickByMinMaxStep(
+                up.lastStep,
+                this.segmentPath,
+                this.propertyName,
+                this.comparisonProperty,
+                this.comparator,
+                this.upstream.getTypeDescriptor()
+            )
+        };
     }
 }
 

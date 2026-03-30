@@ -154,7 +154,7 @@ Behavior:
 
 ### Source Routing
 
-`InputPipeline` grows source-routing capability. Each `enrich` call in the builder chain registers a named source with the `InputPipeline`. At `build()` time, the runtime session constructs `PipelineInput` facade objects for each registered source name. These facades delegate `add`/`remove` to the corresponding `EnrichStep`'s secondary input. Nested sources (from secondary pipelines that themselves call `enrich`) are wired recursively.
+`InputBuilder` captures source-routing configuration. Each `enrich` call in the builder chain registers a named source with its `EnrichBuilder`, which holds the secondary builder chain. At `build()` time, the builder chain is instantiated into fresh Step instances: `InputBuilder` creates a fresh `InputStep`, each step Builder creates a fresh Step, and each `EnrichBuilder` instantiates its secondary builder chain into fresh secondary Steps. The runtime session constructs `PipelineInput` facade objects for each registered source name. These facades delegate `add`/`remove` to the corresponding `EnrichStep`'s secondary input. Nested sources (from secondary pipelines that themselves call `enrich`) are wired recursively. Each `build()` call produces a fully independent pipeline with no shared state.
 
 ## `TSources` Type Parameter
 
