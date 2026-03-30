@@ -78,6 +78,52 @@ describe('pipeline rebuild from same builder', () => {
         expect(output2.find((g: any) => g.entityId === 'B')?.total).toBe(400);
     });
 
+    it('should not leak aggregate state from first build into second build', () => {
+        const builder = createPipeline<{ entityId: string; value: number }, 'items'>('items')
+            .groupBy(['entityId'], 'groups')
+            .sum('items', 'value', 'total')
+            .dropProperty('items');
+        const typeDescriptor = builder.getTypeDescriptor();
+
+        const [getState1, setState1] = simulateState<KeyedArray<any>>([]);
+        const session1 = builder.build(setState1);
+        session1.add('r1', { entityId: 'A', value: 100 });
+        session1.add('r2', { entityId: 'A', value: 50 });
+        session1.add('r3', { entityId: 'B', value: 75 });
+        session1.flush();
+
+        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor) as any[];
+        expect(output1).toEqual(
+            expect.arrayContaining([
+                { entityId: 'A', total: 150 },
+                { entityId: 'B', total: 75 }
+            ])
+        );
+
+        session1.dispose();
+
+        const [getState2, setState2] = simulateState<KeyedArray<any>>([]);
+        const session2 = builder.build(setState2);
+        session2.add('r4', { entityId: 'A', value: 7 });
+        session2.add('r5', { entityId: 'B', value: 3 });
+        session2.flush();
+
+        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor) as any[];
+        expect(output2).toHaveLength(2);
+        expect(output2).toEqual(
+            expect.arrayContaining([
+                { entityId: 'A', total: 7 },
+                { entityId: 'B', total: 3 }
+            ])
+        );
+        expect(output2).not.toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ entityId: 'A', total: 157 }),
+                expect.objectContaining({ entityId: 'B', total: 78 })
+            ])
+        );
+    });
+
     it('should produce output when second session uses enrich with empty source', () => {
         // Given: a pipeline with groupBy + enrich + dropProperty (matches bug report pattern)
         const classPipeline = createPipeline<{ entityId: string; flag: number }, 'classes'>('classes')
@@ -120,5 +166,25 @@ describe('pipeline rebuild from same builder', () => {
         // Then: session 2 should produce output with whenMissing default
         const output2 = toPipelinePlainOutput(getState2(), typeDescriptor) as any[];
         expect(output2).toHaveLength(2);
+        expect(output2).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    entityId: 'A',
+                    total: 300,
+                    classInfo: {
+                        entityId: '',
+                        maxFlag: 0
+                    }
+                }),
+                expect.objectContaining({
+                    entityId: 'B',
+                    total: 400,
+                    classInfo: {
+                        entityId: '',
+                        maxFlag: 0
+                    }
+                })
+            ])
+        );
     });
 });

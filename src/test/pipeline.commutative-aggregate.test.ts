@@ -3,11 +3,42 @@ import { createPipeline } from '../index';
 import type { ImmutableProps, Step } from '../pipeline';
 import { AddOperator, CommutativeAggregateStep, SubtractOperator } from '../steps/commutative-aggregate';
 import { DropPropertyStep } from '../steps/drop-property';
+import { PipelineBuilder } from '../builder';
+import { buildStepGraph } from '../step-builders';
 import { createTestPipeline } from './helpers';
 
 // Helper type aliases for cleaner test code
 type NumericAddOp = AddOperator<ImmutableProps, number>;
 type NumericSubtractOp = SubtractOperator<ImmutableProps, number>;
+
+const legacyGraphCache = new WeakMap<object, { rootInput: unknown; lastStep: unknown }>();
+const legacyShimInstalledFlag = '__cascadeLegacyBuilderShimInstalled__';
+
+function getLegacyGraph(builder: object): { rootInput: unknown; lastStep: unknown } {
+    const cached = legacyGraphCache.get(builder);
+    if (cached) {
+        return cached;
+    }
+    const graph = buildStepGraph((builder as { lastBuilder: unknown }).lastBuilder as never);
+    legacyGraphCache.set(builder, graph);
+    return graph;
+}
+
+if (!(globalThis as Record<string, unknown>)[legacyShimInstalledFlag]) {
+    Object.defineProperty(PipelineBuilder.prototype as object, 'lastStep', {
+        configurable: true,
+        get(this: object) {
+            return getLegacyGraph(this).lastStep;
+        }
+    });
+    Object.defineProperty(PipelineBuilder.prototype as object, 'input', {
+        configurable: true,
+        get(this: object) {
+            return getLegacyGraph(this).rootInput;
+        }
+    });
+    (globalThis as Record<string, unknown>)[legacyShimInstalledFlag] = true;
+}
 
 describe('CommutativeAggregateStep', () => {
     describe('basic sum aggregation', () => {
@@ -16,7 +47,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; itemName: string; price: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -33,7 +64,7 @@ describe('CommutativeAggregateStep', () => {
             });
             
             // Trigger add via the input pipeline
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             inputPipeline.add('item1', { category: 'Electronics', itemName: 'Phone', price: 500 });
             
             // Verify aggregate was emitted via onModified
@@ -45,7 +76,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; itemName: string; price: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -61,7 +92,7 @@ describe('CommutativeAggregateStep', () => {
                 addedEvents.push({ path: [...path], key, props: { ...props } });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             inputPipeline.add('item1', { category: 'Electronics', itemName: 'Phone', price: 500 });
             
             // Verify immutable props are passed through onAdded
@@ -76,7 +107,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; itemName: string; price: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -92,7 +123,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             inputPipeline.add('item1', { category: 'Electronics', itemName: 'Phone', price: 500 });
             inputPipeline.add('item2', { category: 'Electronics', itemName: 'Laptop', price: 1200 });
             inputPipeline.add('item3', { category: 'Electronics', itemName: 'Tablet', price: 300 });
@@ -110,7 +141,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; itemName: string; price: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -126,7 +157,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as {
+            const inputPipeline = getLegacyGraph(builder).rootInput as {
                 add: (key: string, props: any) => void;
                 remove: (key: string, props: any) => void;
             };
@@ -151,7 +182,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; price: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -167,7 +198,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as {
+            const inputPipeline = getLegacyGraph(builder).rootInput as {
                 add: (key: string, props: any) => void;
                 remove: (key: string, props: any) => void;
             };
@@ -189,7 +220,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; price: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -205,7 +236,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as {
+            const inputPipeline = getLegacyGraph(builder).rootInput as {
                 add: (key: string, props: any) => void;
                 remove: (key: string, props: any) => void;
             };
@@ -229,7 +260,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; itemName: string; price: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -245,7 +276,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             
             // Add items to different categories
             inputPipeline.add('item1', { category: 'Electronics', itemName: 'Phone', price: 500 });
@@ -266,7 +297,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ department: string; employee: string; salary: number }>()
                 .groupBy(['department'], 'employees');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { salary: number }).salary;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { salary: number }).salary;
             
@@ -282,7 +313,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as {
+            const inputPipeline = getLegacyGraph(builder).rootInput as {
                 add: (key: string, props: any) => void;
                 remove: (key: string, props: any) => void;
             };
@@ -317,7 +348,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['state'], 'cities')
                 .in('items').groupBy(['city'], 'cities');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { capacity: number }).capacity;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { capacity: number }).capacity;
             
@@ -333,7 +364,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ path: [...path], key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             
             inputPipeline.add('v1', { state: 'TX', city: 'Dallas', venue: 'Stadium', capacity: 50000 });
             inputPipeline.add('v2', { state: 'TX', city: 'Dallas', venue: 'Arena', capacity: 20000 });
@@ -348,7 +379,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['state'], 'cities')
                 .in('items').groupBy(['city'], 'cities');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, _item) => (acc ?? 0) + 1;
             const subtractOp: NumericSubtractOp = (acc, _item) => acc - 1;
             
@@ -364,7 +395,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ path: [...path], key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             
             // Add venues to Dallas
             inputPipeline.add('v1', { state: 'TX', city: 'Dallas', venue: 'Stadium', capacity: 50000 });
@@ -385,7 +416,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             
             let receivedUndefined = false;
             const addOp: NumericAddOp = (acc, item) => {
@@ -408,7 +439,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             inputPipeline.add('item1', { category: 'A', value: 10 });
             
             // Verify that the add function received undefined for first item
@@ -421,7 +452,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             
             const undefinedCount: { count: number } = { count: 0 };
             const addOp: NumericAddOp = (acc, item) => {
@@ -441,7 +472,7 @@ describe('CommutativeAggregateStep', () => {
             
             aggregateStep.onModified([], 'totalPrice', () => {});
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             
             // First item of category A
             inputPipeline.add('item1', { category: 'A', value: 10 });
@@ -460,7 +491,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             
             type Stats = { min: number; max: number; sum: number; count: number };
             
@@ -498,7 +529,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as Stats | undefined, newValue: newValue as Stats });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             inputPipeline.add('item1', { category: 'A', value: 10 });
             inputPipeline.add('item2', { category: 'A', value: 30 });
             inputPipeline.add('item3', { category: 'A', value: 20 });
@@ -515,7 +546,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
@@ -531,7 +562,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as {
+            const inputPipeline = getLegacyGraph(builder).rootInput as {
                 add: (key: string, props: any) => void;
                 remove: (key: string, props: any) => void;
             };
@@ -552,7 +583,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
@@ -568,7 +599,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             
             inputPipeline.add('item1', { category: 'A', value: 0 });
             inputPipeline.add('item2', { category: 'A', value: 100 });
@@ -584,7 +615,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
@@ -600,7 +631,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as {
+            const inputPipeline = getLegacyGraph(builder).rootInput as {
                 add: (key: string, props: any) => void;
                 remove: (key: string, props: any) => void;
             };
@@ -625,7 +656,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; price: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -641,7 +672,7 @@ describe('CommutativeAggregateStep', () => {
                 addedProps.push({ ...props });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             inputPipeline.add('item1', { category: 'Electronics', price: 500 });
             inputPipeline.add('item2', { category: 'Electronics', price: 300 });
             
@@ -655,7 +686,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
@@ -671,7 +702,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedNames.push('myCustomAggregate'); // Property name is known at registration time
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             inputPipeline.add('item1', { category: 'A', value: 10 });
             
             expect(modifiedNames.length).toBeGreaterThan(0);
@@ -683,7 +714,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; price: number; quantity: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -705,7 +736,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as { add: (key: string, props: any) => void };
+            const inputPipeline = getLegacyGraph(builder).rootInput as { add: (key: string, props: any) => void };
             
             // Add 5 items
             for (let i = 0; i < 5; i++) {
@@ -733,7 +764,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const inputDescriptor = step.getTypeDescriptor();
             
             // Input should have 'items' array
@@ -759,7 +790,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; value: number }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const inputDescriptor = step.getTypeDescriptor();
             
             // Input should have 'items' array
@@ -790,7 +821,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['state'], 'cities')
                 .in('items').groupBy(['city'], 'cities');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const inputDescriptor = step.getTypeDescriptor();
             
             // Input should have nested structure: cities > items
@@ -826,7 +857,7 @@ describe('CommutativeAggregateStep', () => {
             const builder = createPipeline<{ category: string; name: string }>()
                 .groupBy(['category'], 'items');
             
-            const step = builder['lastStep'] as Step;
+            const step = getLegacyGraph(builder).lastStep as Step;
             const addOp: NumericAddOp = (acc, _item) => (acc ?? 0) + 1;
             const subtractOp: NumericSubtractOp = (acc, _item) => acc - 1;
             
@@ -842,7 +873,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = builder['input'] as {
+            const inputPipeline = getLegacyGraph(builder).rootInput as {
                 add: (key: string, props: any) => void;
                 remove: (key: string, props: any) => void;
             };
