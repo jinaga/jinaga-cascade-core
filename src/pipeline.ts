@@ -10,6 +10,15 @@ export type PipelineSources<TSources extends Record<string, unknown>> = {
             : never;
 };
 
+type UntypedSourceGraphShape = {
+    [sourceName: string]: {
+        primary: unknown;
+        sources?: UntypedSourceGraphShape;
+    };
+};
+
+export type UntypedPipelineSources = PipelineSources<UntypedSourceGraphShape>;
+
 export interface PipelineInput<T, TSources extends Record<string, unknown> = EmptySources> {
     add(key: string, immutableProps: T): void;
     remove(key: string, immutableProps: T): void;
@@ -18,7 +27,7 @@ export interface PipelineInput<T, TSources extends Record<string, unknown> = Emp
 
 export interface SourceBindableInput<T, TSources extends Record<string, unknown> = EmptySources>
     extends PipelineInput<T, TSources> {
-    setSources(sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>>): void;
+    setSources(sources: UntypedPipelineSources): void;
 }
 
 export interface PipelineRuntimeDiagnostic {
@@ -176,7 +185,7 @@ export interface Step {
 export interface BuiltStepGraph {
     rootInput: SourceBindableInput<unknown, Record<string, unknown>>;
     lastStep: Step;
-    sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>>;
+    sources: UntypedPipelineSources;
 }
 
 export interface BuildContext {

@@ -552,9 +552,20 @@ export class PipelineBuilder<
     constructor(
         private rootBuilder: StepBuilder,
         private lastBuilder: StepBuilder,
-        private scopeSegments: Path = [] as unknown as Path,
+        private scopeSegments: string[] = [],
         private diagnosticBridge: DeferredDiagnosticBridge = createDeferredDiagnosticBridge()
     ) {}
+
+    private rootScoped<TNext extends object, TNextRootScopeName extends string = RootScopeName, TNextSources extends Record<string, unknown> = TSources>(
+        nextBuilder: StepBuilder
+    ): PipelineBuilder<TNext, TStart, [], TNextRootScopeName, TNextSources> {
+        return new PipelineBuilder<TNext, TStart, [], TNextRootScopeName, TNextSources>(
+            this.rootBuilder,
+            nextBuilder,
+            [],
+            this.diagnosticBridge
+        );
+    }
 
     /**
      * Adds a computed property to each item at the current path.
@@ -576,7 +587,7 @@ export class PipelineBuilder<
             ? Expand<T & Record<K, U>>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<K, U>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -587,7 +598,7 @@ export class PipelineBuilder<
             this.scopeSegments as string[],
             mutableProperties
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     dropProperty<K extends keyof NavigateToPath<T, Path>>(propertyName: K): PipelineBuilder<
@@ -595,7 +606,7 @@ export class PipelineBuilder<
             ? Expand<Omit<T, K>>
             : Expand<TransformAtPath<T, Path, Expand<Omit<NavigateToPath<T, Path>, K>>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -604,7 +615,7 @@ export class PipelineBuilder<
             propertyName as string,
             this.scopeSegments as string[]
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
@@ -615,7 +626,7 @@ export class PipelineBuilder<
             ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
             : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart,
-        Path,
+        [],
         Path extends [] ? ArrayName : RootScopeName,
         TSources
     > {
@@ -631,7 +642,12 @@ export class PipelineBuilder<
             inferredChildArrayName,
             this.scopeSegments as string[]
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped<
+            Path extends []
+                ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
+                : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
+            Path extends [] ? ArrayName : RootScopeName
+        >(newBuilder);
     }
 
     flatten<
@@ -648,7 +664,7 @@ export class PipelineBuilder<
     ): PipelineBuilder<
         TransformWithFlatten<T, Path, ParentArrayName, OutputArrayName, FlattenedItem>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -658,7 +674,7 @@ export class PipelineBuilder<
         const newBuilder = new FlattenBuilder(this.lastBuilder, parentPath, childPath, outputPath);
         // Preserve definition-time validation semantics for invalid flatten configurations.
         newBuilder.getTypeDescriptor();
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     /*
@@ -714,35 +730,36 @@ export class PipelineBuilder<
      */
     commutativeAggregate<
         ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
+        TItem extends ArrayItemAtCurrentPath<T, Path, ArrayName> & ImmutableProps,
         PropName extends string,
         TAggregate
     >(
         arrayName: ArrayName,
         propertyName: PropName,
-        add: AddOperator<ArrayItemAtCurrentPath<T, Path, ArrayName>, TAggregate>,
-        subtract: SubtractOperator<ArrayItemAtCurrentPath<T, Path, ArrayName>, TAggregate>,
+        add: AddOperator<TItem, TAggregate>,
+        subtract: SubtractOperator<TItem, TAggregate>,
         propertyToAggregate?: string
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], PropName, TAggregate>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<PropName, TAggregate>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const newBuilder = new CommutativeAggregateBuilder(
+        const newBuilder = new CommutativeAggregateBuilder<TItem, TAggregate>(
             this.lastBuilder,
             fullSegmentPath,
             propertyName,
             {
-                add: add as AddOperator<ImmutableProps, TAggregate>,
-                subtract: subtract as SubtractOperator<ImmutableProps, TAggregate>
+                add,
+                subtract
             },
             propertyToAggregate
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     cumulativeSum<
@@ -791,20 +808,20 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         return this.commutativeAggregate(
             arrayName,
             outputProperty,
-            (acc: number | undefined, item: unknown) => {
-                const value = (item as Record<string, unknown>)[propertyName];
+            (acc: number | undefined, item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => {
+                const value = item[propertyName];
                 const numValue = finiteNumericContribution(value);
                 return (acc ?? 0) + numValue;
             },
-            (acc: number, item: unknown) => {
-                const value = (item as Record<string, unknown>)[propertyName];
+            (acc: number, item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => {
+                const value = item[propertyName];
                 const numValue = finiteNumericContribution(value);
                 return acc - numValue;
             },
@@ -834,15 +851,15 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
         return this.commutativeAggregate(
             arrayName,
             outputProperty,
-            (acc: number | undefined, _item: unknown) => (acc ?? 0) + 1,
-            (acc: number, _item: unknown) => acc - 1
+            (acc: number | undefined, _item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => (acc ?? 0) + 1,
+            (acc: number, _item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => acc - 1
         );
     }
     
@@ -870,7 +887,7 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -882,7 +899,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => left - right
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -909,7 +926,7 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -921,7 +938,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => right - left
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
 
     replaceToDelta<
@@ -951,7 +968,7 @@ export class PipelineBuilder<
                 >
             >,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -966,7 +983,7 @@ export class PipelineBuilder<
         );
         // Preserve definition-time validation semantics for invalid replaceToDelta configuration.
         newBuilder.getTypeDescriptor();
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -993,7 +1010,7 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -1004,7 +1021,7 @@ export class PipelineBuilder<
             outputProperty,
             propertyName
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -1032,7 +1049,7 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -1044,7 +1061,7 @@ export class PipelineBuilder<
             propertyName,
             compareMixedPrimitiveValues
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -1072,7 +1089,7 @@ export class PipelineBuilder<
             ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>>>,
         TStart,
-        Path,
+        [],
         RootScopeName,
         TSources
     > {
@@ -1084,7 +1101,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => compareMixedPrimitiveValues(right, left)
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return this.rootScoped(newBuilder);
     }
     
     /**
@@ -1310,7 +1327,23 @@ function createKeyToIndexMap<T>(state: KeyedArray<T>): Map<string, number> {
     return keyToIndex;
 }
 
-function addToKeyedArray<T>(
+function getObjectRecord(value: object): Record<string, unknown> {
+    return value as Record<string, unknown>;
+}
+
+function getNestedKeyedArray(value: object, segment: string): KeyedArray<object> {
+    const nestedValue = getObjectRecord(value)[segment];
+    return Array.isArray(nestedValue) ? nestedValue as KeyedArray<object> : [];
+}
+
+function withUpdatedProperty<T extends object>(value: T, propertyName: string, propertyValue: unknown): T {
+    return {
+        ...getObjectRecord(value),
+        [propertyName]: propertyValue
+    } as T;
+}
+
+function addToKeyedArray<T extends object>(
     state: KeyedArray<T>,
     segmentPath: string[],
     keyPath: string[],
@@ -1351,10 +1384,8 @@ function addToKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const value = existingItem.value as Record<string, any>;
-        const existingArray = (value[segment] as KeyedArray<unknown>) || [];
+        const existingValue = existingItem.value;
+        const existingArray = getNestedKeyedArray(existingValue, segment);
         const modifiedArray = addToKeyedArray(
             existingArray,
             segmentPath.slice(1),
@@ -1366,10 +1397,7 @@ function addToKeyedArray<T>(
         );
         const modifiedItem = {
             key: parentKey,
-            value: {
-                ...value,
-                [segmentPath[0]]: modifiedArray
-            } as T
+            value: withUpdatedProperty(existingValue, segment, modifiedArray)
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -1379,7 +1407,7 @@ function addToKeyedArray<T>(
     }
 }
 
-function removeFromKeyedArray<T>(
+function removeFromKeyedArray<T extends object>(
     state: KeyedArray<T>,
     segmentPath: string[],
     keyPath: string[],
@@ -1419,10 +1447,8 @@ function removeFromKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const value = existingItem.value as Record<string, any>;
-        const existingArray = (value[segment] as KeyedArray<unknown>) || [];
+        const existingValue = existingItem.value;
+        const existingArray = getNestedKeyedArray(existingValue, segment);
         const modifiedArray = removeFromKeyedArray(
             existingArray,
             segmentPath.slice(1),
@@ -1433,10 +1459,7 @@ function removeFromKeyedArray<T>(
         );
         const modifiedItem = {
             key: parentKey,
-            value: {
-                ...value,
-                [segmentPath[0]]: modifiedArray
-            } as T
+            value: withUpdatedProperty(existingValue, segment, modifiedArray)
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -1446,7 +1469,7 @@ function removeFromKeyedArray<T>(
     }
 }
 
-function modifyInKeyedArray<T>(
+function modifyInKeyedArray<T extends object>(
     state: KeyedArray<T>,
     segmentPath: string[],
     keyPath: string[],
@@ -1479,14 +1502,10 @@ function modifyInKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const existingValue = existingItem.value as Record<string, any>;
+        const existingValue = existingItem.value;
         const modifiedItem = {
             key: key,
-            value: {
-                ...existingValue,
-                [name]: value
-            } as T
+            value: withUpdatedProperty(existingValue, name, value)
         };
         return [
             ...state.slice(0, existingItemIndex),
@@ -1520,10 +1539,8 @@ function modifyInKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const existingValue = existingItem.value as Record<string, any>;
-        const existingArray = (existingValue[segment] as KeyedArray<unknown>) || [];
+        const existingValue = existingItem.value;
+        const existingArray = getNestedKeyedArray(existingValue, segment);
         const modifiedArray = modifyInKeyedArray(
             existingArray,
             segmentPath.slice(1),
@@ -1536,10 +1553,7 @@ function modifyInKeyedArray<T>(
         );
         const modifiedItem = {
             key: parentKey,
-            value: {
-                ...existingValue,
-                [segmentPath[0]]: modifiedArray
-            } as T
+            value: withUpdatedProperty(existingValue, segment, modifiedArray)
         };
         return [
             ...state.slice(0, existingItemIndex),
