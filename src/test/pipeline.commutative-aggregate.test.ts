@@ -10,6 +10,55 @@ import { createTestPipeline } from './helpers';
 type NumericAddOp = AddOperator<ImmutableProps, number>;
 type NumericSubtractOp = SubtractOperator<ImmutableProps, number>;
 
+class FakeInputStep implements Step {
+    private readonly addedHandlers: Map<string, Array<(keyPath: string[], key: string, immutableProps: ImmutableProps) => void>> = new Map();
+    private readonly removedHandlers: Map<string, Array<(keyPath: string[], key: string, immutableProps: ImmutableProps) => void>> = new Map();
+    private readonly modifiedHandlers: Map<string, Array<(keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void>> = new Map();
+
+    onAdded(pathSegments: string[], handler: (keyPath: string[], key: string, immutableProps: ImmutableProps) => void): void {
+        const pathKey = JSON.stringify(pathSegments);
+        const handlers = this.addedHandlers.get(pathKey) ?? [];
+        handlers.push(handler);
+        this.addedHandlers.set(pathKey, handlers);
+    }
+
+    onRemoved(pathSegments: string[], handler: (keyPath: string[], key: string, immutableProps: ImmutableProps) => void): void {
+        const pathKey = JSON.stringify(pathSegments);
+        const handlers = this.removedHandlers.get(pathKey) ?? [];
+        handlers.push(handler);
+        this.removedHandlers.set(pathKey, handlers);
+    }
+
+    onModified(pathSegments: string[], propertyName: string, handler: (keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void): void {
+        const registrationKey = `${JSON.stringify(pathSegments)}::${propertyName}`;
+        const handlers = this.modifiedHandlers.get(registrationKey) ?? [];
+        handlers.push(handler);
+        this.modifiedHandlers.set(registrationKey, handlers);
+    }
+
+    emitAdded(pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
+        const pathKey = JSON.stringify(pathSegments);
+        (this.addedHandlers.get(pathKey) ?? []).forEach(handler => handler(keyPath, key, immutableProps));
+    }
+
+    emitRemoved(pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
+        const pathKey = JSON.stringify(pathSegments);
+        (this.removedHandlers.get(pathKey) ?? []).forEach(handler => handler(keyPath, key, immutableProps));
+    }
+
+    emitModified(
+        pathSegments: string[],
+        propertyName: string,
+        keyPath: string[],
+        key: string,
+        oldValue: unknown,
+        newValue: unknown
+    ): void {
+        const registrationKey = `${JSON.stringify(pathSegments)}::${propertyName}`;
+        (this.modifiedHandlers.get(registrationKey) ?? []).forEach(handler => handler(keyPath, key, oldValue, newValue));
+    }
+}
+
 function graphFromPipelineBuilder(builder: PipelineBuilder) {
     return buildStepGraph((builder as { lastBuilder: StepBuilder }).lastBuilder);
 }
@@ -1238,6 +1287,47 @@ describe('CommutativeAggregateStep', () => {
                 group = output.find(g => g.category === 'A');
                 expect(group?.count).toBe(2);
             });
+        });
+    });
+
+    describe('mutable property item snapshots', () => {
+        it('should pass the full tracked item to operators during mutable updates', () => {
+            const fakeInput = new FakeInputStep();
+            type WeightedItem = { quantity: number; unitPrice: number };
+            const aggregateStep = new CommutativeAggregateStep<WeightedItem, ['items'], 'weightedTotal', number>(
+                fakeInput,
+                ['items'],
+                'weightedTotal',
+                {
+                    add: (acc, item) => (acc ?? 0) + item.quantity * item.unitPrice,
+                    subtract: (acc, item) => acc - item.quantity * item.unitPrice
+                },
+                'quantity',
+                {
+                    rootCollectionName: 'items',
+                    arrays: [],
+                    collectionKey: [],
+                    scalars: [
+                        { name: 'quantity', type: 'number' },
+                        { name: 'unitPrice', type: 'number' }
+                    ],
+                    objects: [],
+                    mutableProperties: ['quantity']
+                }
+            );
+
+            const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'weightedTotal', (_path, _key, oldValue, newValue) => {
+                modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
+            });
+
+            fakeInput.emitAdded(['items'], [], 'row-1', { quantity: 2, unitPrice: 5 });
+            fakeInput.emitModified(['items'], 'quantity', [], 'row-1', 2, 3);
+
+            expect(modifiedEvents).toEqual([
+                { oldValue: undefined, newValue: 10 },
+                { oldValue: 10, newValue: 15 }
+            ]);
         });
     });
 });

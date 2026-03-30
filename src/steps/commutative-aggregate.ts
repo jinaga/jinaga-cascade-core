@@ -108,6 +108,12 @@ export class CommutativeAggregateStep<
     
     /** Whether the property being aggregated is mutable (auto-detected) */
     private isPropertyMutable: boolean = false;
+
+    /**
+     * Tracks full item snapshots by parent path so mutable-property updates can
+     * reapply operators with the real TItem shape rather than a partial record.
+     */
+    private itemSnapshots: Map<string, Map<string, TItem>> = new Map();
     
     constructor(
         private input: Step,
@@ -188,16 +194,28 @@ export class CommutativeAggregateStep<
     private asAggregateItem(item: ImmutableProps): TItem {
         return item as TItem;
     }
+
+    private getItemSnapshotsForParent(parentKeyHash: string): Map<string, TItem> {
+        const existingSnapshots = this.itemSnapshots.get(parentKeyHash);
+        if (existingSnapshots) {
+            return existingSnapshots;
+        }
+        const snapshots = new Map<string, TItem>();
+        this.itemSnapshots.set(parentKeyHash, snapshots);
+        return snapshots;
+    }
     
     /**
      * Handle when an item is added to the target array
      */
-    private handleItemAdded(keyPath: string[], _itemKey: string, item: ImmutableProps): void {
+    private handleItemAdded(keyPath: string[], itemKey: string, item: ImmutableProps): void {
         // keyPath contains the runtime keys leading to this item
         // For segmentPath ['cities', 'venues'], keyPath might be ['hash_TX', 'hash_Dallas']
         
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
+        const itemSnapshots = this.getItemSnapshotsForParent(parentKeyHash);
+        itemSnapshots.set(itemKey, this.asAggregateItem(item));
         
         // Track item count for cleanup
         const currentCount = this.itemCounts.get(parentKeyHash) ?? 0;
@@ -247,9 +265,21 @@ export class CommutativeAggregateStep<
     /**
      * Handle when a mutable property of an aggregated item changes
      */
-    private handleItemPropertyChanged(keyPath: string[], _itemKey: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
+    private handleItemPropertyChanged(keyPath: string[], itemKey: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
+        const itemSnapshots = this.getItemSnapshotsForParent(parentKeyHash);
+        const existingSnapshot = itemSnapshots.get(itemKey);
+
+        if (!existingSnapshot) {
+            return;
+        }
+
+        const updatedSnapshot = this.asAggregateItem({
+            ...existingSnapshot,
+            [propertyName]: newValue
+        });
+        itemSnapshots.set(itemKey, updatedSnapshot);
         
         // Get the current aggregate
         const currentAggregate = this.aggregateValues.get(parentKeyHash);
@@ -257,9 +287,8 @@ export class CommutativeAggregateStep<
         // Handle the case where this is the first value for a mutable property
         // (oldValue is undefined, no aggregate yet)
         if (currentAggregate === undefined && oldValue === undefined) {
-            // This is the initial value for the property - treat as a fresh add
-            const newItem = { [propertyName]: newValue } as TItem;
-            const newAggregate = this.config.add(undefined, newItem);
+            // This is the initial value for the property - treat as a fresh add.
+            const newAggregate = this.config.add(undefined, updatedSnapshot);
             this.aggregateValues.set(parentKeyHash, newAggregate);
             
             // Emit modification event
@@ -283,20 +312,14 @@ export class CommutativeAggregateStep<
             return;
         }
         
-        // For commutative aggregates, we can update incrementally:
-        // newAggregate = currentAggregate - oldContribution + newContribution
-        //
-        // The config.add and config.subtract operators expect items with properties,
-        // so we create pseudo-items with just the changed property.
-        // This works because sum/count operators extract item[propertyName].
-        
-        // Create pseudo-items with the old and new values
-        const oldItem = { [propertyName]: oldValue } as TItem;
-        const newItem = { [propertyName]: newValue } as TItem;
+        const previousSnapshot = this.asAggregateItem({
+            ...updatedSnapshot,
+            [propertyName]: oldValue
+        });
         
         // Compute new aggregate: subtract old value, add new value
-        const intermediateAggregate = this.config.subtract(currentAggregate, oldItem);
-        const newAggregate = this.config.add(intermediateAggregate, newItem);
+        const intermediateAggregate = this.config.subtract(currentAggregate, previousSnapshot);
+        const newAggregate = this.config.add(intermediateAggregate, updatedSnapshot);
         
         // Update stored aggregate
         this.aggregateValues.set(parentKeyHash, newAggregate);
@@ -320,9 +343,10 @@ export class CommutativeAggregateStep<
     /**
      * Handle when an item is removed from the target array
      */
-    private handleItemRemoved(keyPath: string[], _itemKey: string, item: ImmutableProps): void {
+    private handleItemRemoved(keyPath: string[], itemKey: string, item: ImmutableProps): void {
         const parentKeyPath = keyPath;
         const parentKeyHash = computeKeyPathHash(parentKeyPath);
+        const itemSnapshots = this.itemSnapshots.get(parentKeyHash);
         
         // Get current aggregate
         const currentAggregate = this.aggregateValues.get(parentKeyHash);
@@ -331,7 +355,8 @@ export class CommutativeAggregateStep<
         }
         
         // Compute new aggregate
-        const newAggregate = this.config.subtract(currentAggregate, this.asAggregateItem(item));
+        const removedItem = itemSnapshots?.get(itemKey) ?? this.asAggregateItem(item);
+        const newAggregate = this.config.subtract(currentAggregate, removedItem);
         
         // Update item count and clean up if no items remain
         const currentCount = this.itemCounts.get(parentKeyHash) ?? 0;
@@ -343,6 +368,14 @@ export class CommutativeAggregateStep<
         } else {
             this.itemCounts.delete(parentKeyHash);
             this.aggregateValues.delete(parentKeyHash);
+            this.itemSnapshots.delete(parentKeyHash);
+        }
+
+        if (itemSnapshots) {
+            itemSnapshots.delete(itemKey);
+            if (itemSnapshots.size === 0) {
+                this.itemSnapshots.delete(parentKeyHash);
+            }
         }
         
         // Emit modification event
