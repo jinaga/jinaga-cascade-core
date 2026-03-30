@@ -391,6 +391,14 @@ type ArrayItemAtCurrentPath<
     ? ItemType
     : never;
 
+type ArrayItemImmutablePropsAtCurrentPath<
+    T,
+    Path extends string[],
+    ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>
+> = ArrayItemAtCurrentPath<T, Path, ArrayName> extends ImmutableProps
+    ? ArrayItemAtCurrentPath<T, Path, ArrayName>
+    : never;
+
 type ArrayPropertyNameOn<T> = {
     [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? K : never
 }[keyof T] & string;
@@ -552,7 +560,7 @@ export class PipelineBuilder<
     constructor(
         private rootBuilder: StepBuilder,
         private lastBuilder: StepBuilder,
-        private scopeSegments: Path = [] as unknown as Path,
+        private scopeSegments: string[] = [],
         private diagnosticBridge: DeferredDiagnosticBridge = createDeferredDiagnosticBridge()
     ) {}
 
@@ -584,10 +592,10 @@ export class PipelineBuilder<
             this.lastBuilder,
             propertyName,
             compute as (item: unknown) => U,
-            this.scopeSegments as string[],
+            this.scopeSegments,
             mutableProperties
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     dropProperty<K extends keyof NavigateToPath<T, Path>>(propertyName: K): PipelineBuilder<
@@ -602,9 +610,9 @@ export class PipelineBuilder<
         const newBuilder = new DropPropertyBuilder(
             this.lastBuilder,
             propertyName as string,
-            this.scopeSegments as string[]
+            this.scopeSegments
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
@@ -629,9 +637,9 @@ export class PipelineBuilder<
             groupingProperties as string[],
             arrayName,
             inferredChildArrayName,
-            this.scopeSegments as string[]
+            this.scopeSegments
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     flatten<
@@ -658,7 +666,7 @@ export class PipelineBuilder<
         const newBuilder = new FlattenBuilder(this.lastBuilder, parentPath, childPath, outputPath);
         // Preserve definition-time validation semantics for invalid flatten configurations.
         newBuilder.getTypeDescriptor();
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     /*
@@ -719,8 +727,8 @@ export class PipelineBuilder<
     >(
         arrayName: ArrayName,
         propertyName: PropName,
-        add: AddOperator<ArrayItemAtCurrentPath<T, Path, ArrayName>, TAggregate>,
-        subtract: SubtractOperator<ArrayItemAtCurrentPath<T, Path, ArrayName>, TAggregate>,
+        add: AddOperator<ArrayItemImmutablePropsAtCurrentPath<T, Path, ArrayName>, TAggregate>,
+        subtract: SubtractOperator<ArrayItemImmutablePropsAtCurrentPath<T, Path, ArrayName>, TAggregate>,
         propertyToAggregate?: string
     ): PipelineBuilder<
         Path extends []
@@ -732,17 +740,17 @@ export class PipelineBuilder<
         TSources
     > {
         const fullSegmentPath = [...this.scopeSegments, arrayName];
-        const newBuilder = new CommutativeAggregateBuilder(
+        const newBuilder = new CommutativeAggregateBuilder<ArrayItemImmutablePropsAtCurrentPath<T, Path, ArrayName>, TAggregate>(
             this.lastBuilder,
             fullSegmentPath,
             propertyName,
             {
-                add: add as AddOperator<ImmutableProps, TAggregate>,
-                subtract: subtract as SubtractOperator<ImmutableProps, TAggregate>
+                add,
+                subtract
             },
             propertyToAggregate
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     cumulativeSum<
@@ -882,7 +890,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => left - right
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -921,7 +929,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => right - left
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
 
     replaceToDelta<
@@ -966,7 +974,7 @@ export class PipelineBuilder<
         );
         // Preserve definition-time validation semantics for invalid replaceToDelta configuration.
         newBuilder.getTypeDescriptor();
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -1004,7 +1012,7 @@ export class PipelineBuilder<
             outputProperty,
             propertyName
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -1044,7 +1052,7 @@ export class PipelineBuilder<
             propertyName,
             compareMixedPrimitiveValues
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -1084,7 +1092,7 @@ export class PipelineBuilder<
             propertyName,
             (left, right) => compareMixedPrimitiveValues(right, left)
         );
-        return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
+        return new PipelineBuilder(this.rootBuilder, newBuilder, [], this.diagnosticBridge);
     }
     
     /**
@@ -1126,7 +1134,7 @@ export class PipelineBuilder<
         const newBuilder = new FilterBuilder(
             this.lastBuilder,
             predicate as (item: unknown) => boolean,
-            this.scopeSegments as string[],
+            this.scopeSegments,
             mutableProperties
         );
         return new PipelineBuilder(this.rootBuilder, newBuilder, this.scopeSegments, this.diagnosticBridge);
@@ -1167,7 +1175,7 @@ export class PipelineBuilder<
             this.lastBuilder,
             sourceName,
             secondaryPipeline.lastBuilder,
-            this.scopeSegments as string[],
+            this.scopeSegments,
             [...primaryKey],
             as,
             whenMissing as ImmutableProps | undefined
@@ -1310,6 +1318,15 @@ function createKeyToIndexMap<T>(state: KeyedArray<T>): Map<string, number> {
     return keyToIndex;
 }
 
+function getChildKeyedArray(value: unknown, segment: string): KeyedArray<unknown> {
+    if (typeof value !== 'object' || value === null) {
+        return [];
+    }
+    const record = value as Record<string, unknown>;
+    const candidate = record[segment];
+    return Array.isArray(candidate) ? (candidate as KeyedArray<unknown>) : [];
+}
+
 function addToKeyedArray<T>(
     state: KeyedArray<T>,
     segmentPath: string[],
@@ -1351,10 +1368,8 @@ function addToKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const value = existingItem.value as Record<string, any>;
-        const existingArray = (value[segment] as KeyedArray<unknown>) || [];
+        const value = existingItem.value as ImmutableProps;
+        const existingArray = getChildKeyedArray(value, segment);
         const modifiedArray = addToKeyedArray(
             existingArray,
             segmentPath.slice(1),
@@ -1419,10 +1434,8 @@ function removeFromKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const value = existingItem.value as Record<string, any>;
-        const existingArray = (value[segment] as KeyedArray<unknown>) || [];
+        const value = existingItem.value as ImmutableProps;
+        const existingArray = getChildKeyedArray(value, segment);
         const modifiedArray = removeFromKeyedArray(
             existingArray,
             segmentPath.slice(1),
@@ -1479,8 +1492,7 @@ function modifyInKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const existingValue = existingItem.value as Record<string, any>;
+        const existingValue = existingItem.value as ImmutableProps;
         const modifiedItem = {
             key: key,
             value: {
@@ -1520,10 +1532,8 @@ function modifyInKeyedArray<T>(
             return state;
         }
         const existingItem = state[existingItemIndex];
-        // Dynamic property access: segment is used as a property key at runtime
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Runtime hierarchical structure manipulation
-        const existingValue = existingItem.value as Record<string, any>;
-        const existingArray = (existingValue[segment] as KeyedArray<unknown>) || [];
+        const existingValue = existingItem.value as ImmutableProps;
+        const existingArray = getChildKeyedArray(existingValue, segment);
         const modifiedArray = modifyInKeyedArray(
             existingArray,
             segmentPath.slice(1),

@@ -55,8 +55,8 @@ export class InputStep<T, TSources extends Record<string, unknown> = EmptySource
         // No modifications at the input step.
     }
 
-    setSources(sources: Record<string, SourceBindableInput<unknown, Record<string, unknown>>>): void {
-        this.sources = sources as unknown as PipelineSources<TSources>;
+    setSources(sources: PipelineSources<TSources>): void {
+        this.sources = sources;
     }
 }
 

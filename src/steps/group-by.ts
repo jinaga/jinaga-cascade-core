@@ -115,24 +115,24 @@ export class GroupByStep<
     ParentArrayName extends string,
     ChildArrayName extends string = ParentArrayName
 > implements Step {
+    /**
+     * Item-level state keyed by input item key.
+     * This is the single source of truth for per-item grouping placement.
+     */
+    private itemStates: Map<string, {
+        parentKeyPath: string[];
+        groupKey: string;
+        compositeKey: string;
+        immutableProps: ImmutableProps;
+        groupingValues: ImmutableProps;
+    }> = new Map();
+
     groupAddedHandlers: AddedHandler[] = [];
     itemAddedHandlers: AddedHandler[] = [];
     groupRemovedHandlers: RemovedHandler[] = [];
     itemRemovedHandlers: RemovedHandler[] = [];
-
-    itemKeyToGroupKey: Map<string, string> = new Map<string, string>();
     // Maps composite key (parent path + group key) to item keys - tracks groups per parent context
     groupKeyToItemKeys: Map<string, Set<string>> = new Map<string, Set<string>>();
-    
-    // Maps item key to its parent key path for correct emission
-    itemKeyToParentKeyPath: Map<string, string[]> = new Map<string, string[]>();
-    // Maps item key to its composite key for removal
-    itemKeyToCompositeKey: Map<string, string> = new Map<string, string>();
-    
-    // Maps item key to its full immutable props (for re-grouping)
-    itemKeyToImmutableProps: Map<string, ImmutableProps> = new Map<string, ImmutableProps>();
-    // Maps item key to its current grouping values (for re-grouping)
-    itemKeyToGroupingValues: Map<string, ImmutableProps> = new Map<string, ImmutableProps>();
 
     private readonly childArrayName: ChildArrayName;
     constructor(
@@ -184,14 +184,14 @@ export class GroupByStep<
             this.input.onAdded([...this.scopeSegments, ...shiftedSegments], (notifiedKeyPath, itemKey, immutableProps) => {
                 // notifiedKeyPath is relative to scopeSegments, element at scopeSegments.length is the item key
                 const itemKeyAtScope = notifiedKeyPath[this.scopeSegments.length];
-                const groupKey = this.itemKeyToGroupKey.get(itemKeyAtScope);
-                if (groupKey === undefined) {
+                const itemState = this.itemStates.get(itemKeyAtScope);
+                if (!itemState) {
                     throw new Error(`GroupByStep: item with key "${itemKeyAtScope}" not found when handling nested path addition notification`);
                 }
                 // Insert groupKey at the correct position
                 const modifiedKeyPath = [
                     ...notifiedKeyPath.slice(0, this.scopeSegments.length),
-                    groupKey,
+                    itemState.groupKey,
                     ...notifiedKeyPath.slice(this.scopeSegments.length)
                 ];
                 handler(modifiedKeyPath, itemKey, immutableProps);
@@ -216,13 +216,13 @@ export class GroupByStep<
             // Register interceptor with input at scope segments + shifted segments
             this.input.onRemoved([...this.scopeSegments, ...shiftedSegments], (notifiedKeyPath, itemKey, immutableProps) => {
                 const itemKeyAtScope = notifiedKeyPath[this.scopeSegments.length];
-                const groupKey = this.itemKeyToGroupKey.get(itemKeyAtScope);
-                if (groupKey === undefined) {
+                const itemState = this.itemStates.get(itemKeyAtScope);
+                if (!itemState) {
                     throw new Error(`GroupByStep: item with key "${itemKeyAtScope}" not found when handling nested path removal notification`);
                 }
                 const modifiedKeyPath = [
                     ...notifiedKeyPath.slice(0, this.scopeSegments.length),
-                    groupKey,
+                    itemState.groupKey,
                     ...notifiedKeyPath.slice(this.scopeSegments.length)
                 ];
                 handler(modifiedKeyPath, itemKey, immutableProps);
@@ -247,8 +247,8 @@ export class GroupByStep<
                     ? (notifiedKeyPath.length > 0 ? notifiedKeyPath[0] : itemKey)
                     : notifiedKeyPath[this.scopeSegments.length];
                     
-                const groupKey = this.itemKeyToGroupKey.get(itemKeyAtScope);
-                if (groupKey === undefined) {
+                const itemState = this.itemStates.get(itemKeyAtScope);
+                if (!itemState) {
                     // Item not yet tracked - this can happen during initial add when onModified
                     // fires before onAdded chain completes. Skip forwarding in this case.
                     // The event will be properly delivered once the item is added and tracked.
@@ -256,7 +256,7 @@ export class GroupByStep<
                 }
                 const modifiedKeyPath = [
                     ...notifiedKeyPath.slice(0, this.scopeSegments.length),
-                    groupKey,
+                    itemState.groupKey,
                     ...notifiedKeyPath.slice(this.scopeSegments.length)
                 ];
                 handler(modifiedKeyPath, itemKey, oldValue, newValue);
@@ -315,16 +315,13 @@ export class GroupByStep<
         // Find the item - key is the item key at the scope level
         const itemKey = keyPath.length > 0 ? keyPath[keyPath.length - 1] : key;
         
-        if (!this.itemKeyToGroupKey.has(itemKey)) {
+        const itemState = this.itemStates.get(itemKey);
+        if (!itemState) {
             return; // Item not tracked
         }
         
         // Get the current grouping values and update with new value
-        const currentGroupingValues = this.itemKeyToGroupingValues.get(itemKey);
-        if (!currentGroupingValues) {
-            return;
-        }
-        
+        const currentGroupingValues = itemState.groupingValues;
         const oldGroupingValues = { ...currentGroupingValues };
         const newGroupingValues = { ...currentGroupingValues, [propertyName]: newValue };
         
@@ -335,17 +332,17 @@ export class GroupByStep<
         // If the group key hasn't changed, no re-grouping needed
         if (oldGroupKey === newGroupKey) {
             // Just update the stored grouping values
-            this.itemKeyToGroupingValues.set(itemKey, newGroupingValues);
+            itemState.groupingValues = newGroupingValues;
             return;
         }
         
         // Re-group the item: remove from old group, add to new group
-        const parentKeyPath = this.itemKeyToParentKeyPath.get(itemKey) || [];
-        const oldCompositeKey = this.itemKeyToCompositeKey.get(itemKey)!;
+        const parentKeyPath = itemState.parentKeyPath;
+        const oldCompositeKey = itemState.compositeKey;
         const newCompositeKey = this.getCompositeGroupKey(parentKeyPath, newGroupKey);
         
         // Get the non-grouping properties for item handlers
-        const fullImmutableProps = this.itemKeyToImmutableProps.get(itemKey) || {};
+        const fullImmutableProps = itemState.immutableProps;
         const nonGroupingProps: ImmutableProps = {};
         Object.keys(fullImmutableProps).forEach(prop => {
             if (!this.groupingProperties.includes(prop as K)) {
@@ -377,9 +374,9 @@ export class GroupByStep<
         this.groupKeyToItemKeys.get(newCompositeKey)!.add(itemKey);
         
         // Update item's group mapping
-        this.itemKeyToGroupKey.set(itemKey, newGroupKey);
-        this.itemKeyToCompositeKey.set(itemKey, newCompositeKey);
-        this.itemKeyToGroupingValues.set(itemKey, newGroupingValues);
+        itemState.groupKey = newGroupKey;
+        itemState.compositeKey = newCompositeKey;
+        itemState.groupingValues = newGroupingValues;
         
         // Notify item handlers of the addition to new group
         this.itemAddedHandlers.forEach(handler => handler([...parentKeyPath, newGroupKey], itemKey, nonGroupingProps));
@@ -388,10 +385,6 @@ export class GroupByStep<
     private handleAdded(keyPath: string[], itemKey: string, immutableProps: ImmutableProps) {
         // keyPath is the runtime key path at the scope level - store it for emissions
         const parentKeyPath = keyPath;
-        this.itemKeyToParentKeyPath.set(itemKey, parentKeyPath);
-        
-        // Store full immutable props for potential re-grouping
-        this.itemKeyToImmutableProps.set(itemKey, immutableProps);
         
         // Extract the grouping property values from the object
         const groupingValues: ImmutableProps = {};
@@ -401,18 +394,19 @@ export class GroupByStep<
             }
         });
         
-        // Store grouping values for potential re-grouping
-        this.itemKeyToGroupingValues.set(itemKey, groupingValues);
-        
         // Compute the group key from the extracted values
         const groupKey = computeGroupKey(groupingValues, this.groupingProperties.map(prop => prop.toString()));
         
         // Create composite key that includes parent context for proper group tracking
         const compositeKey = this.getCompositeGroupKey(parentKeyPath, groupKey);
         
-        // Store item-to-group mapping
-        this.itemKeyToGroupKey.set(itemKey, groupKey);
-        this.itemKeyToCompositeKey.set(itemKey, compositeKey);
+        this.itemStates.set(itemKey, {
+            parentKeyPath,
+            groupKey,
+            compositeKey,
+            immutableProps,
+            groupingValues
+        });
         
         // Add item key to group's set - use composite key to track per-parent groups
         const isNewGroup = !this.groupKeyToItemKeys.has(compositeKey);
@@ -434,22 +428,20 @@ export class GroupByStep<
         this.itemAddedHandlers.forEach(handler => handler([...parentKeyPath, groupKey], itemKey, nonGroupingProps));
     }
 
-    private handleRemoved(keyPath: string[], itemKey: string, immutableProps: ImmutableProps) {
-        // Get the parent key path for this item key
-        const parentKeyPath = this.itemKeyToParentKeyPath.get(itemKey) || keyPath;
-        
-        // Look up group key and composite key
-        const groupKey = this.itemKeyToGroupKey.get(itemKey);
-        const compositeKey = this.itemKeyToCompositeKey.get(itemKey);
-        if (groupKey === undefined || compositeKey === undefined) {
+    private handleRemoved(keyPath: string[], itemKey: string, _immutableProps: ImmutableProps) {
+        const itemState = this.itemStates.get(itemKey);
+        if (!itemState) {
             throw new Error(`GroupByStep: item with key "${itemKey}" not found`);
         }
+        const parentKeyPath = itemState.parentKeyPath.length > 0 ? itemState.parentKeyPath : keyPath;
+        const groupKey = itemState.groupKey;
+        const compositeKey = itemState.compositeKey;
         
-        // Extract the non-grouping properties from the object for item handlers
+        // Extract the non-grouping properties from the tracked immutable props.
         const nonGroupingProps: ImmutableProps = {};
-        Object.keys(immutableProps).forEach(prop => {
+        Object.keys(itemState.immutableProps).forEach(prop => {
             if (!this.groupingProperties.includes(prop as K)) {
-                nonGroupingProps[prop] = immutableProps[prop];
+                nonGroupingProps[prop] = itemState.immutableProps[prop];
             }
         });
         
@@ -457,11 +449,7 @@ export class GroupByStep<
         this.itemRemovedHandlers.forEach(handler => handler([...parentKeyPath, groupKey], itemKey, nonGroupingProps));
         
         // Remove item key from tracking
-        this.itemKeyToGroupKey.delete(itemKey);
-        this.itemKeyToParentKeyPath.delete(itemKey);
-        this.itemKeyToCompositeKey.delete(itemKey);
-        this.itemKeyToImmutableProps.delete(itemKey);
-        this.itemKeyToGroupingValues.delete(itemKey);
+        this.itemStates.delete(itemKey);
         
         // Remove item key from group's set - use composite key for per-parent tracking
         const itemKeys = this.groupKeyToItemKeys.get(compositeKey);
@@ -470,16 +458,8 @@ export class GroupByStep<
             
             // Check if group is empty
             if (itemKeys.size === 0) {
-                // Extract the grouping property values from the object for group handlers
-                const groupingValues: ImmutableProps = {};
-                Object.keys(immutableProps).forEach(prop => {
-                    if (this.groupingProperties.includes(prop as K)) {
-                        groupingValues[prop] = immutableProps[prop];
-                    }
-                });
-                
                 // Notify group removed handlers at parent key path
-                this.groupRemovedHandlers.forEach(handler => handler(parentKeyPath, groupKey, groupingValues));
+                this.groupRemovedHandlers.forEach(handler => handler(parentKeyPath, groupKey, itemState.groupingValues));
                 
                 // Clean up tracking
                 this.groupKeyToItemKeys.delete(compositeKey);
