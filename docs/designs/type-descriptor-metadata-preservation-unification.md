@@ -129,7 +129,7 @@ Create `src/util/descriptor-transform.ts` with pure helpers.
 
 ### 4) ~~`normalizeNodeMetadata`~~
 
-- **Removed:** `DescriptorNode` requires `objects` and `mutableProperties` at the type level; runtime `?? []` shims are redundant. Construction boundaries (`InputPipeline`, step outputs) must emit total arrays only.
+- **Removed:** `DescriptorNode` requires `objects` and `mutableProperties` at the type level; runtime `?? []` shims are redundant. Construction boundaries (`InputBuilder`/`InputStep`, step outputs) must emit total arrays only.
 
 ## Step-Level Changes (Design)
 

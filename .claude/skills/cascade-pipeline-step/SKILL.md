@@ -5,7 +5,7 @@ description: Design and implement new pipeline steps for @jinaga/cascade-core. U
 
 # Cascade Pipeline Step
 
-Implement new pipeline steps that participate in cascade-core's incremental reactive pipeline. Every step is a node in a synchronous event-propagation chain: upstream add/remove calls trigger handlers registered at constructor time, and the final step's emissions are batched into `KeyedArray` state by the runtime.
+Implement new pipeline steps that participate in cascade-core's incremental reactive pipeline. Each step has two classes: an immutable **Builder** that captures configuration, and a stateful **Step** that maintains runtime state. The `build()` method instantiates fresh Steps from Builders, wiring them into an independent pipeline session. Upstream add/remove calls trigger handlers registered at Step construction time, and the final step's emissions are batched into `KeyedArray` state by the runtime. See [Builder/Step Separation](../../docs/architecture/builder-step-separation.md) for the full design.
 
 ## Constraints
 
@@ -77,7 +77,7 @@ File: `src/steps/<step-name>.ts`
 
 Read [step-patterns.md](references/step-patterns.md) for the detailed reference on each pattern below.
 
-**Constructor** — Accept `input: Step`, `segmentPath`, `propertyName`, and step-specific config. Register `input.onAdded(segmentPath, ...)` and `input.onRemoved(segmentPath, ...)`. Auto-detect mutable properties from `input.getTypeDescriptor().mutableProperties` and register `input.onModified(segmentPath, propName, ...)` when needed.
+**Constructor** — Accept `input: Step`, `segmentPath`, `propertyName`, and step-specific config. Register `input.onAdded(segmentPath, ...)` and `input.onRemoved(segmentPath, ...)`. Auto-detect mutable properties from `input.getTypeDescriptor().mutableProperties` and register `input.onModified(segmentPath, propName, ...)` when needed. Step constructors are called by the Builder's `buildStep(input)` method during `build()`, not during the fluent method chain.
 
 **getTypeDescriptor()** — Transform the input descriptor. Use helpers from `src/util/descriptor-transform.ts` (`appendObjectIfMissing`, `appendMutableIfMissing`, `emptyDescriptorNode`). Always add the output property to `mutableProperties` if it can change after initial add.
 
@@ -99,11 +99,36 @@ if (parentKeyPath.length > 0) {
 }
 ```
 
-### 5. Add the builder method
+### 5. Add the Builder class
+
+File: `src/steps/<step-name>.ts`, alongside the Step class
+
+Create an immutable Builder that captures configuration and can produce a fresh Step:
+
+```typescript
+export class MyNewStepBuilder {
+    constructor(
+        readonly upstream: StepBuilder,
+        readonly segmentPath: string[],
+        readonly propertyName: string,
+        readonly config: ...
+    ) {}
+
+    getTypeDescriptor(): TypeDescriptor {
+        // Compute from upstream.getTypeDescriptor() and configuration
+    }
+
+    buildStep(input: Step): Step {
+        return new MyNewStep(input, this.segmentPath, this.propertyName, this.config);
+    }
+}
+```
+
+### 6. Add the PipelineBuilder method
 
 File: `src/builder.ts`, class `PipelineBuilder`
 
-Follow the existing pattern: construct the new step wrapping `this.lastStep`, return a new `PipelineBuilder` with the new step and appropriate scope reset.
+Follow the existing pattern: construct the new Builder wrapping `this.lastBuilder`, return a new `PipelineBuilder` with the new builder and appropriate scope reset.
 
 ```typescript
 myNewStep<
@@ -115,16 +140,16 @@ myNewStep<
     ...config
 ): PipelineBuilder</* transformed type */, TStart, Path, RootScopeName, TSources> {
     const fullSegmentPath = [...this.scopeSegments, arrayName];
-    const newStep = new MyNewStep(this.lastStep, fullSegmentPath, propertyName, config);
-    return new PipelineBuilder(this.input, newStep, [] as unknown as Path, this.diagnosticBridge);
+    const newBuilder = new MyNewStepBuilder(this.lastBuilder, fullSegmentPath, propertyName, config);
+    return new PipelineBuilder(this.rootBuilder, newBuilder, [] as unknown as Path, this.diagnosticBridge);
 }
 ```
 
-### 6. Export if needed
+### 7. Export if needed
 
 File: `src/index.ts` — Export the step class and any public types if the step is intended for advanced direct usage (not just via builder API).
 
-### 7. Verify
+### 8. Verify
 
 - Run `npm test` and confirm the red test is now green.
 - Add commutativity tests: same items, different add orders, assert identical `getOutput()`.
@@ -138,7 +163,7 @@ File: `src/index.ts` — Export the step class and any public types if the step 
 |------|----------|
 | `src/pipeline.ts` | `Step` interface, `TypeDescriptor`, handler types, `getPathSegmentsFromDescriptor` |
 | `src/builder.ts` | `PipelineBuilder`, `PipelineRuntimeSessionImpl`, `KeyedArray`, `build()` wiring |
-| `src/factory.ts` | `createPipeline`, `InputPipeline` |
+| `src/factory.ts` | `createPipeline`, `InputBuilder`, `InputStep` |
 | `src/util/descriptor-transform.ts` | `appendObjectIfMissing`, `appendMutableIfMissing`, `emptyDescriptorNode` |
 | `src/util/path.ts` | `pathsMatch`, `pathStartsWith` |
 | `src/util/indexed-heap.ts` | `IndexedHeap` — binary heap with O(log n) insert/removeById |
