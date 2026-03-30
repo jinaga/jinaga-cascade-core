@@ -1,14 +1,16 @@
 import type {
     AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
     ImmutableProps,
     ModifiedHandler,
     RemovedHandler,
     Step,
+    StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
-import type { StepBuilder } from '../pipeline.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 type NormalizedOrderValue = number | string | undefined;
 
@@ -481,10 +483,17 @@ export class CumulativeSumBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new CumulativeSumStep(input, this.segmentPath, this.orderBy, this.properties)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new CumulativeSumStep(input, this.segmentPath, this.orderBy, this.properties);
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new CumulativeSumStep(up.lastStep, this.segmentPath, this.orderBy, this.properties)
+        };
     }
 }

@@ -1,5 +1,5 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 /**
  * Computes a hash key for a key path (for map lookups).
@@ -368,10 +368,17 @@ export class AverageAggregateBuilder implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new AverageAggregateStep(input, this.segmentPath, this.propertyName, this.numericProperty)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new AverageAggregateStep(input, this.segmentPath, this.propertyName, this.numericProperty);
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new AverageAggregateStep(up.lastStep, this.segmentPath, this.propertyName, this.numericProperty)
+        };
     }
 }

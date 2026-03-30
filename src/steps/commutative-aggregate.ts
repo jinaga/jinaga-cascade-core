@@ -1,5 +1,5 @@
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
-import { getBuilderTypeDescriptor } from '../step-builder-utils.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import { getDescriptorFromFactory } from '../step-builder-utils.js';
 
 /**
  * Operator called when an item is added to the aggregated array.
@@ -375,16 +375,17 @@ export class CommutativeAggregateBuilder<TAggregate> implements StepBuilder {
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return getBuilderTypeDescriptor(this.upstream, input => this.buildStep(input));
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new CommutativeAggregateStep(input, this.segmentPath, this.propertyName, this.config, this.propertyToAggregate)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new CommutativeAggregateStep(
-            input,
-            this.segmentPath,
-            this.propertyName,
-            this.config,
-            this.propertyToAggregate
-        );
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new CommutativeAggregateStep(up.lastStep, this.segmentPath, this.propertyName, this.config, this.propertyToAggregate)
+        };
     }
 }

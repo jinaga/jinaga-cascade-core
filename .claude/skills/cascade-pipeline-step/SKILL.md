@@ -77,7 +77,7 @@ File: `src/steps/<step-name>.ts`
 
 Read [step-patterns.md](references/step-patterns.md) for the detailed reference on each pattern below.
 
-**Constructor** — Accept `input: Step`, `segmentPath`, `propertyName`, and step-specific config. Register `input.onAdded(segmentPath, ...)` and `input.onRemoved(segmentPath, ...)`. Auto-detect mutable properties from `input.getTypeDescriptor().mutableProperties` and register `input.onModified(segmentPath, propName, ...)` when needed. Step constructors are called by the Builder's `buildStep(input)` method during `build()`, not during the fluent method chain.
+**Constructor** — Accept `input: Step`, `segmentPath`, `propertyName`, and step-specific config. Register `input.onAdded(segmentPath, ...)` and `input.onRemoved(segmentPath, ...)`. Auto-detect mutable properties from `input.getTypeDescriptor().mutableProperties` and register `input.onModified(segmentPath, propName, ...)` when needed. Step constructors are called by the Builder's `buildGraph(ctx)` method during `build()`, not during the fluent method chain.
 
 **getTypeDescriptor()** — Transform the input descriptor. Use helpers from `src/util/descriptor-transform.ts` (`appendObjectIfMissing`, `appendMutableIfMissing`, `emptyDescriptorNode`). Always add the output property to `mutableProperties` if it can change after initial add.
 
@@ -103,10 +103,10 @@ if (parentKeyPath.length > 0) {
 
 File: `src/steps/<step-name>.ts`, alongside the Step class
 
-Create an immutable Builder that captures configuration and can produce a fresh Step:
+Create an immutable Builder that captures configuration and can produce a fresh Step graph:
 
 ```typescript
-export class MyNewStepBuilder {
+export class MyNewStepBuilder implements StepBuilder {
     constructor(
         readonly upstream: StepBuilder,
         readonly segmentPath: string[],
@@ -115,11 +115,18 @@ export class MyNewStepBuilder {
     ) {}
 
     getTypeDescriptor(): TypeDescriptor {
-        // Compute from upstream.getTypeDescriptor() and configuration
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new MyNewStep(input, this.segmentPath, this.propertyName, this.config)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new MyNewStep(input, this.segmentPath, this.propertyName, this.config);
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new MyNewStep(up.lastStep, this.segmentPath, this.propertyName, this.config)
+        };
     }
 }
 ```

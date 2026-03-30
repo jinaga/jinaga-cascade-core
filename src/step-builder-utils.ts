@@ -3,7 +3,6 @@ import type {
     ModifiedHandler,
     RemovedHandler,
     Step,
-    StepBuilder,
     TypeDescriptor
 } from './pipeline.js';
 
@@ -25,9 +24,9 @@ export class DescriptorStep implements Step {
     ): void {}
 }
 
-export function getBuilderTypeDescriptor(
-    upstream: StepBuilder,
-    buildStep: (input: Step) => Step
+export function getDescriptorFromFactory(
+    upstreamDescriptor: TypeDescriptor,
+    createStep: (input: Step) => Step
 ): TypeDescriptor {
-    return buildStep(new DescriptorStep(upstream.getTypeDescriptor())).getTypeDescriptor();
+    return createStep(new DescriptorStep(upstreamDescriptor)).getTypeDescriptor();
 }

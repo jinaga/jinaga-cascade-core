@@ -1,22 +1,37 @@
-import type { AddedHandler, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import type {
+    AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
+    ImmutableProps,
+    ModifiedHandler,
+    RemovedHandler,
+    Step,
+    StepBuilder,
+    TypeDescriptor
+} from '../pipeline.js';
 import { type DescriptorNode } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
 import { emptyDescriptorNode, filterMetadataByPropertyName } from '../util/descriptor-transform.js';
 import { DescriptorStep } from '../step-builder-utils.js';
 
-export class DropPropertyStep<T, K extends keyof T> implements Step {
+/**
+ * Drops a scalar or array property from the stream at the given scope.
+ * Property names are validated by the fluent {@link PipelineBuilder} API; at runtime
+ * rows are {@link ImmutableProps} and this step filters by descriptor-driven behavior.
+ */
+export class DropPropertyStep implements Step {
     private isArrayProperty: boolean;
     private fullSegmentPath: string[];
-    
+
     constructor(
         private input: Step,
-        private propertyName: K,
+        private propertyName: string,
         private scopeSegments: string[]
     ) {
         // Check if the property is an array in the type descriptor
         const descriptor = this.input.getTypeDescriptor();
-        this.fullSegmentPath = [...this.scopeSegments, this.propertyName as string];
-        this.isArrayProperty = this.isArrayInDescriptor(descriptor, this.scopeSegments, this.propertyName as string);
+        this.fullSegmentPath = [...this.scopeSegments, this.propertyName];
+        this.isArrayProperty = this.isArrayInDescriptor(descriptor, this.scopeSegments, this.propertyName);
     }
     
     /**
@@ -65,7 +80,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
         const scalarTransformed = this.transformDescriptorForScalarDrop(
             inputDescriptor,
             [...this.scopeSegments],
-            this.propertyName as string
+            this.propertyName
         );
         return {
             ...scalarTransformed,
@@ -167,7 +182,7 @@ export class DropPropertyStep<T, K extends keyof T> implements Step {
             if (this.isAtScopeSegments(pathSegments)) {
                 this.input.onAdded(pathSegments, (keyPath, key, immutableProps) => {
                     const { [this.propertyName]: _, ...rest } = immutableProps;
-                    handler(keyPath, key, rest as Omit<T, K>);
+                    handler(keyPath, key, rest as ImmutableProps);
                 });
             } else {
                 this.input.onAdded(pathSegments, handler);
@@ -220,13 +235,17 @@ export class DropPropertyBuilder implements StepBuilder {
     getTypeDescriptor(): TypeDescriptor {
         return new DropPropertyStep(
             new DescriptorStep(this.upstream.getTypeDescriptor()),
-            this.propertyName as never,
+            this.propertyName,
             this.scopeSegments
         ).getTypeDescriptor();
     }
 
-    buildStep(input: Step): Step {
-        return new DropPropertyStep(input as never, this.propertyName as never, this.scopeSegments);
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new DropPropertyStep(up.lastStep, this.propertyName, this.scopeSegments)
+        };
     }
 }
 

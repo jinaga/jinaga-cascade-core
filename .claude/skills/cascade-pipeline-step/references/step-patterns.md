@@ -382,7 +382,7 @@ Builders are immutable and hold no mutable state. Steps are created later by `bu
 ### Pattern: Adding a Builder class
 
 ```typescript
-export class MyNewStepBuilder {
+export class MyNewStepBuilder implements StepBuilder {
     constructor(
         readonly upstream: StepBuilder,
         readonly segmentPath: string[],
@@ -391,11 +391,18 @@ export class MyNewStepBuilder {
     ) {}
 
     getTypeDescriptor(): TypeDescriptor {
-        // Compute from upstream.getTypeDescriptor() and configuration
+        return getDescriptorFromFactory(
+            this.upstream.getTypeDescriptor(),
+            input => new MyNewStep(input, this.segmentPath, this.propertyName, this.config)
+        );
     }
 
-    buildStep(input: Step): Step {
-        return new MyNewStep(input, this.segmentPath, this.propertyName, this.config);
+    buildGraph(ctx: BuildContext): BuiltStepGraph {
+        const up = this.upstream.buildGraph(ctx);
+        return {
+            ...up,
+            lastStep: new MyNewStep(up.lastStep, this.segmentPath, this.propertyName, this.config)
+        };
     }
 }
 ```
@@ -422,7 +429,7 @@ myNewStep<ArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>, PropName ex
 ### How build() instantiates Steps and wires the session
 
 `build()` in `PipelineBuilder`:
-1. Walks the Builder chain from root to leaf, calling `buildStep(input)` on each to produce fresh Step instances
+1. Calls `buildGraph(ctx)` on the last builder, which recursively builds the entire Step graph from root to leaf
 2. Gets all path segments from the final Step's TypeDescriptor
 3. For each path, registers `onAdded` → `session.enqueueAdd`, `onRemoved` → `session.enqueueRemove`
 4. Collects all mutable properties via `collectAllMutableProperties(descriptor)`

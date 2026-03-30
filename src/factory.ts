@@ -1,6 +1,8 @@
 import { PipelineBuilder } from './builder.js';
 import type {
     AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
     ImmutableProps,
     PipelineInput,
     PipelineSources,
@@ -91,8 +93,9 @@ export class InputBuilder<TStart> implements StepBuilder {
         };
     }
 
-    buildStep(_input: Step): Step {
-        return new InputStep<TStart>(this.rootCollectionName, this.sourceScalars);
+    buildGraph(_ctx: BuildContext): BuiltStepGraph {
+        const root = new InputStep<TStart>(this.rootCollectionName, this.sourceScalars);
+        return { rootInput: root, lastStep: root, sources: {} };
     }
 }
 
