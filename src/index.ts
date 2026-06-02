@@ -1,6 +1,7 @@
 export type {
     Pipeline,
     PipelineInput,
+    CollectionInput,
     Step,
     DescriptorNode,
     TypeDescriptor,
