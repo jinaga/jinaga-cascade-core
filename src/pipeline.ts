@@ -87,9 +87,9 @@ export interface Pipeline<TStart, TSources extends Record<string, unknown> = Emp
     /**
      * Obtain a handle for feeding children of a declared source-level array. Pass the segment
      * path to the array (e.g. `collection('bookmarks')`, or `collection('bookmarks', 'tags')`
-     * for a nested array).
+     * for a nested array). At least one segment is required.
      */
-    collection(...segmentPath: string[]): CollectionInput;
+    collection(firstSegment: string, ...restSegments: string[]): CollectionInput;
     flush(): void;
     dispose(options?: PipelineRuntimeDisposeOptions): void;
     isDisposed(): boolean;

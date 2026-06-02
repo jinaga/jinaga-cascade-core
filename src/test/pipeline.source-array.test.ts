@@ -69,7 +69,7 @@ describe('source-level arrays', () => {
             const output = getOutput();
             expect(output).toHaveLength(1);
             expect(output[0].bookmarkCount).toBeUndefined();
-            // Consumers coalesce the empty case, matching the launchkings `?? 0` idiom.
+            // Consumers coalesce the empty case, matching the LaunchKings `?? 0` idiom.
             expect(output[0].bookmarkCount ?? 0).toBe(0);
             expect(output[0].bookmarks).toEqual([]);
         });
@@ -245,6 +245,18 @@ describe('source-level arrays', () => {
 
             expect(getOutput()[0].bookmarkCount).toBe(2);
             expect(getOutput()[0].region).toBe('US');
+        });
+    });
+
+    describe('collection() validation', () => {
+        it('throws a clear error when the parent key path arity does not match the segment path', () => {
+            const [pipeline] = createTestPipeline(countPipeline);
+            pipeline.add('F1', { folderName: 'Work' });
+
+            expect(() => pipeline.collection('bookmarks').add(['F1', 'extra'], 'B1', { url: 'a' }))
+                .toThrow(/requires a parent key path of length 1/);
+            // @ts-expect-error - at least one segment is required
+            expect(() => pipeline.collection()).not.toThrow();
         });
     });
 

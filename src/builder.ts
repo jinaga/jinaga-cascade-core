@@ -235,21 +235,32 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         this.inputPipeline.remove(key, immutableProps);
     }
 
-    collection(...segmentPath: string[]): CollectionInput {
-        const toParentKeyPath = (parentKeyPath: string | readonly string[]): string[] =>
-            typeof parentKeyPath === 'string' ? [parentKeyPath] : [...parentKeyPath];
+    collection(firstSegment: string, ...restSegments: string[]): CollectionInput {
+        const segmentPath = [firstSegment, ...restSegments];
+        const resolveParentKeyPath = (parentKeyPath: string | readonly string[]): string[] => {
+            const keyPath = typeof parentKeyPath === 'string' ? [parentKeyPath] : [...parentKeyPath];
+            if (keyPath.length !== segmentPath.length) {
+                throw new Error(
+                    `collection([${segmentPath.join(', ')}]) requires a parent key path of length ${segmentPath.length} ` +
+                    `(one key per segment), but received length ${keyPath.length}: [${keyPath.join(', ')}].`
+                );
+            }
+            return keyPath;
+        };
         return {
             add: (parentKeyPath, key, immutableProps) => {
+                const keyPath = resolveParentKeyPath(parentKeyPath);
                 if (!this.acceptsRuntimeOperation('add', key)) {
                     return;
                 }
-                this.inputPipeline.addAt(segmentPath, toParentKeyPath(parentKeyPath), key, immutableProps);
+                this.inputPipeline.addAt(segmentPath, keyPath, key, immutableProps);
             },
             remove: (parentKeyPath, key, immutableProps) => {
+                const keyPath = resolveParentKeyPath(parentKeyPath);
                 if (!this.acceptsRuntimeOperation('remove', key)) {
                     return;
                 }
-                this.inputPipeline.removeAt(segmentPath, toParentKeyPath(parentKeyPath), key, immutableProps);
+                this.inputPipeline.removeAt(segmentPath, keyPath, key, immutableProps);
             }
         };
     }
