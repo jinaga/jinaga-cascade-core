@@ -28,6 +28,28 @@ export interface PipelineInput<T, TSources extends Record<string, unknown> = Emp
 export interface SourceBindableInput<T, TSources extends Record<string, unknown> = EmptySources>
     extends PipelineInput<T, TSources> {
     setSources(sources: UntypedPipelineSources): void;
+    /**
+     * Emit an item add at a nested source path. `segmentPath` names the declared source
+     * array (e.g. `['bookmarks']`); `parentKeyPath` is the runtime key path identifying the
+     * parent item (length must equal `segmentPath.length`); `key` is the child's natural key.
+     */
+    addAt(segmentPath: string[], parentKeyPath: string[], key: string, immutableProps: ImmutableProps): void;
+    removeAt(segmentPath: string[], parentKeyPath: string[], key: string, immutableProps: ImmutableProps): void;
+}
+
+/**
+ * Runtime handle for feeding children of a declared source-level array incrementally,
+ * mirroring how Jinaga delivers nested projection collections. Obtain one from
+ * {@link Pipeline.collection}.
+ */
+export interface CollectionInput {
+    /**
+     * Add a child item under a parent. `parentKeyPath` identifies the parent item: a single
+     * key for a root-level array (e.g. `'F1'`), or a key path for deeper nesting
+     * (e.g. `['F1', 'B1']`). `key` is the child's own natural key.
+     */
+    add(parentKeyPath: string | readonly string[], key: string, immutableProps: ImmutableProps): void;
+    remove(parentKeyPath: string | readonly string[], key: string, immutableProps: ImmutableProps): void;
 }
 
 export interface PipelineRuntimeDiagnostic {
@@ -62,6 +84,12 @@ export interface PipelineRuntimeDisposeOptions {
 
 export interface Pipeline<TStart, TSources extends Record<string, unknown> = EmptySources>
     extends PipelineInput<TStart, TSources> {
+    /**
+     * Obtain a handle for feeding children of a declared source-level array. Pass the segment
+     * path to the array (e.g. `collection('bookmarks')`, or `collection('bookmarks', 'tags')`
+     * for a nested array).
+     */
+    collection(...segmentPath: string[]): CollectionInput;
     flush(): void;
     dispose(options?: PipelineRuntimeDisposeOptions): void;
     isDisposed(): boolean;

@@ -1,10 +1,11 @@
 import {
     getPathSegmentsFromDescriptor,
+    type CollectionInput,
     type DescriptorNode,
     type ImmutableProps,
     type Pipeline,
-    type PipelineInput,
     type PipelineSources,
+    type SourceBindableInput,
     type PipelineRuntimeDiagnostic,
     type PipelineRuntimeDisposeOptions,
     type PipelineRuntimeOptions,
@@ -156,7 +157,7 @@ interface RuntimeApplyContext {
 class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends Record<string, unknown> = Record<never, never>>
     implements Pipeline<TStart, TSources> {
     private readonly setState: (transform: Transform<KeyedArray<TState>>) => void;
-    private readonly inputPipeline: PipelineInput<TStart, TSources>;
+    private readonly inputPipeline: SourceBindableInput<TStart, TSources>;
     readonly sources: PipelineSources<TSources>;
     private readonly runtimeOptions: Required<Pick<PipelineRuntimeOptions, 'batchSize' | 'flushDelayMs'>> &
         Pick<PipelineRuntimeOptions, 'onDiagnostic'>;
@@ -166,7 +167,7 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
     private epoch = 1;
 
     constructor(
-        pipeline: PipelineInput<TStart, TSources>,
+        pipeline: SourceBindableInput<TStart, TSources>,
         setState: (transform: Transform<KeyedArray<TState>>) => void,
         runtimeOptions: PipelineRuntimeOptions
     ) {
@@ -232,6 +233,39 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         }
 
         this.inputPipeline.remove(key, immutableProps);
+    }
+
+    collection(...segmentPath: string[]): CollectionInput {
+        const toParentKeyPath = (parentKeyPath: string | readonly string[]): string[] =>
+            typeof parentKeyPath === 'string' ? [parentKeyPath] : [...parentKeyPath];
+        return {
+            add: (parentKeyPath, key, immutableProps) => {
+                if (!this.acceptsRuntimeOperation('add', key)) {
+                    return;
+                }
+                this.inputPipeline.addAt(segmentPath, toParentKeyPath(parentKeyPath), key, immutableProps);
+            },
+            remove: (parentKeyPath, key, immutableProps) => {
+                if (!this.acceptsRuntimeOperation('remove', key)) {
+                    return;
+                }
+                this.inputPipeline.removeAt(segmentPath, toParentKeyPath(parentKeyPath), key, immutableProps);
+            }
+        };
+    }
+
+    private acceptsRuntimeOperation(operationType: 'add' | 'remove', key: string): boolean {
+        if (this.closed) {
+            this.emitDiagnostic({
+                code: 'operation_after_dispose',
+                message: 'Dropping operation because the runtime session has been disposed.',
+                operationType,
+                key,
+                epoch: this.epoch
+            });
+            return false;
+        }
+        return true;
     }
 
     enqueueAdd(segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
@@ -1249,7 +1283,7 @@ export class PipelineBuilder<
         const runtimeDescriptor = this.lastBuilder.getTypeDescriptor();
         const pathSegments = getPathSegmentsFromDescriptor(runtimeDescriptor);
         const session = new PipelineRuntimeSessionImpl<T, TStart, TSources>(
-            builtGraph.rootInput as PipelineInput<TStart, TSources>,
+            builtGraph.rootInput as SourceBindableInput<TStart, TSources>,
             setState,
             runtimeOptions
         );
