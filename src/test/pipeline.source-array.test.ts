@@ -131,7 +131,7 @@ describe('source-level arrays', () => {
     describe('duplicate-content children', () => {
         it('counts distinct keys with identical props and removes cleanly without diagnostics', () => {
             const diagnostics: PipelineRuntimeDiagnostic[] = [];
-            const [getState, setState] = simulateState<KeyedArray<{ folderName: string; bookmarks: KeyedArray<Bookmark>; bookmarkCount: number }>>([]);
+            const [getState, setState] = simulateState<KeyedArray<{ folderName: string; bookmarks: KeyedArray<Bookmark>; bookmarkCount: number | undefined }>>([]);
             const builder = countPipeline();
             const pipeline = builder.build(setState, { onDiagnostic: d => diagnostics.push(d) });
 
@@ -279,7 +279,7 @@ describe('source-level arrays', () => {
             pipeline.add('F2', { folderName: 'Play', bookmarks: [] });
             pipeline.collection('bookmarks').add('F1', 'B1', { url: 'a' });
 
-            const count: number = getOutput()[0].bookmarkCount;
+            const count: number | undefined = getOutput()[0].bookmarkCount;
             expect(count).toBe(1);
         });
 

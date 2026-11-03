@@ -30,12 +30,12 @@ import {
     expectType<{
         category: string;
         items: KeyedArray<{ lineId: string; qty: number }>;
-        totalQty: number;
+        totalQty: number | undefined;
     }>({} as Row);
     expectType<{
         category: string;
         items: { lineId: string; qty: number }[];
-        totalQty: number;
+        totalQty: number | undefined;
     }>({} as Plain);
 }
 
@@ -66,4 +66,18 @@ import {
 
     type Plain = PipelinePlainOutput<typeof builder>;
     expectType<readonly string[]>({} as Plain['tags']);
+}
+
+// An aggregate is undefined for a parent with no items, at the root and nested.
+{
+    const builder = createPipeline<{ state: string; city: string; venue: string }>()
+        .groupBy(['state', 'city'], 'cities')
+        .groupBy(['state'], 'states')
+        .in('cities')
+        .count('items', 'venueCount')
+        .count('cities', 'cityCount');
+
+    type Plain = PipelinePlainOutput<typeof builder>;
+    expectType<number | undefined>(({} as Plain).cityCount);
+    expectType<number | undefined>(({} as Plain).cities[0].venueCount);
 }

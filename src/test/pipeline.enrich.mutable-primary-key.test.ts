@@ -43,7 +43,7 @@ describe('enrich — primary join key changes after add (expected failures until
             createPipeline<{ orderId: string; amount: number }>()
                 .groupBy(['orderId'], 'lines')
                 .sum('items', 'amount', 'total')
-                .defineProperty('joinKey', item => (item.total > 50 ? 'high' : 'low'), ['total'])
+                .defineProperty('joinKey', item => ((item.total ?? 0) > 50 ? 'high' : 'low'), ['total'])
                 .enrich(
                     'buckets',
                     createPipeline<BucketSource, 'buckets'>('buckets').groupBy(['joinKey'], 'buckets'),
@@ -78,7 +78,7 @@ describe('enrich — primary join key changes after add (expected failures until
             createPipeline<{ orderId: string; amount: number }>()
                 .groupBy(['orderId'], 'lines')
                 .sum('items', 'amount', 'total')
-                .defineProperty('regionKey', item => (item.total > 40 ? 'east' : 'west'), ['total'])
+                .defineProperty('regionKey', item => ((item.total ?? 0) > 40 ? 'east' : 'west'), ['total'])
                 .enrich(
                     'regions',
                     createPipeline<{ regionKey: string; tag: string }, 'regions'>('regions').groupBy(
@@ -117,7 +117,7 @@ describe('enrich — primary join key changes after add (expected failures until
             createPipeline<{ orderId: string; amount: number }>()
                 .groupBy(['orderId'], 'lines')
                 .sum('items', 'amount', 'total')
-                .defineProperty('joinKey', item => (item.total > 100 ? 'vip' : 'std'), ['total'])
+                .defineProperty('joinKey', item => ((item.total ?? 0) > 100 ? 'vip' : 'std'), ['total'])
                 .enrich(
                     'buckets',
                     createPipeline<BucketSource, 'buckets'>('buckets').groupBy(['joinKey'], 'buckets'),
@@ -148,7 +148,7 @@ describe('enrich — primary join key changes after add (expected failures until
             createPipeline<{ orderId: string; amount: number }>()
                 .groupBy(['orderId'], 'lines')
                 .sum('items', 'amount', 'total')
-                .defineProperty('joinKey', item => (item.total > 50 ? 'high' : 'low'), ['total'])
+                .defineProperty('joinKey', item => ((item.total ?? 0) > 50 ? 'high' : 'low'), ['total'])
                 .enrich(
                     'buckets',
                     createPipeline<BucketSource, 'buckets'>('buckets').groupBy(['joinKey'], 'buckets'),
@@ -188,7 +188,7 @@ describe('enrich — primary join key changes after add (expected failures until
             createPipeline<{ orderId: string; amount: number }>()
                 .groupBy(['orderId'], 'lines')
                 .sum('items', 'amount', 'total')
-                .defineProperty('joinKey', item => (item.total > 50 ? 'high' : 'low'), ['total'])
+                .defineProperty('joinKey', item => ((item.total ?? 0) > 50 ? 'high' : 'low'), ['total'])
                 .enrich(
                     'buckets',
                     createPipeline<BucketSource, 'buckets'>('buckets').groupBy(['joinKey'], 'buckets'),
@@ -223,7 +223,7 @@ describe('enrich — primary join key changes after add (expected failures until
             createPipeline<{ orderId: string; amount: number }>()
                 .groupBy(['orderId'], 'lines')
                 .sum('items', 'amount', 'total')
-                .defineProperty('joinKey', item => (item.total > 50 ? 'high' : 'low'), ['total'])
+                .defineProperty('joinKey', item => ((item.total ?? 0) > 50 ? 'high' : 'low'), ['total'])
                 .enrich(
                     'buckets',
                     createPipeline<BucketSource, 'buckets'>('buckets').groupBy(['joinKey'], 'buckets'),
@@ -257,7 +257,7 @@ describe('enrich — primary join key changes after add (expected failures until
                 .sum('items', 'amount', 'total')
                 .defineProperty(
                     'compositeKey',
-                    item => `acc-${item.total > 50 ? 'big' : 'small'}`,
+                    item => `acc-${(item.total ?? 0) > 50 ? 'big' : 'small'}`,
                     ['total']
                 )
                 .enrich(

@@ -913,8 +913,8 @@ export class PipelineBuilder<
         propertyToAggregate?: string
     ): PipelineBuilder<
         Path extends []
-            ? TransformWithAggregate<T, [ArrayName], PropName, TAggregate>
-            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<PropName, TAggregate>>>,
+            ? TransformWithAggregate<T, [ArrayName], PropName, TAggregate | undefined>
+            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<PropName, TAggregate | undefined>>>,
         TStart,
         [],
         RootScopeName,
@@ -958,7 +958,7 @@ export class PipelineBuilder<
 
     /**
      * Sums a numeric property over items in a nested array.
-     * Handles null/undefined as 0, returns 0 for empty arrays.
+     * Handles null/undefined as 0. Undefined for a parent with no items, as for every aggregate.
      *
      * @param arrayName - Name of the array to sum
      * @param propertyName - Name of the numeric property to sum
@@ -977,8 +977,8 @@ export class PipelineBuilder<
         outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
-            ? TransformWithAggregate<T, [ArrayName], TPropName, number>
-            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
+            ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
+            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
         [],
         RootScopeName,
@@ -1003,7 +1003,7 @@ export class PipelineBuilder<
     
     /**
      * Counts items in a nested array.
-     * Returns 0 for empty arrays.
+     * Undefined for a parent with no items, as for every aggregate.
      *
      * @param arrayName - Name of the array to count
      * @param outputProperty - Name of the new aggregate property
@@ -1020,8 +1020,8 @@ export class PipelineBuilder<
         outputProperty: TPropName
     ): PipelineBuilder<
         Path extends []
-            ? TransformWithAggregate<T, [ArrayName], TPropName, number>
-            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number>>>,
+            ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
+            : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<TPropName, number | undefined>>>,
         TStart,
         [],
         RootScopeName,
