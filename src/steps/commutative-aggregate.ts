@@ -69,6 +69,8 @@ function transformCommutativeAggregateDescriptor(
  *   subtracts the item from the old parent and adds it to the new one.
  * - When the aggregated property is mutable, an item contributes only once its value is
  *   defined; a change subtracts the previous snapshot and adds the new one.
+ * - A parent with no contributing items has no aggregate, whatever it had before, and a
+ *   change that leaves the aggregate as it was emits nothing.
  */
 export class CommutativeAggregateStep<
     TItem extends ImmutableProps,
@@ -77,11 +79,11 @@ export class CommutativeAggregateStep<
     TAggregate
 > implements Step {
 
-    /** Current aggregate per parent key; absent until an item contributes. */
+    /** Current aggregate per parent key; absent while no item contributes. */
     private aggregateValues: Map<string, TAggregate> = new Map();
 
-    /** Number of items per parent key, contributing or not. */
-    private itemCounts: Map<string, number> = new Map();
+    /** Number of contributing items per parent key. */
+    private contributorCounts: Map<string, number> = new Map();
 
     /** Placement and latest snapshot of each item. */
     private items: Map<string, { parentKey: string; item: TItem }> = new Map();
@@ -153,46 +155,40 @@ export class CommutativeAggregateStep<
         this.modifiedHandlers.forEach(handler => handler(parentKey, oldValue, newValue));
     }
 
-    /** Adds an item to its parent's count and, if it contributes, to the aggregate. */
-    private include(parentKey: string, item: TItem): void {
-        this.itemCounts.set(parentKey, (this.itemCounts.get(parentKey) ?? 0) + 1);
-        if (!this.contributes(item)) {
-            return;
-        }
+    /**
+     * Removes `withdrawn` from and adds `deposited` to one parent's aggregate, and emits the
+     * change once, if there is one. A parent with no contributing items has no aggregate,
+     * however many it had before.
+     */
+    private update(parentKey: string, withdrawn: TItem | undefined, deposited: TItem | undefined): void {
         const current = this.aggregateValues.get(parentKey);
-        const next = this.config.add(current, item);
-        this.aggregateValues.set(parentKey, next);
-        this.emit(parentKey, current, next);
-    }
-
-    /** Removes an item from its parent's count and, if it contributed, from the aggregate. */
-    private exclude(parentKey: string, item: TItem): void {
-        const remaining = (this.itemCounts.get(parentKey) ?? 1) - 1;
-        if (remaining > 0) {
-            this.itemCounts.set(parentKey, remaining);
-        } else {
-            this.itemCounts.delete(parentKey);
+        let count = this.contributorCounts.get(parentKey) ?? 0;
+        let value = current;
+        if (withdrawn !== undefined && this.contributes(withdrawn) && value !== undefined) {
+            count -= 1;
+            value = count > 0 ? this.config.subtract(value, withdrawn) : undefined;
         }
-        const current = this.aggregateValues.get(parentKey);
-        if (!this.contributes(item) || current === undefined) {
-            if (remaining === 0) {
-                this.aggregateValues.delete(parentKey);
-            }
-            return;
+        if (deposited !== undefined && this.contributes(deposited)) {
+            count += 1;
+            value = this.config.add(value, deposited);
         }
-        const next = this.config.subtract(current, item);
-        if (remaining > 0) {
-            this.aggregateValues.set(parentKey, next);
+        if (count > 0 && value !== undefined) {
+            this.contributorCounts.set(parentKey, count);
+            this.aggregateValues.set(parentKey, value);
         } else {
+            this.contributorCounts.delete(parentKey);
             this.aggregateValues.delete(parentKey);
+            value = undefined;
         }
-        this.emit(parentKey, current, next);
+        if (!Object.is(current, value)) {
+            this.emit(parentKey, current, value);
+        }
     }
 
     private handleItemAdded(parentKey: string, itemKey: string, immutableProps: ImmutableProps): void {
         const item = immutableProps as TItem;
         this.items.set(itemKey, { parentKey, item });
-        this.include(parentKey, item);
+        this.update(parentKey, undefined, item);
     }
 
     private handleItemRemoved(itemKey: string): void {
@@ -201,7 +197,7 @@ export class CommutativeAggregateStep<
             return;
         }
         this.items.delete(itemKey);
-        this.exclude(record.parentKey, record.item);
+        this.update(record.parentKey, record.item, undefined);
     }
 
     private handleItemPlaced(itemKey: string, newParentKey: string): void {
@@ -209,9 +205,10 @@ export class CommutativeAggregateStep<
         if (!record) {
             return;
         }
-        this.exclude(record.parentKey, record.item);
+        const oldParentKey = record.parentKey;
         record.parentKey = newParentKey;
-        this.include(newParentKey, record.item);
+        this.update(oldParentKey, record.item, undefined);
+        this.update(newParentKey, undefined, record.item);
     }
 
     private handleItemPropertyChanged(itemKey: string, propertyName: string, newValue: unknown): void {
@@ -220,27 +217,8 @@ export class CommutativeAggregateStep<
             return;
         }
         const previous = record.item;
-        const next = { ...previous, [propertyName]: newValue } as TItem;
-        record.item = next;
-
-        const wasContributing = this.contributes(previous);
-        const isContributing = this.contributes(next);
-        const current = this.aggregateValues.get(record.parentKey);
-        if (!wasContributing && !isContributing) {
-            return;
-        }
-        let value = current;
-        if (wasContributing && value !== undefined) {
-            value = this.config.subtract(value, previous);
-        }
-        if (isContributing) {
-            value = this.config.add(value, next);
-        }
-        if (value === undefined) {
-            return;
-        }
-        this.aggregateValues.set(record.parentKey, value);
-        this.emit(record.parentKey, current, value);
+        record.item = { ...previous, [propertyName]: newValue } as TItem;
+        this.update(record.parentKey, previous, record.item);
     }
 }
 

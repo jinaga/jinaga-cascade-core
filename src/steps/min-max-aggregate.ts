@@ -175,7 +175,9 @@ export class MinMaxAggregateStep<
             this.lastEmitted.set(parentKey, newAggregate);
         }
 
-        this.modifiedHandlers.forEach(handler => handler(parentKey, oldAggregate, newAggregate));
+        if (!Object.is(oldAggregate, newAggregate)) {
+            this.modifiedHandlers.forEach(handler => handler(parentKey, oldAggregate, newAggregate));
+        }
     }
 }
 

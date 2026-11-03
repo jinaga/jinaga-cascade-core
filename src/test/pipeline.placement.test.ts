@@ -318,7 +318,7 @@ describe('source-level child keys', () => {
         ]));
         pipeline.collection('files').remove('F1', '1', { size: 10 });
         expect(canonical(getOutput())).toEqual(canonical([
-            { name: 'one', total: 0, files: [] },
+            { name: 'one', files: [] },
             { name: 'two', total: 20, files: [{ size: 20 }] }
         ]));
     });
@@ -510,5 +510,59 @@ describe('second review regressions', () => {
         pipeline.flush();
         expect(diagnostics).toEqual([]);
         expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([{ name: 'one', files: [{ size: 10 }] }]);
+    });
+});
+
+describe('aggregates match the proven model', () => {
+    const files = () =>
+        createPipeline('folders', [{ name: 'name', type: 'string' }], [
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }
+        ]);
+
+    it('a parent that lost its last child has no aggregate, like one that never had any', () => {
+        const [pipeline, getOutput] = createTestPipeline(() => files().sum('files', 'size', 'total'));
+        pipeline.add('F1', { name: 'one' });
+        pipeline.add('F2', { name: 'two' });
+        pipeline.collection('files').add('F1', '1', { size: 10 });
+        pipeline.collection('files').remove('F1', '1', { size: 10 });
+        expect(canonical(getOutput())).toEqual(canonical([
+            { name: 'one', files: [] },
+            { name: 'two', files: [] }
+        ]));
+    });
+
+    /** Records each value a downstream step sees for `prop` on root rows. */
+    const watch = (builder, prop: string) => {
+        const seen: unknown[] = [];
+        const [pipeline] = createTestPipeline(() =>
+            builder.defineProperty('seen', r => { seen.push(r[prop]); return 0; }, [prop])
+        );
+        return { pipeline, seen };
+    };
+
+    it('sum emits nothing when a change leaves the total as it was', () => {
+        const { pipeline, seen } = watch(createPipeline().groupBy(['g'], 'groups').sum('items', 'v', 'total'), 'total');
+        pipeline.add('1', { g: 'a', v: 5 });
+        seen.length = 0;
+        pipeline.add('2', { g: 'a', v: 0 });
+        expect(seen).toEqual([]);
+    });
+
+    it('min, max and average emit nothing when their value is unchanged', () => {
+        for (const agg of ['min', 'max', 'average']) {
+            const { pipeline, seen } = watch(createPipeline().groupBy(['g'], 'groups')[agg]('items', 'v', 'out'), 'out');
+            pipeline.add('1', { g: 'a', v: 5 });
+            seen.length = 0;
+            pipeline.add('2', { g: 'a', v: 5 });
+            expect(seen).toEqual([]);
+        }
+    });
+
+    it('pickByMax emits nothing when the picked row is unchanged', () => {
+        const { pipeline, seen } = watch(createPipeline().groupBy(['g'], 'groups').pickByMax('items', 'v', 'top'), 'top');
+        pipeline.add('1', { g: 'a', v: 9 });
+        seen.length = 0;
+        pipeline.add('2', { g: 'a', v: 1 });
+        expect(seen).toEqual([]);
     });
 });

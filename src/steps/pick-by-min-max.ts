@@ -295,7 +295,10 @@ export class PickByMinMaxStep<
             this.lastEmitted.set(parentKey, newPickedItem);
         }
 
-        this.modifiedHandlers.forEach(handler => handler(parentKey, oldPickedItem, newPickedItem));
+        // The same picked object, unchanged, is not a change.
+        if (!Object.is(oldPickedItem, newPickedItem)) {
+            this.modifiedHandlers.forEach(handler => handler(parentKey, oldPickedItem, newPickedItem));
+        }
     }
 }
 

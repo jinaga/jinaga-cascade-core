@@ -281,9 +281,9 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.remove('item1', item1);
             inputPipeline.remove('item2', item2);
             
-            // Final aggregate should be 0
+            // With no items left the parent has no aggregate, as if it never had any.
             expect(modifiedEvents.length).toBeGreaterThan(0);
-            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(0);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBeUndefined();
         });
     });
 
@@ -616,7 +616,7 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.remove('item1', item1);
             
             expect(modifiedEvents.length).toBeGreaterThan(1);
-            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBe(0);
+            expect(modifiedEvents[modifiedEvents.length - 1].newValue).toBeUndefined();
         });
 
         it('should handle zero values correctly', () => {
@@ -646,10 +646,8 @@ describe('CommutativeAggregateStep', () => {
             inputPipeline.add('item2', { category: 'A', value: 100 });
             inputPipeline.add('item3', { category: 'A', value: 0 });
             
-            expect(modifiedEvents.length).toBeGreaterThanOrEqual(3);
-            expect(modifiedEvents[0].newValue).toBe(0);
-            expect(modifiedEvents[1].newValue).toBe(100);
-            expect(modifiedEvents[2].newValue).toBe(100);
+            // Adding the second 0 leaves the total at 100, so it emits nothing.
+            expect(modifiedEvents.map(e => e.newValue)).toEqual([0, 100]);
         });
 
         it('should handle negative values correctly', () => {

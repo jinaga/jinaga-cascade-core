@@ -140,7 +140,9 @@ export class AverageAggregateStep<
         const oldAverage = this.getAverageForParent(parentKey);
         change();
         const newAverage = this.getAverageForParent(parentKey);
-        this.modifiedHandlers.forEach(handler => handler(parentKey, oldAverage, newAverage));
+        if (!Object.is(oldAverage, newAverage)) {
+            this.modifiedHandlers.forEach(handler => handler(parentKey, oldAverage, newAverage));
+        }
     }
 
     private include(record: { parentKey: string; value: number | undefined }): void {

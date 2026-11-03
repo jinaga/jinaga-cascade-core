@@ -36,6 +36,8 @@ A node's descendants are addressed by their own identity, so a move is a single 
 
 A node is removed only after its descendants. The input step guarantees this: removing a row first removes the children it received through `collection()`, deepest first. Steps that create nodes keep it too: `groupBy` removes a group only when it is empty, `filter` removes a hidden subtree children first, and `flatten` removes flattened children with their parent. No step ever sees a parent leave while it still has children.
 
+Every `onModified` changes a value: no step emits a change whose old and new values are the same. Together with the rule that `old` is the current value, this means a change is never delivered twice and never delivered for nothing.
+
 ## Proof obligation per step
 
 Let `S` be the current set of input rows. Each step holds state `σ` and must satisfy:
@@ -47,7 +49,7 @@ Because every step keys state by identity, a step's proof refers only to its own
 
 How each kind of step meets the obligations:
 
-- **Aggregates** (`sum`, `count`, `min`, `max`, `average`, `pickBy*`) keep each item's placement and latest value, and one accumulator per parent. An item contributes to exactly one parent at a time. `onPlaced` moves its contribution, and `onModified` replaces it.
+- **Aggregates** (`sum`, `count`, `min`, `max`, `average`, `pickBy*`) keep each item's placement and latest value, and one accumulator per parent. An item contributes to exactly one parent at a time. `onPlaced` moves its contribution, and `onModified` replaces it. A parent with no contributing items has no aggregate, however many it had before, so its value depends only on its current children.
 - **`groupBy`** keeps each item's placement and grouping values, and the members of each group. A change to either moves the item: add the new group if needed, emit `onPlaced`, then remove the old group if it is empty. Nothing below the item level is re-emitted.
 - **`filter`** is a membership step. A hidden item is not in the output, so the step keeps the complete current state of every node at or below its scope. An item that becomes visible is added with its current values, followed by its subtree. An item that becomes hidden has its subtree removed, children first. The change that triggered either transition is not forwarded, because the add already carries it.
 - **`flatten`** keys flattened items by the child's key. When a parent moves, its flattened children move with it. When a child moves, it takes on the new parent's values.
