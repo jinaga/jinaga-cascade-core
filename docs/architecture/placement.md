@@ -34,6 +34,8 @@ Every key below the root is unique within its level by construction:
 
 A node's descendants are addressed by their own identity, so a move is a single event, and an ancestor's move never changes a descendant's address.
 
+A node is added only after its parent. The input step refuses a child whose parent is not present, emits nothing for it, and reports `missing_parent_add_dropped`. Jinaga delivers a nested collection's rows only after their parent, so an orphan means the input was wired out of order (jinaga/jinaga-cascade-core#31).
+
 A node is removed only after its descendants. The input step guarantees this: removing a row first removes the children it received through `collection()`, deepest first. Steps that create nodes keep it too: `groupBy` removes a group only when it is empty, `filter` removes a hidden subtree children first, and `flatten` removes flattened children with their parent. No step ever sees a parent leave while it still has children.
 
 Every `onModified` changes a value: no step emits a change whose old and new values are the same. Together with the rule that `old` is the current value, this means a change is never delivered twice and never delivered for nothing.

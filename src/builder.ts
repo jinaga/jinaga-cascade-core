@@ -262,7 +262,18 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
                 if (!this.acceptsRuntimeOperation('add', key)) {
                     return;
                 }
-                this.inputPipeline.addAt(segmentPath, keyPath, key, immutableProps);
+                if (!this.inputPipeline.addAt(segmentPath, keyPath, key, immutableProps)) {
+                    this.emitDiagnostic({
+                        code: 'missing_parent_add_dropped',
+                        message: `Dropped child "${key}" at [${segmentPath.join('.')}]: its parent [${keyPath.join(', ')}] has not been added. Add a parent before its children.`,
+                        operationType: 'add',
+                        segmentPath,
+                        keyPath,
+                        key,
+                        parentKey: keyPath[keyPath.length - 1],
+                        epoch: this.epoch
+                    });
+                }
             },
             remove: (parentKeyPath, key, immutableProps) => {
                 const keyPath = resolveParentKeyPath(parentKeyPath);
