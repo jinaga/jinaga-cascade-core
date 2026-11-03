@@ -5,8 +5,8 @@ import { emptyDescriptorNode, updateNodeAt } from '../util/descriptor-transform.
 import { getMutablePropertiesOfArrayItems } from '../pipeline.js';
 
 /**
- * Splits a level's items into groups of them. A group holds only its grouping values, which
- * never change. The items keep their other properties, arrays and objects.
+ * Splits a level's items into groups of them. A group holds only its grouping values, scalar
+ * or object, which never change. The items keep their other properties, arrays and objects.
  *
  * Groups never move: a group's key includes its parent's key. An item moves to another group
  * when one of its grouping values changes, or when the item it is grouped within moves.
@@ -23,6 +23,7 @@ function groupItems(
         ...emptyDescriptorNode(),
         collectionKey: groupingProperties,
         scalars: items.scalars.filter(s => grouping.has(s.name)),
+        objects: items.objects.filter(o => grouping.has(o.name)),
         arrays: [
             {
                 name: childArrayName,
@@ -30,7 +31,7 @@ function groupItems(
                     arrays: items.arrays,
                     collectionKey: items.collectionKey.filter(k => !grouping.has(k)),
                     scalars: items.scalars.filter(s => !grouping.has(s.name)),
-                    objects: items.objects,
+                    objects: items.objects.filter(o => !grouping.has(o.name)),
                     mutableProperties: items.mutableProperties.filter(p => !grouping.has(p))
                 },
                 mutablePlacement: groupingValueMutable || itemsMove

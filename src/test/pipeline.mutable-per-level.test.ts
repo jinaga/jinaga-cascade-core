@@ -92,6 +92,29 @@ describe('mutable properties per level', () => {
         expect(getMutablePropertiesOfArrayItems(descriptor, ['items'])).toEqual([]);
     });
 
+    it('grouping by an object puts it on the group, and a flattened item follows it', () => {
+        const make = () => createPipeline()
+            .groupBy(['cat', 'item'], 'groups')
+            .pickByMax('items', 'v', 'latest')
+            .groupBy(['cat', 'latest'], 'byLatest')
+            .groupBy(['cat'], 'cats')
+            .flatten('byLatest', 'groups', 'flat');
+        const descriptor = make().getTypeDescriptor();
+        const byLatest = createPipeline()
+            .groupBy(['cat', 'item'], 'groups')
+            .pickByMax('items', 'v', 'latest')
+            .groupBy(['cat', 'latest'], 'byLatest')
+            .getTypeDescriptor();
+        expect(byLatest.objects.map(o => o.name)).toEqual(['latest']);
+        expect(byLatest.arrays[0].type.objects).toEqual([]);
+        expect(getMutablePropertiesOfArrayItems(descriptor, ['flat'])).toContain('latest');
+
+        const [pipeline, getOutput] = createTestPipeline(make);
+        pipeline.add('1', { cat: 'c', item: 'a', v: 1 });
+        pipeline.add('2', { cat: 'c', item: 'a', v: 2 });
+        expect(getOutput()[0].flat[0].latest).toEqual({ v: 2 });
+    });
+
     it('source values never change', () => {
         const descriptor = createPipeline('folders', [], [
             { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }
