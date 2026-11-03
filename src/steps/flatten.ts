@@ -1,5 +1,6 @@
 import type {
     AddedHandler,
+    ArrayDescriptor,
     BuildContext,
     BuiltStepGraph,
     DescriptorNode,
@@ -13,6 +14,7 @@ import type {
     TypeDescriptor
 } from '../pipeline.js';
 import { pathsMatch, pathStartsWith } from '../util/path.js';
+import { getMutablePropertiesOfArrayItems } from '../pipeline.js';
 
 function mergeScalarsWithChildPrecedence(
     parentScalars: ScalarDescriptor[],
@@ -34,24 +36,26 @@ function mergeObjectsWithChildPrecedence(
     return Array.from(objectMap.values());
 }
 
-function mergedMutableProperties(
-    parentMutableProperties: string[],
-    childMutableProperties: string[],
-    mergedScalars: ScalarDescriptor[]
-): string[] {
-    const scalarNames = new Set(mergedScalars.map(s => s.name));
-    const mutable = new Set<string>();
-    for (const prop of parentMutableProperties) {
-        if (scalarNames.has(prop)) {
-            mutable.add(prop);
-        }
-    }
-    for (const prop of childMutableProperties) {
-        if (scalarNames.has(prop)) {
-            mutable.add(prop);
-        }
-    }
-    return Array.from(mutable);
+/**
+ * The properties of a flattened item that can change: its child's, and the parent values it
+ * inherits (those its child does not shadow), which change when the parent's do. When the
+ * child can move to another parent, every inherited value can change.
+ *
+ * As in `FlattenStep.isShadowed`, only a child's declared scalars shadow a parent value. A
+ * child may declare an object it has no value for, so objects do not.
+ */
+function flattenedMutableProperties(parentArray: ArrayDescriptor, childArray: ArrayDescriptor): string[] {
+    const shadowed = new Set(childArray.type.scalars.map(scalar => scalar.name));
+    const inherited = childArray.mutablePlacement
+        ? [
+            ...parentArray.type.scalars.map(scalar => scalar.name),
+            ...parentArray.type.objects.map(objectDescriptor => objectDescriptor.name)
+        ]
+        : parentArray.type.mutableProperties;
+    return [...new Set([
+        ...childArray.type.mutableProperties,
+        ...inherited.filter(name => !shadowed.has(name))
+    ])];
 }
 
 function navigateToScopeNode(node: DescriptorNode, remainingSegments: string[]): DescriptorNode | null {
@@ -141,11 +145,7 @@ function transformDescriptorAtScope(
             collectionKey: [...parentArray.type.collectionKey, ...childArray.type.collectionKey],
             scalars: mergedScalars,
             objects: mergeObjectsWithChildPrecedence(parentArray.type.objects, childArray.type.objects),
-            mutableProperties: mergedMutableProperties(
-                parentArray.type.mutableProperties,
-                childArray.type.mutableProperties,
-                mergedScalars
-            )
+            mutableProperties: flattenedMutableProperties(parentArray, childArray)
         };
 
         // A flattened item moves when its parent moves (with the parent's other children)
@@ -188,32 +188,6 @@ function transformDescriptorAtScope(
     };
 }
 
-/**
- * The parent values a flattened item inherits: those its child does not shadow. They change
- * when the child moves to another parent, so they are mutable when the child array's
- * placement is.
- */
-function inheritedMutableProperties(
-    descriptor: TypeDescriptor,
-    scopePath: string[],
-    parentArrayName: string,
-    childArrayName: string
-): string[] {
-    const parentArray = navigateToScopeNode(descriptor, [...scopePath])?.arrays
-        .find(arrayDescriptor => arrayDescriptor.name === parentArrayName);
-    const childArray = parentArray?.type.arrays.find(arrayDescriptor => arrayDescriptor.name === childArrayName);
-    if (!parentArray || !childArray || !childArray.mutablePlacement) {
-        return [];
-    }
-    // As in `FlattenStep.isShadowed`: only a child's declared scalars shadow a parent value.
-    // A child may declare an object it has no value for, so objects do not.
-    const shadowed = new Set(childArray.type.scalars.map(scalar => scalar.name));
-    return [
-        ...parentArray.type.scalars.map(scalar => scalar.name),
-        ...parentArray.type.objects.map(objectDescriptor => objectDescriptor.name)
-    ].filter(name => !shadowed.has(name));
-}
-
 function transformFlattenDescriptor(
     inputDescriptor: TypeDescriptor,
     parentPath: string[],
@@ -225,12 +199,8 @@ function transformFlattenDescriptor(
     const childArrayName = childPath[childPath.length - 1];
     const outputArrayName = outputPath[outputPath.length - 1];
     assertValidFlattenConfiguration(inputDescriptor, scopePath, parentArrayName, childArrayName, outputArrayName);
-    const transformed = transformDescriptorAtScope(inputDescriptor, [...scopePath], parentArrayName, childArrayName, outputArrayName);
-    // Mutable properties are recorded at the root of the descriptor.
-    const inherited = inheritedMutableProperties(inputDescriptor, scopePath, parentArrayName, childArrayName);
     return {
-        ...transformed,
-        mutableProperties: [...new Set([...transformed.mutableProperties, ...inherited])],
+        ...transformDescriptorAtScope(inputDescriptor, [...scopePath], parentArrayName, childArrayName, outputArrayName),
         rootCollectionName: inputDescriptor.rootCollectionName
     };
 }
@@ -323,10 +293,12 @@ export class FlattenStep implements Step {
             this.handleChildPlaced(key, newParentKey);
         });
 
-        for (const propertyName of inputDescriptor.mutableProperties) {
+        for (const propertyName of getMutablePropertiesOfArrayItems(inputDescriptor, this.parentPath)) {
             this.input.onModified(this.parentPath, propertyName, (key, oldValue, newValue) => {
                 this.handleParentModified(key, propertyName, oldValue, newValue);
             });
+        }
+        for (const propertyName of getMutablePropertiesOfArrayItems(inputDescriptor, this.childPath)) {
             this.input.onModified(this.childPath, propertyName, (key, oldValue, newValue) => {
                 this.handleChildModified(key, propertyName, oldValue, newValue);
             });

@@ -10,6 +10,7 @@ import type {
     StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
+import { getMutablePropertiesOfArrayItems } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
 
 type NormalizedOrderValue = number | string | undefined;
@@ -123,7 +124,7 @@ export class CumulativeSumStep<
         const listenedProperties = new Set<string>([
             ...this.properties,
             ...this.orderBy,
-            ...inputDescriptor.mutableProperties
+            ...getMutablePropertiesOfArrayItems(inputDescriptor, this.segmentPath)
         ]);
 
         listenedProperties.forEach(propertyName => {

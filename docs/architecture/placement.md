@@ -65,7 +65,7 @@ A node's placement is a value, and like any value the type descriptor says wheth
 
 Source arrays never move, so a source array declares no flag (`SourceArrayDescriptor`), and the input sets it to `false`.
 
-`flatten` reads the flag. A flattened item inherits its parent's values, so when the child array's items can move, the inherited values can change: `flatten` records them as mutable. Without this, the output and downstream steps did not listen for those values, and a flattened item kept its old parent's values after a move (#30). The tests check the flag against the steps: every `onPlaced` a pipeline emits is at a level whose array is declared to move.
+`flatten` reads the flag. A flattened item inherits its parent's values, so when the child array's items can move, the inherited values can change: `flatten` records them as mutable on the flattened level. Each level records the mutable properties of its own items, so a property of the same name at another level does not affect them. Without this, the output and downstream steps did not listen for those values, and a flattened item kept its old parent's values after a move (#30). The tests check the flag against the steps: every `onPlaced` a pipeline emits is at a level whose array is declared to move.
 - **`cumulativeSum`, `replaceToDelta`** keep one sorted order per parent. A move removes the item from one order and inserts it into another, updating the successors in both.
 - **Output store** keeps a `PlacementIndex` so it can locate a node. Each operation is located when it is queued, so applying a batch is a pure function of the state.
 

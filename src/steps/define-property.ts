@@ -1,76 +1,18 @@
-import type { AddedHandler, BuildContext, BuiltStepGraph, DescriptorNode, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { pathsMatch } from '../util/path.js';
+import { appendMutableIfMissing, appendScalarIfMissing, updateNodeAt } from '../util/descriptor-transform.js';
 
+/** The defined property belongs to the scope's items, and changes when a property it reads does. */
 function transformDefinePropertyDescriptor(
     inputDescriptor: TypeDescriptor,
     propertyName: string,
     scopeSegments: string[],
     mutableProperties: string[]
 ): TypeDescriptor {
-    const appendDefinedScalarAtScope = (descriptor: TypeDescriptor): TypeDescriptor => {
-        if (scopeSegments.length === 0) {
-            if (descriptor.scalars.some(scalar => scalar.name === propertyName)) {
-                return descriptor;
-            }
-            return {
-                ...descriptor,
-                scalars: [
-                    ...descriptor.scalars,
-                    { name: propertyName, type: 'unknown' as const }
-                ]
-            };
-        }
-
-        const appendScalarRecursively = (
-            nodeDescriptor: DescriptorNode,
-            remainingSegments: string[]
-        ): DescriptorNode => {
-            if (remainingSegments.length === 0) {
-                if (nodeDescriptor.scalars.some(scalar => scalar.name === propertyName)) {
-                    return nodeDescriptor;
-                }
-                return {
-                    ...nodeDescriptor,
-                    scalars: [
-                        ...nodeDescriptor.scalars,
-                        { name: propertyName, type: 'unknown' as const }
-                    ]
-                };
-            }
-
-            const [segment, ...tail] = remainingSegments;
-            return {
-                ...nodeDescriptor,
-                arrays: nodeDescriptor.arrays.map(arrayDesc => {
-                    if (arrayDesc.name !== segment) {
-                        return arrayDesc;
-                    }
-                    return {
-                        ...arrayDesc,
-                        type: appendScalarRecursively(arrayDesc.type, tail)
-                    };
-                })
-            };
-        };
-
-        const transformed = appendScalarRecursively(descriptor, scopeSegments);
-        return {
-            ...transformed,
-            rootCollectionName: descriptor.rootCollectionName
-        };
-    };
-
-    const withScalar = appendDefinedScalarAtScope(inputDescriptor);
-    if (mutableProperties.length > 0) {
-        const existingMutableProps = withScalar.mutableProperties;
-        if (!existingMutableProps.includes(propertyName)) {
-            return {
-                ...withScalar,
-                mutableProperties: [...existingMutableProps, propertyName]
-            };
-        }
-    }
-    return withScalar;
+    return updateNodeAt(inputDescriptor, scopeSegments, node => {
+        const withScalar = appendScalarIfMissing(node, { name: propertyName, type: 'unknown' });
+        return mutableProperties.length > 0 ? appendMutableIfMissing(withScalar, propertyName) : withScalar;
+    });
 }
 
 export class DefinePropertyStep<T, K extends string, U> implements Step {

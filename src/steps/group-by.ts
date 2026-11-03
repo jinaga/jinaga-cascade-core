@@ -1,72 +1,42 @@
 import type { AddedHandler, BuildContext, BuiltStepGraph, DescriptorNode, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { canonicalizeGroupingProperties, computeChildKey, computeGroupKey } from "../util/hash.js";
 import { pathsMatch, pathStartsWith } from "../util/path.js";
-import { emptyDescriptorNode } from '../util/descriptor-transform.js';
+import { emptyDescriptorNode, updateNodeAt } from '../util/descriptor-transform.js';
+import { getMutablePropertiesOfArrayItems } from '../pipeline.js';
 
 /**
+ * Splits a level's items into groups of them. A group holds only its grouping values, scalar
+ * or object, which never change. The items keep their other properties, arrays and objects.
+ *
  * Groups never move: a group's key includes its parent's key. An item moves to another group
  * when one of its grouping values changes, or when the item it is grouped within moves.
  */
-function transformDescriptorAtPathWithParentName(
-    descriptor: DescriptorNode,
-    remainingSegments: string[],
+function groupItems(
+    items: DescriptorNode,
     groupingProperties: string[],
-    parentArrayName: string,
     childArrayName: string,
-    groupingValueMutable: boolean
+    itemsMove: boolean
 ): DescriptorNode {
-    if (remainingSegments.length === 0) {
-        return descriptor;
-    }
-
-    const [currentSegment, ...remainingSegmentsAfter] = remainingSegments;
-
+    const grouping = new Set(groupingProperties);
+    const groupingValueMutable = groupingProperties.some(p => items.mutableProperties.includes(p));
     return {
-        ...descriptor,
-        arrays: descriptor.arrays.map(arrayDesc => {
-            if (arrayDesc.name !== currentSegment) {
-                return arrayDesc;
+        ...emptyDescriptorNode(),
+        collectionKey: groupingProperties,
+        scalars: items.scalars.filter(s => grouping.has(s.name)),
+        objects: items.objects.filter(o => grouping.has(o.name)),
+        arrays: [
+            {
+                name: childArrayName,
+                type: {
+                    arrays: items.arrays,
+                    collectionKey: items.collectionKey.filter(k => !grouping.has(k)),
+                    scalars: items.scalars.filter(s => !grouping.has(s.name)),
+                    objects: items.objects.filter(o => !grouping.has(o.name)),
+                    mutableProperties: items.mutableProperties.filter(p => !grouping.has(p))
+                },
+                mutablePlacement: groupingValueMutable || itemsMove
             }
-
-            if (remainingSegmentsAfter.length === 0) {
-                const groupingKey = groupingProperties;
-                const parentScalars = arrayDesc.type.scalars.filter(s => groupingKey.includes(s.name));
-                const childScalars = arrayDesc.type.scalars.filter(s => !groupingKey.includes(s.name));
-
-                return {
-                    name: parentArrayName,
-                    type: {
-                        ...emptyDescriptorNode(),
-                        collectionKey: groupingProperties,
-                        scalars: parentScalars,
-                        arrays: [
-                            {
-                                name: childArrayName,
-                                type: {
-                                    ...arrayDesc.type,
-                                    scalars: childScalars,
-                                    collectionKey: arrayDesc.type.collectionKey.filter(k => !groupingKey.includes(k))
-                                },
-                                mutablePlacement: groupingValueMutable || arrayDesc.mutablePlacement
-                            }
-                        ]
-                    },
-                    mutablePlacement: false
-                };
-            }
-
-            return {
-                ...arrayDesc,
-                type: transformDescriptorAtPathWithParentName(
-                    arrayDesc.type,
-                    remainingSegmentsAfter,
-                    groupingProperties,
-                    parentArrayName,
-                    childArrayName,
-                    groupingValueMutable
-                )
-            };
-        })
+        ]
     };
 }
 
@@ -77,47 +47,22 @@ function transformGroupByDescriptor(
     childArrayName: string,
     scopeSegments: string[]
 ): TypeDescriptor {
-    const groupingKey = groupingProperties;
-    const groupingValueMutable = groupingProperties.some(p => inputDescriptor.mutableProperties.includes(p));
-    const parentScalars = inputDescriptor.scalars.filter(s => groupingKey.includes(s.name));
-    const childScalars = inputDescriptor.scalars.filter(s => !groupingKey.includes(s.name));
-
     if (scopeSegments.length === 0) {
-        const childDescriptor: DescriptorNode = {
-            ...inputDescriptor,
-            scalars: childScalars,
-            collectionKey: inputDescriptor.collectionKey.filter(k => !groupingKey.includes(k))
-        };
-
         return {
-            rootCollectionName: parentArrayName,
-            collectionKey: groupingKey,
-            scalars: parentScalars,
-            arrays: [
-                {
-                    name: childArrayName,
-                    type: childDescriptor,
-                    mutablePlacement: groupingValueMutable
-                }
-            ],
-            mutableProperties: [...inputDescriptor.mutableProperties],
-            objects: [...inputDescriptor.objects]
+            ...groupItems(inputDescriptor, groupingProperties, childArrayName, false),
+            rootCollectionName: parentArrayName
         };
     }
 
-    return {
-        ...transformDescriptorAtPathWithParentName(
-            inputDescriptor,
-            [...scopeSegments],
-            groupingProperties,
-            parentArrayName,
-            childArrayName,
-            groupingValueMutable
-        ),
-        rootCollectionName: inputDescriptor.rootCollectionName,
-        mutableProperties: [...inputDescriptor.mutableProperties],
-        objects: [...inputDescriptor.objects]
-    };
+    const groupedArrayName = scopeSegments[scopeSegments.length - 1];
+    return updateNodeAt(inputDescriptor, scopeSegments.slice(0, -1), node => ({
+        ...node,
+        arrays: node.arrays.map(array => array.name !== groupedArrayName ? array : {
+            name: parentArrayName,
+            type: groupItems(array.type, groupingProperties, childArrayName, array.mutablePlacement),
+            mutablePlacement: false
+        })
+    }));
 }
 
 interface TrackedItem {
@@ -177,7 +122,7 @@ export class GroupByStep<
         }
 
         for (const propName of this.groupingPropertyNames) {
-            if (inputTypeDescriptor.mutableProperties.includes(propName)) {
+            if (getMutablePropertiesOfArrayItems(inputTypeDescriptor, this.scopeSegments).includes(propName)) {
                 this.input.onModified(this.scopeSegments, propName, (itemKey, _oldValue, newValue) => {
                     this.handleGroupingPropertyChange(itemKey, propName, newValue);
                 });

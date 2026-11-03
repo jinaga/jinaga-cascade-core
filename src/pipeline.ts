@@ -109,7 +109,10 @@ export interface DescriptorNode {
     scalars: ScalarDescriptor[];
     /** Presentational object wiring; always an array (empty means none). */
     objects: ObjectDescriptor[];
-    /** Property names that may change after add; always an array (empty means none). */
+    /**
+     * Names of the properties of this level's items that may change after add; always an array
+     * (empty means none). Each level records its own.
+     */
     mutableProperties: string[];
 }
 
@@ -133,10 +136,11 @@ export interface ObjectDescriptor {
 }
 
 /**
- * The shape of a source row's declared arrays and objects. A source child never moves to
- * another parent, so a source array has no `mutablePlacement`: the input sets it.
+ * The shape of a source row's declared arrays and objects. The input only adds and removes
+ * source rows: a source value never changes and a source child never moves, so a source node
+ * declares no `mutableProperties` and a source array no `mutablePlacement`. The input sets both.
  */
-export type SourceNode = Omit<DescriptorNode, 'arrays' | 'objects'> & {
+export type SourceNode = Omit<DescriptorNode, 'arrays' | 'objects' | 'mutableProperties'> & {
     arrays: SourceArrayDescriptor[];
     objects: SourceObjectDescriptor[];
 };
@@ -152,17 +156,16 @@ export interface SourceObjectDescriptor {
 }
 
 /**
- * Get the mutable properties of items within an array at the specified path.
- * Navigates through the TypeDescriptor following the segment path and returns
- * the mutableProperties of the final array's item type.
+ * The properties of the items at `segmentPath` that can change after the item is added.
+ * Each level records its own.
  *
- * @param descriptor - The root TypeDescriptor to start navigation from
- * @param segmentPath - Array of segment names to navigate (e.g., ['orders'] or ['categories', 'products'])
- * @returns Array of mutable property names, or empty array if path is invalid
+ * @param descriptor - The descriptor to start navigation from
+ * @param segmentPath - Array names to navigate (e.g., [] for the root, ['categories', 'products'])
+ * @returns The mutable property names, or an empty array if the path is invalid
  */
 export function getMutablePropertiesOfArrayItems(
-    descriptor: TypeDescriptor,
-    segmentPath: string[]
+    descriptor: DescriptorNode,
+    segmentPath: readonly string[]
 ): string[] {
     let current: DescriptorNode = descriptor;
     for (const segment of segmentPath) {
@@ -193,18 +196,6 @@ export function getScalarsAtPath(
         current = arrayDesc.type;
     }
     return current.scalars;
-}
-
-/**
- * Names of the mutable properties at every level of a descriptor. Mutable properties are
- * recorded at the root of the descriptor even when they belong to nested levels.
- */
-export function collectAllMutableProperties(descriptor: DescriptorNode): string[] {
-    const names = new Set<string>(descriptor.mutableProperties);
-    for (const array of descriptor.arrays) {
-        collectAllMutableProperties(array.type).forEach(name => names.add(name));
-    }
-    return [...names];
 }
 
 export type ImmutableProps = {

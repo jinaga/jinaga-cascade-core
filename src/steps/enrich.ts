@@ -11,9 +11,9 @@ import type {
     StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
-import { appendMutableIfMissing, appendObjectIfMissing } from '../util/descriptor-transform.js';
+import { appendMutableIfMissing, appendObjectIfMissing, updateNodeAt } from '../util/descriptor-transform.js';
 import { pathsMatch } from '../util/path.js';
-import { collectAllMutableProperties, getPathSegmentsFromDescriptor as getAllPathSegmentsFromDescriptor } from '../pipeline.js';
+import { getMutablePropertiesOfArrayItems, getPathSegmentsFromDescriptor as getAllPathSegmentsFromDescriptor } from '../pipeline.js';
 import { PlacementIndex, addNode, modifyNode, moveNode, removeNode, type KeyedTree } from '../util/keyed-tree.js';
 
 function stableSerialize(value: unknown): string {
@@ -45,30 +45,6 @@ interface PrimaryRecord {
 }
 
 
-function addObjectAtPath(
-    descriptor: DescriptorNode,
-    path: string[],
-    objectDesc: { name: string; type: DescriptorNode }
-): DescriptorNode {
-    if (path.length === 0) {
-        return appendObjectIfMissing(descriptor, objectDesc);
-    }
-
-    const [first, ...rest] = path;
-    return {
-        ...descriptor,
-        arrays: descriptor.arrays.map(arr => {
-            if (arr.name !== first) {
-                return arr;
-            }
-            return {
-                ...arr,
-                type: addObjectAtPath(arr.type, rest, objectDesc)
-            };
-        })
-    };
-}
-
 function transformEnrichDescriptor(
     inputDescriptor: TypeDescriptor,
     secondaryDescriptor: TypeDescriptor,
@@ -83,22 +59,9 @@ function transformEnrichDescriptor(
         mutableProperties: secondaryDescriptor.mutableProperties
     };
 
-    if (scopeSegments.length === 0) {
-        const withObject = appendObjectIfMissing(inputDescriptor, {
-            name: asProperty,
-            type: secondaryRoot
-        });
-        return appendMutableIfMissing(withObject, asProperty) as TypeDescriptor;
-    }
-
-    const atScope = addObjectAtPath(inputDescriptor, scopeSegments, {
-        name: asProperty,
-        type: secondaryRoot
-    });
-    return {
-        ...appendMutableIfMissing(atScope, asProperty),
-        rootCollectionName: inputDescriptor.rootCollectionName
-    };
+    return updateNodeAt(inputDescriptor, scopeSegments, node =>
+        appendMutableIfMissing(appendObjectIfMissing(node, { name: asProperty, type: secondaryRoot }), asProperty)
+    );
 }
 
 export class EnrichBuilder implements StepBuilder {
@@ -184,8 +147,6 @@ export class EnrichStep implements Step {
 
         this.secondaryCollectionKey = secondaryDescriptor.collectionKey;
         const secondaryPaths = getAllPathSegmentsFromDescriptor(secondaryDescriptor);
-        const mutableProperties = collectAllMutableProperties(secondaryDescriptor);
-
         for (const segmentPath of secondaryPaths) {
             this.secondary.onAdded(segmentPath, (parentKey, key, immutableProps) => {
                 this.handleSecondaryAdded(segmentPath, parentKey, key, immutableProps);
@@ -196,7 +157,7 @@ export class EnrichStep implements Step {
             this.secondary.onPlaced(segmentPath, (key, _oldParentKey, newParentKey) => {
                 this.handleSecondaryPlaced(segmentPath, key, newParentKey);
             });
-            for (const propertyName of mutableProperties) {
+            for (const propertyName of getMutablePropertiesOfArrayItems(secondaryDescriptor, segmentPath)) {
                 this.secondary.onModified(segmentPath, propertyName, (key, _oldValue, newValue) => {
                     this.handleSecondaryModified(segmentPath, key, propertyName, newValue);
                 });
