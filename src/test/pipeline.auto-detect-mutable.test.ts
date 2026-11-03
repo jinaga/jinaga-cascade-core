@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipeline } from '../index';
 import { createTestPipeline } from './helpers';
 
@@ -41,7 +40,7 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
                     // Define adjustedTotal that depends on mutable productTotal
                     // Markup of 10% if productTotal > 100
                     .in('products').defineProperty('adjustedTotal', item =>
-                        item.productTotal > 100 ? item.productTotal * 1.1 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 1.1 : item.productTotal,
                         ['productTotal']
                     )
                     // KEY: Sum adjustedTotal WITHOUT specifying mutableProperties
@@ -79,7 +78,7 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
                     .in('items').groupBy(['productId'], 'products')
                     .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('adjustedTotal', item =>
-                        item.productTotal > 100 ? item.productTotal * 1.2 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 1.2 : item.productTotal,
                         ['productTotal']
                     )
                     // Sum WITHOUT mutableProperties - should auto-detect
@@ -253,7 +252,7 @@ describe('CommutativeAggregate auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice based on productTotal (mutable dependency)
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
                         ['productTotal']
                     )
                     // Sum adjustedPrice at category (root) level WITHOUT mutableProperties
@@ -394,7 +393,7 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
                     // Define adjustedPrice that depends on mutable productTotal
                     // Apply 10% discount if productTotal > 100
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 100 ? item.productTotal * 0.9 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 0.9 : item.productTotal,
                         ['productTotal']
                     )
                     // KEY: Min adjustedPrice WITHOUT specifying mutableProperties
@@ -441,7 +440,7 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice with markup for high totals
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
                         ['productTotal']
                     )
                     // Max adjustedPrice WITHOUT specifying mutableProperties
@@ -525,7 +524,7 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             pipeline.add('v2', { groupId: 'G1', itemId: 'B', baseValue: 20 });
             pipeline.add('v3', { groupId: 'G1', itemId: 'C', baseValue: 30 });
             
-            let output = getOutput();
+            const output = getOutput();
             expect(output[0].maxValue).toBe(30); // C is max
 
             // "Change" C by removing and re-adding with different value
@@ -550,7 +549,7 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
                     .in('items').sum('items', 'amount', 'productTotal')
                     // Use defineProperty with formula that can decrease
                     .in('items').defineProperty('adjustedValue', item =>
-                        item.productTotal > 50 ? item.productTotal - 30 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 50 ? item.productTotal - 30 : item.productTotal,
                         ['productTotal']
                     )
                     .min('items', 'adjustedValue', 'minValue')
@@ -622,7 +621,7 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
                     .in('categories', 'items').groupBy(['productId'], 'products')
                     .in('categories', 'products').sum('items', 'amount', 'productTotal')
                     .in('categories', 'products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 100 ? item.productTotal * 0.8 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 0.8 : item.productTotal,
                         ['productTotal']
                     )
                     // Min at the categories level
@@ -698,7 +697,7 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
                     .in('items').sum('items', 'amount', 'orderTotal')
                     // Use defineProperty to normalize values
                     .in('items').defineProperty('normalizedValue', item =>
-                        item.orderTotal > 25 ? 15 : (item.orderTotal > 15 ? 15 : item.orderTotal),
+                        item.orderTotal !== undefined && item.orderTotal > 25 ? 15 : (item.orderTotal !== undefined && item.orderTotal > 15 ? 15 : item.orderTotal),
                         ['orderTotal']
                     )
                     .min('items', 'normalizedValue', 'minValue')
@@ -790,7 +789,7 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
                     .in('items').groupBy(['productId'], 'products')
                     .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('discountedPrice', item =>
-                        item.productTotal >= 100 ? item.productTotal * 0.75 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal >= 100 ? item.productTotal * 0.75 : item.productTotal,
                         ['productTotal']
                     )
                     // No mutableProperties param needed - should auto-detect
@@ -943,7 +942,7 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Use a formula that can produce zero
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 50 ? 0 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 50 ? 0 : item.productTotal,
                         ['productTotal']
                     )
                     .average('products', 'adjustedPrice', 'avgPrice')
@@ -979,7 +978,7 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Items are 0 until they reach 50, then they get their actual value
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal >= 50 ? item.productTotal : 0,
+                        item.productTotal !== undefined && item.productTotal >= 50 ? item.productTotal : 0,
                         ['productTotal']
                     )
                     .average('products', 'adjustedPrice', 'avgPrice')
@@ -1106,7 +1105,7 @@ describe('AverageAggregate auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Normalize all values to 25 once they reach 25
                     .in('products').defineProperty('normalizedPrice', item =>
-                        item.productTotal >= 25 ? 25 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal >= 25 ? 25 : item.productTotal,
                         ['productTotal']
                     )
                     .average('products', 'normalizedPrice', 'avgPrice')
@@ -1294,7 +1293,7 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Define adjustedPrice that can decrease using a formula
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 25 ? item.productTotal - 20 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 25 ? item.productTotal - 20 : item.productTotal,
                         ['productTotal']
                     )
                     // pickByMax adjustedPrice WITHOUT specifying mutableProperties
@@ -1343,7 +1342,7 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // adjustedPrice decreases when productTotal exceeds threshold
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 15 ? item.productTotal - 10 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 15 ? item.productTotal - 10 : item.productTotal,
                         ['productTotal']
                     )
                     .pickByMin('products', 'adjustedPrice', 'cheapestProduct')
@@ -1428,7 +1427,7 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Use formula that can reduce values
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 10 ? item.productTotal - 10 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 10 ? item.productTotal - 10 : item.productTotal,
                         ['productTotal']
                     )
                     .pickByMin('products', 'adjustedPrice', 'cheapestProduct')
@@ -1439,7 +1438,7 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             pipeline.add('o2', { categoryId: 'catX', productId: 'prodB', amount: 20 });
             pipeline.add('o3', { categoryId: 'catX', productId: 'prodC', amount: 30 });
             
-            let output = getOutput();
+            const output = getOutput();
             // A and B both have adjustedPrice=10
             // Since A was added first, it should be picked
             expect(output[0].cheapestProduct?.adjustedPrice).toBe(10);
@@ -1552,7 +1551,7 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Normalize all values to 15 once they reach 15
                     .in('products').defineProperty('normalizedPrice', item =>
-                        item.productTotal >= 15 ? 15 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal >= 15 ? 15 : item.productTotal,
                         ['productTotal']
                     )
                     .pickByMin('products', 'normalizedPrice', 'cheapestProduct')
@@ -1593,7 +1592,7 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
                     .in('products').sum('items', 'amount', 'productTotal')
                     // Use formula that can create very low values
                     .in('products').defineProperty('adjustedPrice', item =>
-                        item.productTotal > 30 ? 5 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal > 30 ? 5 : item.productTotal,
                         ['productTotal']
                     )
                     .pickByMin('products', 'adjustedPrice', 'cheapestProduct')
@@ -1683,7 +1682,7 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
                     .in('items').groupBy(['productId'], 'products')
                     .in('products').sum('items', 'amount', 'productTotal')
                     .in('products').defineProperty('discountedPrice', item =>
-                        item.productTotal >= 100 ? item.productTotal * 0.75 : item.productTotal,
+                        item.productTotal !== undefined && item.productTotal >= 100 ? item.productTotal * 0.75 : item.productTotal,
                         ['productTotal']
                     )
                     // No mutableProperties param needed - should auto-detect

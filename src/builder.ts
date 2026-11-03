@@ -14,7 +14,8 @@ import {
     type TypeDescriptor
 } from './pipeline.js';
 import { type AddOperator, type SubtractOperator } from './steps/commutative-aggregate.js';
-import { NavigateToPath, TransformAtPath } from './types/path.js';
+import { NavigateToPath, TransformAndRenameAtPath, TransformAtPath } from './types/path.js';
+import type { SingleName, SingleNames } from './types/names.js';
 import { buildStepGraph } from './step-builders.js';
 import { DefinePropertyBuilder } from './steps/define-property.js';
 import { DropPropertyBuilder } from './steps/drop-property.js';
@@ -765,7 +766,7 @@ export class PipelineBuilder<
      * // Recompute 'status' when 'total' changes
      * .defineProperty('status', item => item.total > 100 ? 'Gold' : 'Bronze', ['total'])
      */
-    defineProperty<K extends string, U>(propertyName: K, compute: (item: NavigateToPath<T, Path>) => U, mutableProperties: string[] = []): PipelineBuilder<
+    defineProperty<K extends string, U>(propertyName: K & SingleName<K>, compute: (item: NavigateToPath<T, Path>) => U, mutableProperties: string[] = []): PipelineBuilder<
         Path extends []
             ? Expand<T & Record<K, U>>
             : Expand<TransformAtPath<T, Path, NavigateToPath<T, Path> & Record<K, U>>>,
@@ -803,11 +804,11 @@ export class PipelineBuilder<
 
     groupBy<K extends keyof NavigateToPath<T, Path>, ArrayName extends string>(
         groupingProperties: K[],
-        arrayName: ArrayName
+        arrayName: ArrayName & SingleName<ArrayName>
     ): PipelineBuilder<
         Path extends []
             ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
-            : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
+            : Expand<TransformAndRenameAtPath<T, Path, ArrayName, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart,
         [],
         Path extends [] ? ArrayName : RootScopeName,
@@ -828,7 +829,7 @@ export class PipelineBuilder<
         return this.rootScoped<
             Path extends []
                 ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
-                : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
+                : Expand<TransformAndRenameAtPath<T, Path, ArrayName, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
             Path extends [] ? ArrayName : RootScopeName
         >(newBuilder);
     }
@@ -842,7 +843,7 @@ export class PipelineBuilder<
     >(
         parentArrayName: ParentArrayName,
         childArrayName: ChildArrayName,
-        outputArrayName: OutputArrayName &
+        outputArrayName: OutputArrayName & SingleName<OutputArrayName> &
             (OutputArrayName extends keyof NavigateToPath<T, Path> ? never : unknown)
     ): PipelineBuilder<
         TransformWithFlatten<T, Path, ParentArrayName, OutputArrayName, FlattenedItem>,
@@ -918,7 +919,7 @@ export class PipelineBuilder<
         TAggregate
     >(
         arrayName: ArrayName,
-        propertyName: PropName,
+        propertyName: PropName & SingleName<PropName>,
         add: AddOperator<TItem, TAggregate>,
         subtract: SubtractOperator<TItem, TAggregate>,
         propertyToAggregate?: string
@@ -985,7 +986,7 @@ export class PipelineBuilder<
     >(
         arrayName: ArrayName,
         propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
-        outputProperty: TPropName
+        outputProperty: TPropName & SingleName<TPropName>
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
@@ -995,7 +996,12 @@ export class PipelineBuilder<
         RootScopeName,
         TSources
     > {
-        return this.commutativeAggregate(
+        return this.commutativeAggregate<
+            ArrayName,
+            ArrayItemAtCurrentPath<T, Path, ArrayName> & ImmutableProps,
+            TPropName,
+            number
+        >(
             arrayName,
             outputProperty,
             (acc: number | undefined, item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => {
@@ -1028,7 +1034,7 @@ export class PipelineBuilder<
         TPropName extends string
     >(
         arrayName: ArrayName,
-        outputProperty: TPropName
+        outputProperty: TPropName & SingleName<TPropName>
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
@@ -1038,7 +1044,12 @@ export class PipelineBuilder<
         RootScopeName,
         TSources
     > {
-        return this.commutativeAggregate(
+        return this.commutativeAggregate<
+            ArrayName,
+            ArrayItemAtCurrentPath<T, Path, ArrayName> & ImmutableProps,
+            TPropName,
+            number
+        >(
             arrayName,
             outputProperty,
             (acc: number | undefined, _item: ArrayItemAtCurrentPath<T, Path, ArrayName>) => (acc ?? 0) + 1,
@@ -1064,7 +1075,7 @@ export class PipelineBuilder<
     >(
         arrayName: ArrayName,
         propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
-        outputProperty: TPropName
+        outputProperty: TPropName & SingleName<TPropName>
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
@@ -1103,7 +1114,7 @@ export class PipelineBuilder<
     >(
         arrayName: ArrayName,
         propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
-        outputProperty: TPropName
+        outputProperty: TPropName & SingleName<TPropName>
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
@@ -1128,13 +1139,13 @@ export class PipelineBuilder<
         EntityArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         EventArrayName extends ArrayPropertyNameOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>>,
         EventItem extends ArrayItemAtPropertyOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>, EventArrayName>,
-        OutputProps extends readonly string[]
+        const OutputProps extends readonly string[]
     >(
         entityArrayName: EntityArrayName,
         eventArrayName: EventArrayName,
         orderBy: readonly (keyof EventItem & string)[],
         properties: readonly (keyof EventItem & string)[],
-        outputProperties: OutputProps
+        outputProperties: OutputProps & SingleNames<OutputProps>
     ): PipelineBuilder<
         Path extends []
             ? ReplaceToDeltaAtScope<T, EntityArrayName, EventArrayName, OutputProps>
@@ -1187,7 +1198,7 @@ export class PipelineBuilder<
     >(
         arrayName: ArrayName,
         propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
-        outputProperty: TPropName
+        outputProperty: TPropName & SingleName<TPropName>
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, number | undefined>
@@ -1226,7 +1237,7 @@ export class PipelineBuilder<
     >(
         arrayName: ArrayName,
         propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
-        outputProperty: TPropName
+        outputProperty: TPropName & SingleName<TPropName>
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
@@ -1266,7 +1277,7 @@ export class PipelineBuilder<
     >(
         arrayName: ArrayName,
         propertyName: keyof ArrayItemAtCurrentPath<T, Path, ArrayName> & string,
-        outputProperty: TPropName
+        outputProperty: TPropName & SingleName<TPropName>
     ): PipelineBuilder<
         Path extends []
             ? TransformWithAggregate<T, [ArrayName], TPropName, ArrayItemAtCurrentPath<T, Path, ArrayName> | undefined>
@@ -1342,10 +1353,10 @@ export class PipelineBuilder<
         TAs extends string,
         TWhenMissing extends TSecondary | undefined = undefined
     >(
-        sourceName: TSourceName,
+        sourceName: TSourceName & SingleName<TSourceName>,
         secondaryPipeline: PipelineBuilder<TSecondary, TSecondaryStart, [], TSecondaryRootScopeName, TSecondarySources>,
         primaryKey: PreserveStringLiterals<readonly TPrimaryKey[]>,
-        as: TAs,
+        as: TAs & SingleName<TAs>,
         whenMissing?: TWhenMissing
     ): PipelineBuilder<
         Path extends []

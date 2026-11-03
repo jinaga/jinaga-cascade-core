@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Issue #29 and its generalization.
  *
@@ -13,41 +12,48 @@
 import { createPipeline } from '../index';
 import { createTestPipeline } from './helpers';
 
+type ClassRow = { k: string; c: string };
+type Line = { k: string; v: number };
+type Row = { id: number; k: string; v: number };
+
 const classPipeline = () =>
-    createPipeline('classes')
+    createPipeline<ClassRow, 'classes'>('classes')
         .groupBy(['k'], 'byK')
         .pickByMax('classes', 'c', 'picked')
         .dropProperty('classes');
 
-/** Group key `cl` comes from a late-arriving enrichment row. */
-const withEnrichedKey = builder =>
-    builder
+/** Lines grouped by `cl`, which comes from a late-arriving enrichment row. */
+const linesByClass = () =>
+    createPipeline<Line>()
         .enrich('classes', classPipeline(), ['k'], 'ci', { k: '', picked: undefined })
         .defineProperty('cl', r => r.ci.picked?.c ?? 'general', ['ci'])
-        .dropProperty('ci');
+        .dropProperty('ci')
+        .groupBy(['cl'], 'g');
 
 /** One row per id, with mutable `a1` from an aggregate, regrouped by late enrichment. */
 const enrichedRows = () =>
-    withEnrichedKey(
-        createPipeline()
-            .groupBy(['id', 'k'], 'rows')
-            .sum('items', 'v', 'a1')
-            .dropProperty('items')
-    )
+    createPipeline<Row>()
+        .groupBy(['id', 'k'], 'rows')
+        .sum('items', 'v', 'a1')
+        .dropProperty('items')
+        .enrich('classes', classPipeline(), ['k'], 'ci', { k: '', picked: undefined })
+        .defineProperty('cl', r => r.ci.picked?.c ?? 'general', ['ci'])
+        .dropProperty('ci')
         .dropProperty('k')
         .groupBy(['cl'], 'g');
 
-const addClass = pipeline => pipeline.sources.classes.add('a', { k: 'K', c: 'vip' });
-const removeClass = pipeline => pipeline.sources.classes.remove('a', { k: 'K', c: 'vip' });
+type WithClasses = { sources: { classes: { add(key: string, row: ClassRow): void; remove(key: string, row: ClassRow): void } } };
+const addClass = (pipeline: WithClasses) => pipeline.sources.classes.add('a', { k: 'K', c: 'vip' });
+const removeClass = (pipeline: WithClasses) => pipeline.sources.classes.remove('a', { k: 'K', c: 'vip' });
 
 describe('issue #29: enrich → groupBy → sum depends on arrival order', () => {
-    const attendeeClassPipeline = createPipeline('classes')
+    const attendeeClassPipeline = createPipeline<{ attendeeEventId: string; attendeeClass: string }, 'classes'>('classes')
         .groupBy(['attendeeEventId'], 'byAttendeeEvent')
         .pickByMax('classes', 'attendeeClass', 'pickedClass')
         .dropProperty('classes');
 
     const issuePipeline = () =>
-        createPipeline('allocations')
+        createPipeline<{ id: string; attendeePublicKey: string; attendeeEventId: string; a1: number; createdAt: string }, 'allocations'>('allocations')
             .groupBy(['attendeePublicKey', 'attendeeEventId'], 'attendees')
             .pickByMax('allocations', 'createdAt', 'latestAllocation')
             .dropProperty('allocations')
@@ -85,15 +91,21 @@ describe('issue #29: enrich → groupBy → sum depends on arrival order', () =>
 describe('groupBy regroup on a mutable key keeps values and descendants', () => {
     it('control: immutable aggregated property survives a regroup', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
-            withEnrichedKey(createPipeline()).groupBy(['cl'], 'g').sum('items', 'v', 't').dropProperty('items')
+            linesByClass().sum('items', 'v', 't').dropProperty('items')
         );
         pipeline.add('x', { k: 'K', v: 5 });
         addClass(pipeline);
         expect(getOutput()).toEqual([{ cl: 'vip', t: 5 }]);
     });
 
-    it.each(['sum', 'min', 'max', 'average'])('%s of a mutable property after a regroup', agg => {
-        const [pipeline, getOutput] = createTestPipeline(() => enrichedRows()[agg]('rows', 'a1', 'r').dropProperty('rows'));
+    type Rows = ReturnType<typeof enrichedRows>;
+    it.each([
+        ['sum', (b: Rows) => b.sum('rows', 'a1', 'r')],
+        ['min', (b: Rows) => b.min('rows', 'a1', 'r')],
+        ['max', (b: Rows) => b.max('rows', 'a1', 'r')],
+        ['average', (b: Rows) => b.average('rows', 'a1', 'r')]
+    ] as const)('%s of a mutable property after a regroup', (_name, aggregate) => {
+        const [pipeline, getOutput] = createTestPipeline(() => aggregate(enrichedRows()).dropProperty('rows'));
         pipeline.add('x', { id: 1, k: 'K', v: 5 });
         addClass(pipeline);
         expect(getOutput()).toEqual([{ cl: 'vip', r: 5 }]);
@@ -138,16 +150,16 @@ describe('groupBy regroup on a mutable key keeps values and descendants', () => 
     });
 
     it('regrouped item does not carry the grouping property into the child', () => {
-        const [pipeline, getOutput] = createTestPipeline(() => withEnrichedKey(createPipeline()).groupBy(['cl'], 'g'));
+        const [pipeline, getOutput] = createTestPipeline(linesByClass);
         pipeline.add('x', { k: 'K', v: 5 });
         addClass(pipeline);
         expect(getOutput()).toEqual([{ cl: 'vip', items: [{ k: 'K', v: 5 }] }]);
     });
 
     describe('without enrich: key derived from an aggregate', () => {
-        const tierOf = r => ((r.total ?? 0) > 50 ? 'hi' : 'lo');
+        const tierOf = (r: { total: number | undefined }) => ((r.total ?? 0) > 50 ? 'hi' : 'lo');
         const tiers = () =>
-            createPipeline()
+            createPipeline<{ item: string; v: number }>()
                 .groupBy(['item'], 'groups')
                 .sum('items', 'v', 'total')
                 .dropProperty('items')
@@ -177,7 +189,7 @@ describe('groupBy regroup on a mutable key keeps values and descendants', () => 
 
         it('child array and its aggregate survive a regroup', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
-                createPipeline()
+                createPipeline<{ item: string; v: number }>()
                     .groupBy(['item'], 'groups')
                     .sum('items', 'v', 'total')
                     .defineProperty('tier', tierOf, ['total'])
@@ -195,18 +207,19 @@ describe('groupBy regroup on a mutable key keeps values and descendants', () => 
 });
 
 describe('filter admitting an item on a mutable predicate', () => {
-    const lines = p => {
+    type CatLine = { cat: string; item: string; v: number };
+    const lines = (p: { add(key: string, row: CatLine): void }) => {
         p.add('1', { cat: 'c', item: 'i', v: 30 });
         p.add('2', { cat: 'c', item: 'i', v: 40 });
     };
 
     it('control: plain output after admission', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
-            createPipeline()
+            createPipeline<CatLine>()
                 .groupBy(['cat', 'item'], 'groups')
                 .sum('items', 'v', 'total')
                 .dropProperty('items')
-                .filter(r => r.total > 50, ['total'])
+                .filter(r => r.total !== undefined && r.total > 50, ['total'])
         );
         lines(pipeline);
         expect(getOutput()).toEqual([{ cat: 'c', item: 'i', total: 70 }]);
@@ -214,11 +227,11 @@ describe('filter admitting an item on a mutable predicate', () => {
 
     it('downstream sum of the predicate property counts the change once', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
-            createPipeline()
+            createPipeline<CatLine>()
                 .groupBy(['cat', 'item'], 'groups')
                 .sum('items', 'v', 'total')
                 .dropProperty('items')
-                .filter(r => r.total > 50, ['total'])
+                .filter(r => r.total !== undefined && r.total > 50, ['total'])
                 .groupBy(['cat'], 'cats')
                 .sum('groups', 'total', 'tSum')
                 .dropProperty('groups')
@@ -229,12 +242,12 @@ describe('filter admitting an item on a mutable predicate', () => {
 
     it('downstream sum of another mutable property sees its current value', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
-            createPipeline()
+            createPipeline<CatLine>()
                 .groupBy(['cat', 'item'], 'groups')
                 .sum('items', 'v', 'total')
                 .count('items', 'n')
                 .dropProperty('items')
-                .filter(r => r.total > 50, ['total'])
+                .filter(r => r.total !== undefined && r.total > 50, ['total'])
                 .groupBy(['cat'], 'cats')
                 .sum('groups', 'n', 'nSum')
                 .dropProperty('groups')

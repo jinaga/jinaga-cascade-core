@@ -1,19 +1,22 @@
-// @ts-nocheck
 /**
  * Each level of a descriptor records the properties of its own items that can change after
  * they are added. A step reads the level it listens to and writes the level it produces, so
  * properties of the same name at different levels do not affect one another.
  */
 import { createPipeline } from '../index';
-import { getMutablePropertiesOfArrayItems } from '../pipeline';
+import { getMutablePropertiesOfArrayItems, type DescriptorNode } from '../pipeline';
 import { createTestPipeline } from './helpers';
 
-const tierOf = r => ((r.total ?? 0) > 50 ? 'hi' : 'lo');
+const tierOf = (r: { total: number | undefined }) => ((r.total ?? 0) > 50 ? 'hi' : 'lo');
 
-function scalarsAt(descriptor, path) {
+function scalarsAt(descriptor: DescriptorNode, path: string[]): string[] {
     let node = descriptor;
     for (const segment of path) {
-        node = node.arrays.find(a => a.name === segment).type;
+        const array = node.arrays.find(a => a.name === segment);
+        if (!array) {
+            throw new Error(`no array ${segment}`);
+        }
+        node = array.type;
     }
     return node.scalars.map(s => s.name);
 }
@@ -21,13 +24,13 @@ function scalarsAt(descriptor, path) {
 describe('mutable properties per level', () => {
     it('a sum over replaceToDelta outputs follows them', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
-            createPipeline()
+            createPipeline<{ effectiveClass: string; attendeeId: string; createdAt: string; eventId: string; amount: number }>()
                 .groupBy(['effectiveClass'], 'attendees')
                 .in('items').groupBy(['attendeeId'], 'attendees')
                 .replaceToDelta('attendees', 'items', ['createdAt', 'eventId'], ['amount'], ['deltaAmount'])
                 .in('attendees').sum('items', 'deltaAmount', 'net')
         );
-        const row = (id, createdAt, amount) => ({ effectiveClass: 'c', attendeeId: 'a', createdAt, eventId: id, amount });
+        const row = (id: string, createdAt: string, amount: number) => ({ effectiveClass: 'c', attendeeId: 'a', createdAt, eventId: id, amount });
         // The later event arrives first, so its delta changes when the earlier one arrives.
         pipeline.add('2', row('2', '2026-02', 50));
         pipeline.add('1', row('1', '2026-01', 30));
@@ -35,14 +38,14 @@ describe('mutable properties per level', () => {
     });
 
     it('a nested aggregate declares its output on the parent level', () => {
-        const descriptor = createPipeline()
+        const descriptor = createPipeline<{ item: string }>()
             .groupBy(['item'], 'groups')
             .count('items', 'lines')
             .getTypeDescriptor();
         expect(scalarsAt(descriptor, [])).toEqual(['lines']);
         expect(getMutablePropertiesOfArrayItems(descriptor, [])).toEqual(['lines']);
 
-        const nested = createPipeline()
+        const nested = createPipeline<{ tier: string; item: string }>()
             .groupBy(['tier'], 'tiers')
             .in('items').groupBy(['item'], 'groups')
             .in('groups').count('items', 'lines')
@@ -53,7 +56,7 @@ describe('mutable properties per level', () => {
     });
 
     it('groups have no mutable values, and items keep theirs', () => {
-        const descriptor = createPipeline()
+        const descriptor = createPipeline<{ item: string; v: number }>()
             .groupBy(['item'], 'groups')
             .sum('items', 'v', 'total')
             .defineProperty('tier', tierOf, ['total'])
@@ -65,7 +68,7 @@ describe('mutable properties per level', () => {
 
     it('a property of the same name at another level does not change a flattened value', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
-            createPipeline()
+            createPipeline<{ cat: string; item: string; v: number }>()
                 .groupBy(['cat', 'item'], 'groups')
                 .sum('items', 'v', 'total')
                 .defineProperty('tier', tierOf, ['total'])
@@ -84,7 +87,7 @@ describe('mutable properties per level', () => {
 
     it('a mutable property at one level does not make a same-named property mutable at another', () => {
         // `v` is mutable on the groups (a sum), not on the items. An item with no `v` still counts.
-        const descriptor = createPipeline()
+        const descriptor = createPipeline<{ item: string; n: number }>()
             .groupBy(['item'], 'groups')
             .sum('items', 'n', 'v')
             .getTypeDescriptor();
@@ -93,14 +96,14 @@ describe('mutable properties per level', () => {
     });
 
     it('grouping by an object puts it on the group, and a flattened item follows it', () => {
-        const make = () => createPipeline()
+        const make = () => createPipeline<{ cat: string; item: string; v: number }>()
             .groupBy(['cat', 'item'], 'groups')
             .pickByMax('items', 'v', 'latest')
             .groupBy(['cat', 'latest'], 'byLatest')
             .groupBy(['cat'], 'cats')
             .flatten('byLatest', 'groups', 'flat');
         const descriptor = make().getTypeDescriptor();
-        const byLatest = createPipeline()
+        const byLatest = createPipeline<{ cat: string; item: string; v: number }>()
             .groupBy(['cat', 'item'], 'groups')
             .pickByMax('items', 'v', 'latest')
             .groupBy(['cat', 'latest'], 'byLatest')

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipeline } from "../index";
 import { createTestPipeline } from "./helpers";
 
@@ -344,11 +343,11 @@ describe('pipeline groupBy nested', () => {
         expect(txState).toBeDefined();
         expect(txState?.byState).toHaveLength(2);
         
-        const dallas = txState?.byState.find((c: any) => c.city === 'Dallas');
+        const dallas = txState?.byState.find((c) => c.city === 'Dallas');
         expect(dallas).toBeDefined();
         expect(dallas?.byCity).toHaveLength(2);
         
-        const houston = txState?.byState.find((c: any) => c.city === 'Houston');
+        const houston = txState?.byState.find((c) => c.city === 'Houston');
         expect(houston).toBeDefined();
         expect(houston?.byCity).toHaveLength(1);
     });
@@ -379,11 +378,11 @@ describe('pipeline groupBy nested', () => {
         expect(a1?.level1).toHaveLength(2); // B1, B2
         
         // Navigate to A1 -> B1 -> level2
-        const a1b1 = a1?.level1.find((x: any) => x.b === 'B1');
+        const a1b1 = a1?.level1.find((x) => x.b === 'B1');
         expect(a1b1?.level2).toHaveLength(2); // C1, C2
         
         // Navigate to A1 -> B1 -> C1 -> level3
-        const a1b1c1 = a1b1?.level2.find((x: any) => x.c === 'C1');
+        const a1b1c1 = a1b1?.level2.find((x) => x.c === 'C1');
         expect(a1b1c1?.level3).toHaveLength(2); // D1, D2
     });
 
@@ -422,10 +421,10 @@ describe('pipeline groupBy nested', () => {
         const americas = output.find(r => r.region === 'Americas');
         expect(americas?.countries).toHaveLength(3); // USA, Canada, Mexico
         
-        const usa = americas?.countries.find((c: any) => c.country === 'USA');
+        const usa = americas?.countries.find((c) => c.country === 'USA');
         expect(usa?.cities).toHaveLength(2); // NYC, LA
         
-        const nyc = usa?.cities.find((city: any) => city.city === 'NYC');
+        const nyc = usa?.cities.find((city) => city.city === 'NYC');
         expect(nyc?.items).toHaveLength(2); // Store1, Store2
     });
 
@@ -552,11 +551,11 @@ describe('pipeline groupBy nested', () => {
         expect(hash1).toBeDefined();
         expect(hash1?.rounts).toHaveLength(2);
 
-        const hash1Round1 = hash1?.rounts.find((r: any) => r.round === 1);
+        const hash1Round1 = hash1?.rounts.find((r) => r.round === 1);
         expect(hash1Round1).toBeDefined();
         expect(hash1Round1?.items).toHaveLength(1);
 
-        const hash1Round2 = hash1?.rounts.find((r: any) => r.round === 2);
+        const hash1Round2 = hash1?.rounts.find((r) => r.round === 2);
         expect(hash1Round2).toBeDefined();
         expect(hash1Round2?.items).toHaveLength(1);
 
@@ -612,15 +611,15 @@ describe('pipeline groupBy nested', () => {
         const output = getOutput();
         expect(output.length).toBe(2);
 
-        const hash1 = output.find((u: any) => u.userHash === 'hash1');
+        const hash1 = output.find((u) => u.userHash === 'hash1');
         expect(hash1).toBeDefined();
         expect(hash1?.rounts).toHaveLength(2);
 
-        const hash1Round1 = hash1?.rounts.find((r: any) => r.round === '1');
+        const hash1Round1 = hash1?.rounts.find((r) => r.round === '1');
         expect(hash1Round1).toBeDefined();
         expect(hash1Round1?.items).toHaveLength(1);
 
-        const hash2 = output.find((u: any) => u.userHash === 'hash2');
+        const hash2 = output.find((u) => u.userHash === 'hash2');
         expect(hash2).toBeDefined();
         expect(hash2?.rounts).toHaveLength(1);
     });
@@ -633,10 +632,12 @@ describe('pipeline groupBy nested', () => {
         // }
         // This test verifies this pattern works correctly
         type CsvRow = Record<string, string>;
-        
+
+        // The app builds steps from paths it reads at run time, so it holds the builder untyped.
+        /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- an untyped caller, on purpose */
         const [pipeline, getOutput] = createTestPipeline(() => {
             // Simulate the desktop app's step building pattern
-            let builder: any = createPipeline<CsvRow>()
+            const builder: any = createPipeline<CsvRow>()
                 .groupBy(['userHash'], 'rounts');
             
             // Step 2: iterate through scopePath=['items']
@@ -654,7 +655,8 @@ describe('pipeline groupBy nested', () => {
 
         const output = getOutput() as any[];
         expect(output.length).toBe(2);
-        expect(output.find((u: any) => u.userHash === 'hash1')?.rounts).toHaveLength(2);
+        expect(output.find((u) => u.userHash === 'hash1')?.rounts).toHaveLength(2);
+        /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
     });
 
     it('should handle multiple items in same nested group (rapid sequential adds)', () => {
@@ -724,12 +726,12 @@ describe('pipeline groupBy nested', () => {
         const output = getOutput();
         expect(output.length).toBe(2);
 
-        const hash1 = output.find((u: any) => u.userHash === 'hash1');
+        const hash1 = output.find((u) => u.userHash === 'hash1');
         expect(hash1?.rounts).toHaveLength(2);
-        const hash1Round1 = hash1?.rounts.find((r: any) => r.round === '1');
+        const hash1Round1 = hash1?.rounts.find((r) => r.round === '1');
         expect(hash1Round1?.items).toHaveLength(2);  // row-0 and row-4
 
-        const hash2 = output.find((u: any) => u.userHash === 'hash2');
+        const hash2 = output.find((u) => u.userHash === 'hash2');
         expect(hash2?.rounts).toHaveLength(2);
     });
 });

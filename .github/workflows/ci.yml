@@ -21,4 +21,6 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      # tsd checks the published declarations, so it runs after the build.
+      - run: npm run test:types
       - run: npm run smoke:node-esm

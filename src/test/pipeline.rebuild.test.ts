@@ -1,4 +1,4 @@
-import { createPipeline, KeyedArray, toPipelinePlainOutput, Transform } from '../index';
+import { createPipeline, KeyedArray, toPipelinePlainOutput, Transform, type PipelineOutput } from '../index';
 
 function simulateState<T>(initialState: T): [() => T, (transform: Transform<T>) => void] {
     let state: T = initialState;
@@ -16,30 +16,30 @@ describe('pipeline rebuild from same builder', () => {
         const typeDescriptor = builder.getTypeDescriptor();
 
         // Build session 1 and add data
-        const [getState1, setState1] = simulateState<KeyedArray<any>>([]);
+        const [getState1, setState1] = simulateState<KeyedArray<PipelineOutput<typeof builder>>>([]);
         const session1 = builder.build(setState1);
         session1.add('item1', { category: 'A', value: 10 });
         session1.add('item2', { category: 'B', value: 20 });
         session1.flush();
 
-        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor) as any[];
+        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor);
         expect(output1).toHaveLength(2);
 
         // Dispose session 1
         session1.dispose();
 
         // When: build session 2 from the same builder and add rows with the same group keys
-        const [getState2, setState2] = simulateState<KeyedArray<any>>([]);
+        const [getState2, setState2] = simulateState<KeyedArray<PipelineOutput<typeof builder>>>([]);
         const session2 = builder.build(setState2);
         session2.add('item3', { category: 'A', value: 30 });
         session2.add('item4', { category: 'B', value: 40 });
         session2.flush();
 
         // Then: session 2 should produce output
-        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor) as any[];
+        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor);
         expect(output2).toHaveLength(2);
-        expect(output2.find((g: any) => g.category === 'A')?.items).toEqual([{ value: 30 }]);
-        expect(output2.find((g: any) => g.category === 'B')?.items).toEqual([{ value: 40 }]);
+        expect(output2.find((g) => g.category === 'A')?.items).toEqual([{ value: 30 }]);
+        expect(output2.find((g) => g.category === 'B')?.items).toEqual([{ value: 40 }]);
     });
 
     it('should produce output when second session adds rows with same group keys — groupBy + sum + dropProperty', () => {
@@ -51,31 +51,31 @@ describe('pipeline rebuild from same builder', () => {
         const typeDescriptor = builder.getTypeDescriptor();
 
         // Build session 1
-        const [getState1, setState1] = simulateState<KeyedArray<any>>([]);
+        const [getState1, setState1] = simulateState<KeyedArray<PipelineOutput<typeof builder>>>([]);
         const session1 = builder.build(setState1);
         session1.add('r1', { entityId: 'A', value: 100 });
         session1.add('r2', { entityId: 'B', value: 200 });
         session1.flush();
 
-        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor) as any[];
+        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor);
         expect(output1).toHaveLength(2);
-        expect(output1.find((g: any) => g.entityId === 'A')?.total).toBe(100);
+        expect(output1.find((g) => g.entityId === 'A')?.total).toBe(100);
 
         // Dispose session 1
         session1.dispose();
 
         // When: build session 2 with same group keys
-        const [getState2, setState2] = simulateState<KeyedArray<any>>([]);
+        const [getState2, setState2] = simulateState<KeyedArray<PipelineOutput<typeof builder>>>([]);
         const session2 = builder.build(setState2);
         session2.add('r1', { entityId: 'A', value: 300 });
         session2.add('r2', { entityId: 'B', value: 400 });
         session2.flush();
 
         // Then: session 2 should produce output with new values
-        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor) as any[];
+        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor);
         expect(output2).toHaveLength(2);
-        expect(output2.find((g: any) => g.entityId === 'A')?.total).toBe(300);
-        expect(output2.find((g: any) => g.entityId === 'B')?.total).toBe(400);
+        expect(output2.find((g) => g.entityId === 'A')?.total).toBe(300);
+        expect(output2.find((g) => g.entityId === 'B')?.total).toBe(400);
     });
 
     it('should not leak aggregate state from first build into second build', () => {
@@ -85,14 +85,14 @@ describe('pipeline rebuild from same builder', () => {
             .dropProperty('items');
         const typeDescriptor = builder.getTypeDescriptor();
 
-        const [getState1, setState1] = simulateState<KeyedArray<any>>([]);
+        const [getState1, setState1] = simulateState<KeyedArray<PipelineOutput<typeof builder>>>([]);
         const session1 = builder.build(setState1);
         session1.add('r1', { entityId: 'A', value: 100 });
         session1.add('r2', { entityId: 'A', value: 50 });
         session1.add('r3', { entityId: 'B', value: 75 });
         session1.flush();
 
-        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor) as any[];
+        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor);
         expect(output1).toEqual(
             expect.arrayContaining([
                 { entityId: 'A', total: 150 },
@@ -102,13 +102,13 @@ describe('pipeline rebuild from same builder', () => {
 
         session1.dispose();
 
-        const [getState2, setState2] = simulateState<KeyedArray<any>>([]);
+        const [getState2, setState2] = simulateState<KeyedArray<PipelineOutput<typeof builder>>>([]);
         const session2 = builder.build(setState2);
         session2.add('r4', { entityId: 'A', value: 7 });
         session2.add('r5', { entityId: 'B', value: 3 });
         session2.flush();
 
-        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor) as any[];
+        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor);
         expect(output2).toHaveLength(2);
         expect(output2).toEqual(
             expect.arrayContaining([
@@ -142,29 +142,29 @@ describe('pipeline rebuild from same builder', () => {
         const typeDescriptor = builder.getTypeDescriptor();
 
         // Build session 1 — populate enrichment source
-        const [getState1, setState1] = simulateState<KeyedArray<any>>([]);
+        const [getState1, setState1] = simulateState<KeyedArray<PipelineOutput<typeof builder>>>([]);
         const session1 = builder.build(setState1);
-        const source1 = (session1 as any).sources.classSource;
+        const source1 = session1.sources.classSource;
         source1.add('c-A', { entityId: 'A', flag: 1 });
         session1.add('r1', { id: 'r1', entityId: 'A', value: 100 });
         session1.add('r2', { id: 'r2', entityId: 'B', value: 200 });
         session1.flush();
 
-        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor) as any[];
+        const output1 = toPipelinePlainOutput(getState1(), typeDescriptor);
         expect(output1).toHaveLength(2);
 
         // Dispose session 1
         session1.dispose();
 
         // When: build session 2, enrichment source NOT populated
-        const [getState2, setState2] = simulateState<KeyedArray<any>>([]);
+        const [getState2, setState2] = simulateState<KeyedArray<PipelineOutput<typeof builder>>>([]);
         const session2 = builder.build(setState2);
         session2.add('r1', { id: 'r1', entityId: 'A', value: 300 });
         session2.add('r2', { id: 'r2', entityId: 'B', value: 400 });
         session2.flush();
 
         // Then: session 2 should produce output with whenMissing default
-        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor) as any[];
+        const output2 = toPipelinePlainOutput(getState2(), typeDescriptor);
         expect(output2).toHaveLength(2);
         expect(output2).toEqual(
             expect.arrayContaining([

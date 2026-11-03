@@ -100,6 +100,24 @@ export type ValidatePath<T, Path extends string[]> =
  * // Empty path - return the new type directly
  * TransformAtPath<Input, [], { completely: 'new' }> = { completely: 'new' }
  */
+/**
+ * Like {@link TransformAtPath}, but also renames the array at the end of the path. A nested
+ * `groupBy` names the group level: the array at its scope becomes an array of groups called
+ * `NewName`, as it does at the root.
+ */
+export type TransformAndRenameAtPath<T, Path extends string[], NewName extends string, NewItemType> =
+    Path extends [infer First extends string, ...infer Rest extends string[]]
+        ? First extends keyof T
+            ? T[First] extends KeyedArray<infer ItemType>
+                ? Rest extends []
+                    ? Omit<T, First> & { [K in NewName]: KeyedArray<NewItemType> }
+                    : Omit<T, First> & {
+                        [K in First]: KeyedArray<TransformAndRenameAtPath<ItemType, Extract<Rest, string[]>, NewName, NewItemType>>
+                      }
+                : never
+            : never
+        : NewItemType;
+
 export type TransformAtPath<T, Path extends string[], NewItemType> =
     Path extends [infer First extends string, ...infer Rest extends string[]]
         ? First extends keyof T

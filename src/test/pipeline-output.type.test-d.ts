@@ -51,8 +51,9 @@ import {
 
     expectType<string>({} as Row['state']);
     expectType<string>({} as Plain['state']);
-    type RowInner = Row['items'][number]['value'];
-    type PlainInner = Plain['items'][number];
+    // A nested groupBy names the group level, as at the root: `items` becomes `cities`.
+    type RowInner = Row['cities'][number]['value'];
+    type PlainInner = Plain['cities'][number];
     expectType<string>({} as RowInner['city']);
     expectType<string>({} as PlainInner['city']);
     expectType<KeyedArray<{ venue: string; capacity: number }>>({} as RowInner['items']);

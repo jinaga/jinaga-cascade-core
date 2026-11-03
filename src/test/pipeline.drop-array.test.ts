@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipeline } from '../index';
 import { createTestPipeline } from './helpers';
 
@@ -111,7 +110,7 @@ describe('pipeline dropProperty event suppression (for arrays)', () => {
         pipeline.add("item2", { category: 'A', value: 20 });
         
         // Verify items exist initially
-        let output = getOutput();
+        const output = getOutput();
         expect(output.length).toBe(1);
         expect(output[0].items).toBeDefined();
         expect(output[0].items.length).toBe(2);
@@ -147,7 +146,7 @@ describe('pipeline dropProperty event suppression (for arrays)', () => {
         pipeline1.add("item2", { category: 'A', value: 20 });
         
         // Verify items exist
-        let output1 = getOutput1();
+        const output1 = getOutput1();
         expect(output1.length).toBe(1);
         expect(output1[0].items.length).toBe(2);
         
@@ -368,13 +367,13 @@ describe('pipeline dropProperty integration (for arrays)', () => {
     });
 
     it('should work with dropProperty together', () => {
-        const [pipeline, getOutput] = createTestPipeline(() => {
-            const builder = createPipeline<{ category: string, value: number, extra: string }>()
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline<{ category: string, value: number, extra: string }>()
                 .groupBy(['category'], 'items')
-                .dropProperty('extra' as any);  // 'extra' is not a valid key at root after groupBy, but test verifies it's handled gracefully
-            // After dropProperty with 'as any', TypeScript loses type info, so we need to assert the builder
-            return (builder as any as { dropProperty: (name: 'items') => any }).dropProperty('items');
-        });
+                .dropProperty('items')
+                // @ts-expect-error After the groupBy, `extra` was on the items, not the root. An untyped caller can drop it here anyway; the step ignores it.
+                .dropProperty('extra')
+        );
 
         pipeline.add("item1", { category: 'A', value: 10, extra: 'x' });
         pipeline.add("item2", { category: 'B', value: 20, extra: 'y' });

@@ -14,7 +14,7 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        project: true,
+        project: ['./tsconfig.json', './tsconfig.test.json'],
         tsconfigRootDir: __dirname,
       },
     },
@@ -23,6 +23,14 @@ export default tseslint.config(
     },
     rules: {
       '@typescript-eslint/no-unused-vars': 'off',
+      // Tests type-check too. Loosen a type only to test what an untyped caller can do, and say why.
+      '@typescript-eslint/ban-ts-comment': ['error', {
+        'ts-nocheck': true,
+        'ts-ignore': true,
+        'ts-expect-error': 'allow-with-description',
+        minimumDescriptionLength: 10,
+      }],
+      '@typescript-eslint/no-explicit-any': 'error',
       'unused-imports/no-unused-imports': 'error',
       'unused-imports/no-unused-vars': [
         'error',
@@ -40,8 +48,6 @@ export default tseslint.config(
       'dist/**',
       'node_modules/**',
       'scripts/**/*.mjs',
-      'src/test/helpers.ts',
-      '**/*.test.ts',
       '**/*.test-d.ts',
       'eslint.config.mjs',
       'jest.config.cjs',

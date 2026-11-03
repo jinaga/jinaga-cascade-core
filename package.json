@@ -22,7 +22,7 @@
     "build": "tsc",
     "smoke:node-esm": "node scripts/smoke-node-esm.mjs",
     "watch": "tsc --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "jest",
