@@ -1,4 +1,6 @@
 import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import { getMutablePropertiesOfArrayItems } from '../pipeline.js';
+import { appendAggregateAt } from '../util/descriptor-transform.js';
 
 /**
  * Operator called when an item is added to the aggregated array.
@@ -33,31 +35,6 @@ interface CommutativeAggregateConfig<TItem, TAggregate> {
     
     /** Operator called when an item is removed */
     subtract: SubtractOperator<TItem, TAggregate>;
-}
-
-function transformCommutativeAggregateDescriptor(
-    inputDescriptor: TypeDescriptor,
-    propertyName: string
-): TypeDescriptor {
-    const outputScalar = {
-        name: propertyName,
-        type: 'number' as const
-    };
-    const scalars = inputDescriptor.scalars.some(s => s.name === propertyName)
-        ? inputDescriptor.scalars
-        : [...inputDescriptor.scalars, outputScalar];
-    const mutableProperties = inputDescriptor.mutableProperties;
-    if (!mutableProperties.includes(propertyName)) {
-        return {
-            ...inputDescriptor,
-            scalars,
-            mutableProperties: [...mutableProperties, propertyName]
-        };
-    }
-    return {
-        ...inputDescriptor,
-        scalars
-    };
 }
 
 /**
@@ -113,8 +90,8 @@ export class CommutativeAggregateStep<
             this.handleItemPlaced(itemKey, newParentKey);
         });
 
-        // Mutable properties are recorded at the root of the descriptor.
-        if (propertyToAggregate && (inputDescriptor?.mutableProperties ?? []).includes(propertyToAggregate)) {
+        // Each level records the mutable properties of its own items.
+        if (propertyToAggregate && inputDescriptor && getMutablePropertiesOfArrayItems(inputDescriptor, segmentPath).includes(propertyToAggregate)) {
             this.isPropertyMutable = true;
             this.input.onModified(this.segmentPath, propertyToAggregate, (itemKey, _oldValue, newValue) => {
                 this.handleItemPropertyChanged(itemKey, propertyToAggregate, newValue);
@@ -236,7 +213,7 @@ export class CommutativeAggregateBuilder<TItem extends ImmutableProps, TAggregat
     }
 
     getTypeDescriptor(): TypeDescriptor {
-        return transformCommutativeAggregateDescriptor(this.upstream.getTypeDescriptor(), this.propertyName);
+        return appendAggregateAt(this.upstream.getTypeDescriptor(), this.segmentPath, this.propertyName);
     }
 
     buildGraph(ctx: BuildContext): BuiltStepGraph {

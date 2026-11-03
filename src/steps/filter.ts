@@ -10,8 +10,8 @@ import type {
     StepBuilder,
     TypeDescriptor
 } from '../pipeline.js';
-import { collectAllMutableProperties, getPathSegmentsFromDescriptor } from '../pipeline.js';
-import { pathStartsWith } from '../util/path.js';
+import { getMutablePropertiesOfArrayItems, getPathSegmentsFromDescriptor } from '../pipeline.js';
+import { pathsMatch, pathStartsWith } from '../util/path.js';
 
 interface NodeRecord {
     parentKey: string | undefined;
@@ -60,8 +60,6 @@ export class FilterStep<T> implements Step {
     ) {
         this.levels = getPathSegmentsFromDescriptor(inputDescriptor)
             .filter(path => pathStartsWith(path, this.scopeSegments));
-        const mutableProperties = collectAllMutableProperties(inputDescriptor);
-
         for (const level of this.levels) {
             this.nodes.set(levelId(level), new Map());
             this.children.set(levelId(level), new Map());
@@ -69,7 +67,9 @@ export class FilterStep<T> implements Step {
             this.input.onAdded(level, (parentKey, key, props) => this.handleAdded(level, parentKey, key, props));
             this.input.onRemoved(level, key => this.handleRemoved(level, key));
             this.input.onPlaced(level, (key, _oldParentKey, newParentKey) => this.handlePlaced(level, key, newParentKey));
-            for (const propertyName of new Set([...mutableProperties, ...this.predicateProperties])) {
+            // The predicate reads the scope's items; every level keeps its items' values current.
+            const predicateProperties = pathsMatch(level, this.scopeSegments) ? this.predicateProperties : [];
+            for (const propertyName of new Set([...getMutablePropertiesOfArrayItems(inputDescriptor, level), ...predicateProperties])) {
                 this.listen(level, propertyName);
             }
         }

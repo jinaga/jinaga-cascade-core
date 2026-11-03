@@ -13,7 +13,8 @@ import type {
     TypeDescriptor
 } from '../pipeline.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
-import { appendMutableIfMissing, appendObjectIfMissing, emptyDescriptorNode } from '../util/descriptor-transform.js';
+import { getMutablePropertiesOfArrayItems } from '../pipeline.js';
+import { appendMutableIfMissing, appendObjectIfMissing, emptyDescriptorNode, updateNodeAt } from '../util/descriptor-transform.js';
 
 /**
  * Determines if a value is numeric.
@@ -52,31 +53,6 @@ function comparisonValuesEqual(
     return left === right;
 }
 
-function addObjectAtPath(
-    descriptor: DescriptorNode,
-    path: string[],
-    objectDesc: ObjectDescriptor
-): DescriptorNode {
-    if (path.length === 0) {
-        return appendObjectIfMissing(descriptor, objectDesc);
-    }
-
-    const [first, ...rest] = path;
-    return {
-        ...descriptor,
-        arrays: descriptor.arrays.map(arr => {
-            if (arr.name === first) {
-                return {
-                    ...arr,
-                    type: addObjectAtPath(arr.type, rest, objectDesc)
-                };
-            }
-            return arr;
-        }),
-        objects: descriptor.objects
-    };
-}
-
 function transformPickByMinMaxDescriptor(
     inputDescriptor: TypeDescriptor,
     segmentPath: string[],
@@ -99,16 +75,9 @@ function transformPickByMinMaxDescriptor(
         type: sourceArray?.type ?? emptyDescriptorNode()
     };
 
-    if (segmentPath.length === 1) {
-        const withObject = appendObjectIfMissing(inputDescriptor, objectDesc);
-        return appendMutableIfMissing(withObject, propertyName) as TypeDescriptor;
-    }
-
-    const result = addObjectAtPath(inputDescriptor, segmentPath.slice(0, -1), objectDesc);
-    return {
-        ...appendMutableIfMissing(result, propertyName),
-        rootCollectionName: inputDescriptor.rootCollectionName
-    };
+    return updateNodeAt(inputDescriptor, segmentPath.slice(0, -1), node =>
+        appendMutableIfMissing(appendObjectIfMissing(node, objectDesc), propertyName)
+    );
 }
 
 interface ItemRecord {
@@ -182,7 +151,7 @@ export class PickByMinMaxStep<
         });
 
         // The picked object is the whole item, so every mutable property is tracked.
-        for (const mutableProp of inputDescriptor.mutableProperties) {
+        for (const mutableProp of getMutablePropertiesOfArrayItems(inputDescriptor, this.segmentPath)) {
             this.input.onModified(this.segmentPath, mutableProp, (itemKey, _oldValue, newValue) => {
                 this.handleMutablePropertyChanged(itemKey, mutableProp, newValue);
             });

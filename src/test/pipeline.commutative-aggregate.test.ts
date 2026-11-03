@@ -1305,15 +1305,25 @@ describe('CommutativeAggregateStep', () => {
                 },
                 'quantity',
                 {
-                    rootCollectionName: 'items',
-                    arrays: [],
+                    rootCollectionName: 'parents',
+                    arrays: [{
+                        name: 'items',
+                        type: {
+                            arrays: [],
+                            collectionKey: [],
+                            scalars: [
+                                { name: 'quantity', type: 'number' },
+                                { name: 'unitPrice', type: 'number' }
+                            ],
+                            objects: [],
+                            mutableProperties: ['quantity']
+                        },
+                        mutablePlacement: false
+                    }],
                     collectionKey: [],
-                    scalars: [
-                        { name: 'quantity', type: 'number' },
-                        { name: 'unitPrice', type: 'number' }
-                    ],
+                    scalars: [],
                     objects: [],
-                    mutableProperties: ['quantity']
+                    mutableProperties: []
                 }
             );
 

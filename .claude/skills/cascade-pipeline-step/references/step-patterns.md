@@ -152,7 +152,7 @@ Every step must return a `TypeDescriptor` describing the shape of data it produc
 - Discover which properties are mutable (via `mutableProperties`)
 - Wire up the correct `onAdded`/`onRemoved`/`onModified` registrations
 
-**Key rule:** If a step produces a computed/aggregate property that can change after the initial `onAdded`, it must appear in `mutableProperties`. Otherwise downstream steps won't register `onModified` handlers for it.
+**Key rule:** If a step produces a computed/aggregate property that can change after the initial `onAdded`, it must appear in the `mutableProperties` of the level it belongs to. Otherwise downstream steps won't register `onModified` handlers for it.
 
 **Placement rule:** A step that emits `onPlaced` at a level must set `mutablePlacement: true` on that level's `ArrayDescriptor`. A step that only forwards moves must keep the flag: rebuild an array with `{ ...arrayDesc, type }`, never `{ name, type }`. A value that depends on a node's parent (as `flatten`'s inherited values do) is mutable when that node's array has `mutablePlacement`. See `docs/architecture/placement.md`.
 
@@ -181,16 +181,17 @@ constructor(private input: Step, private segmentPath: string[], ...) {
 ### Pattern: Auto-detect mutable properties and register for changes
 
 ```typescript
-const rootMutableProperties = inputDescriptor.mutableProperties;
+// The mutable properties of the items this step listens to, at their own level.
+const itemMutableProperties = getMutablePropertiesOfArrayItems(inputDescriptor, this.segmentPath);
 
-if (rootMutableProperties.includes(propertyToWatch)) {
+if (itemMutableProperties.includes(propertyToWatch)) {
     this.input.onModified(this.segmentPath, propertyToWatch, (itemKey, oldValue, newValue) => {
         this.handleItemPropertyChanged(itemKey, oldValue, newValue);
     });
 }
 ```
 
-Check upstream `mutableProperties` at the root level. Builders pass descriptor metadata into Step constructors (for example as an `inputDescriptor` constructor argument), and steps use that metadata for registration decisions.
+Read upstream `mutableProperties` at the level the step listens to (`getMutablePropertiesOfArrayItems`). Each level records only its own items' properties, so a same-named property at another level says nothing about this one. Builders pass descriptor metadata into Step constructors (for example as an `inputDescriptor` constructor argument), and steps use that metadata for registration decisions.
 
 ---
 
@@ -318,15 +319,15 @@ Each Builder transforms the upstream descriptor to reflect the shape change it a
 
 ### Adding a mutable scalar property
 
+Write the property to the level it belongs to. An aggregate over the items at `segmentPath` belongs to their parent:
+
 ```typescript
 getTypeDescriptor(): TypeDescriptor {
-    const inputDescriptor = this.upstream.getTypeDescriptor();
-    const mutableProperties = inputDescriptor.mutableProperties.includes(this.propertyName)
-        ? inputDescriptor.mutableProperties
-        : [...inputDescriptor.mutableProperties, this.propertyName];
-    return { ...inputDescriptor, mutableProperties };
+    return appendAggregateAt(this.upstream.getTypeDescriptor(), this.segmentPath, this.propertyName);
 }
 ```
+
+For any other level, use `updateNodeAt(descriptor, path, node => ...)` with `appendScalarIfMissing` and `appendMutableIfMissing`.
 
 ### Adding an object property (enrich, pickByMinMax)
 
@@ -335,25 +336,28 @@ Use helper `appendObjectIfMissing` and `appendMutableIfMissing` from `src/util/d
 ```typescript
 import { appendObjectIfMissing, appendMutableIfMissing } from '../util/descriptor-transform.js';
 
-function transformDescriptor(inputDescriptor: TypeDescriptor): TypeDescriptor {
+function transformDescriptor(inputDescriptor: TypeDescriptor, scopeSegments: string[]): TypeDescriptor {
     const objectDesc = { name: propertyName, type: sourceDescriptorNode };
-    const withObject = appendObjectIfMissing(inputDescriptor, objectDesc);
-    return appendMutableIfMissing(withObject, propertyName) as TypeDescriptor;
+    return updateNodeAt(inputDescriptor, scopeSegments, node =>
+        appendMutableIfMissing(appendObjectIfMissing(node, objectDesc), propertyName)
+    );
 }
 ```
 
 ### Restructuring arrays (groupBy)
 
-GroupBy splits scalars into parent-level (key properties) and child-level (non-key), creating a new nested array:
+GroupBy splits a level's items into groups. The group level holds only the grouping values, which never change, so it has no mutable properties and no objects. The items keep their other scalars, arrays, objects and mutable properties (less the grouping keys), and their array records whether they can move:
 
 ```typescript
 return {
-    rootCollectionName: this.parentArrayName,
-    collectionKey: groupingKey,
-    scalars: parentScalars,
-    arrays: [{ name: this.childArrayName, type: { ...childDescriptor } }],
-    mutableProperties: [...inputDescriptor.mutableProperties],
-    objects: [...inputDescriptor.objects]
+    ...emptyDescriptorNode(),
+    collectionKey: groupingProperties,
+    scalars: groupingScalars,
+    arrays: [{
+        name: childArrayName,
+        type: { ...items, scalars: otherScalars, mutableProperties: otherMutableProperties },
+        mutablePlacement: groupingValueMutable || itemsMove
+    }]
 };
 ```
 

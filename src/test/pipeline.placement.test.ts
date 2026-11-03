@@ -306,7 +306,7 @@ describe('source-level child keys', () => {
     it('children with the same key under different parents are distinct', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline('folders', [{ name: 'name', type: 'string' }], [
-                { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }
+                { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }
             ]).sum('files', 'size', 'total')
         );
         pipeline.add('F1', { name: 'one' });
@@ -328,7 +328,7 @@ describe('source-level child keys', () => {
 describe('review regressions', () => {
     const filesPipeline = () =>
         createPipeline('folders', [{ name: 'name', type: 'string' }], [
-            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }
         ]);
 
     it('filter forgets the subtree of a removed item', () => {
@@ -387,7 +387,7 @@ describe('review regressions', () => {
 describe('removing a parent before its children', () => {
     const filesPipeline = () =>
         createPipeline('folders', [{ name: 'name', type: 'string' }], [
-            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }
         ]);
 
     it('filter removes the admitted subtree of a removed item', () => {
@@ -411,11 +411,10 @@ describe('removing a parent before its children', () => {
                 {
                     name: 'folders',
                     type: {
-                        arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }],
+                        arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }],
                         collectionKey: [],
                         scalars: [{ name: 'name', type: 'string' }],
-                        objects: [],
-                        mutableProperties: []
+                        objects: []
                     }
                 }
             ]).flatten('folders', 'files', 'allFiles')
@@ -435,11 +434,10 @@ describe('second review regressions', () => {
             {
                 name: 'folders',
                 type: {
-                    arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }],
+                    arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }],
                     collectionKey: [],
                     scalars: [{ name: 'name', type: 'string' }],
-                    objects: [],
-                    mutableProperties: []
+                    objects: []
                 }
             }
         ]);
@@ -481,7 +479,7 @@ describe('second review regressions', () => {
         };
         const descriptor = {
             rootCollectionName: 'items', collectionKey: [], scalars: [], objects: [], mutableProperties: [],
-            arrays: [{ name: 'children', type: { arrays: [], collectionKey: [], scalars: [], objects: [], mutableProperties: [] } }]
+            arrays: [{ name: 'children', type: { arrays: [], collectionKey: [], scalars: [], objects: [], mutableProperties: [] }, mutablePlacement: false }]
         };
         const { FilterStep } = require('../steps/filter');
         const step = new FilterStep(fakeInput, () => true, [], [], descriptor);
@@ -497,7 +495,7 @@ describe('second review regressions', () => {
     it('a subscriber that reacts to a synchronous flush can add a child of the row it just saw', () => {
         const diagnostics: string[] = [];
         const builder = createPipeline('folders', [{ name: 'name', type: 'string' }], [
-            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }
         ]);
         let state = [];
         let pipeline;
@@ -519,7 +517,7 @@ describe('second review regressions', () => {
 describe('aggregates match the proven model', () => {
     const files = () =>
         createPipeline('folders', [{ name: 'name', type: 'string' }], [
-            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }
         ]);
 
     it('a parent that lost its last child has no aggregate, like one that never had any', () => {
@@ -599,11 +597,10 @@ describe('orphan children', () => {
             {
                 name: 'folders',
                 type: {
-                    arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }],
+                    arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [] } }],
                     collectionKey: [],
                     scalars: [{ name: 'name', type: 'string' }],
-                    objects: [],
-                    mutableProperties: []
+                    objects: []
                 }
             }
         ]).in('folders').count('files', 'n');
@@ -700,7 +697,7 @@ describe('mutable placement (#30)', () => {
 
     it('a child object of the same name does not shadow an inherited value', () => {
         // groupBy copies the source object's descriptor to the group level, which has no value for it.
-        const emptyNode = { arrays: [], collectionKey: [], scalars: [], objects: [], mutableProperties: [] };
+        const emptyNode = { arrays: [], collectionKey: [], scalars: [], objects: [] };
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline('rows', [], [], [{ name: 'label', type: emptyNode }])
                 .groupBy(['cat', 'item'], 'groups')
@@ -742,7 +739,7 @@ describe('mutable placement (#30)', () => {
 
         const flattened = tiersByCategory().flatten('tiers', 'groups', 'flat').getTypeDescriptor();
         expect(arrayAt(flattened, ['flat']).mutablePlacement).toBe(true);
-        expect(flattened.mutableProperties).toEqual(expect.arrayContaining(['tier', 'label']));
+        expect(arrayAt(flattened, ['flat']).type.mutableProperties).toEqual(expect.arrayContaining(['tier', 'label']));
     });
 
     it('inherited values are not mutable when the child cannot move', () => {
@@ -752,12 +749,12 @@ describe('mutable placement (#30)', () => {
             .flatten('subs', 'items', 'flat')
             .getTypeDescriptor();
         expect(arrayAt(descriptor, ['flat']).mutablePlacement).toBe(false);
-        expect(descriptor.mutableProperties).toEqual([]);
+        expect(arrayAt(descriptor, ['flat']).type.mutableProperties).toEqual([]);
     });
 
     it('source arrays never move', () => {
         const descriptor = createPipeline('roots', [], [
-            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [], objects: [], mutableProperties: [] } }
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [], objects: [] } }
         ]).getTypeDescriptor();
         expect(arrayAt(descriptor, ['files']).mutablePlacement).toBe(false);
     });

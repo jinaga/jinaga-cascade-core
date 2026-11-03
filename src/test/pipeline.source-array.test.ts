@@ -11,8 +11,7 @@ const scalarNode = (scalars: SourceNode['scalars'], arrays: SourceArrayDescripto
     arrays,
     collectionKey: [],
     scalars,
-    objects: [],
-    mutableProperties: []
+    objects: []
 });
 
 const bookmarksArray = (extraScalars: SourceNode['scalars'] = []): SourceArrayDescriptor => ({

@@ -1,5 +1,5 @@
 import {
-    collectAllMutableProperties,
+    getMutablePropertiesOfArrayItems,
     getPathSegmentsFromDescriptor,
     type CollectionInput,
     type DescriptorNode,
@@ -135,7 +135,7 @@ function assertCumulativeSumConfiguration(
         }
     });
 
-    const mutableProperties = new Set(descriptor.mutableProperties);
+    const mutableProperties = new Set(itemDescriptor.mutableProperties);
     properties.forEach(propertyName => {
         if (!scalarNames.has(propertyName)) {
             throw new Error(`cumulativeSum validation error: property "${propertyName}" is not a scalar on the target array item type`);
@@ -1437,10 +1437,8 @@ export class PipelineBuilder<
             runtimeOptions
         );
 
-        // Register handlers for each path the step will emit. Mutable properties are recorded
-        // at the root of the descriptor even when they belong to nested levels, so every level
-        // listens for all of them.
-        const mutableProperties = collectAllMutableProperties(runtimeDescriptor);
+        // Register handlers for each path the step will emit, and for the mutable properties
+        // of that path's items.
         pathSegments.forEach(segmentPath => {
             builtGraph.lastStep.onAdded(segmentPath, (parentKey, key, immutableProps) => {
                 session.enqueueAdd(segmentPath, parentKey, key, immutableProps);
@@ -1451,7 +1449,7 @@ export class PipelineBuilder<
             builtGraph.lastStep.onPlaced(segmentPath, (key, _oldParentKey, newParentKey) => {
                 session.enqueueMove(segmentPath, key, newParentKey);
             });
-            mutableProperties.forEach(propertyName => {
+            getMutablePropertiesOfArrayItems(runtimeDescriptor, segmentPath).forEach(propertyName => {
                 builtGraph.lastStep.onModified(segmentPath, propertyName, (key, _oldValue, newValue) => {
                     session.enqueueModify(segmentPath, key, propertyName, newValue);
                 });
