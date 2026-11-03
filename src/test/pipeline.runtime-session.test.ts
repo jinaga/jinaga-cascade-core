@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipeline, type KeyedArray, type Transform } from '../index';
 
 describe('pipeline runtime sessions', () => {
