@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipeline } from '../index';
 import type { AddedHandler, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, StepBuilder } from '../pipeline';
 import { AddOperator, CommutativeAggregateStep, SubtractOperator } from '../steps/commutative-aggregate';
@@ -62,8 +61,10 @@ class FakeInputStep implements Step {
     }
 }
 
-function graphFromPipelineBuilder(builder: PipelineBuilder) {
-    return buildStepGraph((builder as { lastBuilder: StepBuilder }).lastBuilder);
+/** Builds a pipeline's step graph directly, to drive its steps without a runtime session. */
+function graphFromPipelineBuilder<T extends object, TStart>(builder: PipelineBuilder<T, TStart>) {
+    // `lastBuilder` is private; these tests reach past the session on purpose.
+    return buildStepGraph((builder as unknown as { lastBuilder: StepBuilder }).lastBuilder);
 }
 
 describe('CommutativeAggregateStep', () => {
@@ -82,7 +83,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'totalPrice',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
@@ -91,7 +93,7 @@ describe('CommutativeAggregateStep', () => {
             });
             
             // Trigger add via the input pipeline
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             inputPipeline.add('item1', { category: 'Electronics', itemName: 'Phone', price: 500 });
             
             // Verify aggregate was emitted via onModified
@@ -112,7 +114,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'totalPrice',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const addedEvents: Array<{ key: string; props: ImmutableProps }> = [];
@@ -120,7 +123,7 @@ describe('CommutativeAggregateStep', () => {
                 addedEvents.push({ key, props: { ...props } });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             inputPipeline.add('item1', { category: 'Electronics', itemName: 'Phone', price: 500 });
             
             // Verify immutable props are passed through onAdded
@@ -144,7 +147,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'totalPrice',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -152,7 +156,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             inputPipeline.add('item1', { category: 'Electronics', itemName: 'Phone', price: 500 });
             inputPipeline.add('item2', { category: 'Electronics', itemName: 'Laptop', price: 1200 });
             inputPipeline.add('item3', { category: 'Electronics', itemName: 'Tablet', price: 300 });
@@ -179,7 +183,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'totalPrice',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -187,10 +192,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as {
-                add: (key: string, props: any) => void;
-                remove: (key: string, props: any) => void;
-            };
+            const inputPipeline = rootInput;
             
             const item1 = { category: 'Electronics', itemName: 'Phone', price: 500 };
             const item2 = { category: 'Electronics', itemName: 'Laptop', price: 1200 };
@@ -221,7 +223,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'total',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -229,10 +232,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as {
-                add: (key: string, props: any) => void;
-                remove: (key: string, props: any) => void;
-            };
+            const inputPipeline = rootInput;
             
             const item1 = { category: 'A', price: 100 };
             const item2 = { category: 'A', price: 200 };
@@ -260,7 +260,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'total',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -268,10 +269,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as {
-                add: (key: string, props: any) => void;
-                remove: (key: string, props: any) => void;
-            };
+            const inputPipeline = rootInput;
             
             const item1 = { category: 'A', price: 100 };
             const item2 = { category: 'A', price: 200 };
@@ -301,7 +299,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'totalPrice',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
@@ -309,7 +308,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             
             // Add items to different categories
             inputPipeline.add('item1', { category: 'Electronics', itemName: 'Phone', price: 500 });
@@ -339,7 +338,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'totalSalary',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
@@ -347,10 +347,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as {
-                add: (key: string, props: any) => void;
-                remove: (key: string, props: any) => void;
-            };
+            const inputPipeline = rootInput;
             
             // Add employees to two departments
             const emp1 = { department: 'Engineering', employee: 'Alice', salary: 100000 };
@@ -391,7 +388,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['cities', 'items'],
                 'totalCapacity',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
@@ -399,7 +397,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             
             inputPipeline.add('v1', { state: 'TX', city: 'Dallas', venue: 'Stadium', capacity: 50000 });
             inputPipeline.add('v2', { state: 'TX', city: 'Dallas', venue: 'Arena', capacity: 20000 });
@@ -423,7 +421,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['cities', 'items'],
                 'venueCount',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
@@ -431,7 +430,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             
             // Add venues to Dallas
             inputPipeline.add('v1', { state: 'TX', city: 'Dallas', venue: 'Stadium', capacity: 50000 });
@@ -468,7 +467,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'sum',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -476,7 +476,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             inputPipeline.add('item1', { category: 'A', value: 10 });
             
             // Verify that the add function received undefined for first item
@@ -505,12 +505,13 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'sum',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             aggregateStep.onModified([], 'totalPrice', () => {});
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             
             // First item of category A
             inputPipeline.add('item1', { category: 'A', value: 10 });
@@ -560,7 +561,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'stats',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: Stats | undefined; newValue: Stats }> = [];
@@ -568,7 +570,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as Stats | undefined, newValue: newValue as Stats });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             inputPipeline.add('item1', { category: 'A', value: 10 });
             inputPipeline.add('item2', { category: 'A', value: 30 });
             inputPipeline.add('item3', { category: 'A', value: 20 });
@@ -594,7 +596,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'total',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -602,10 +605,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as {
-                add: (key: string, props: any) => void;
-                remove: (key: string, props: any) => void;
-            };
+            const inputPipeline = rootInput;
             
             const item1 = { category: 'A', value: 42 };
             inputPipeline.add('item1', item1);
@@ -632,7 +632,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'total',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -640,7 +641,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             
             inputPipeline.add('item1', { category: 'A', value: 0 });
             inputPipeline.add('item2', { category: 'A', value: 100 });
@@ -663,7 +664,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'total',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -671,10 +673,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as {
-                add: (key: string, props: any) => void;
-                remove: (key: string, props: any) => void;
-            };
+            const inputPipeline = rootInput;
             
             const item1 = { category: 'A', value: 100 };
             const item2 = { category: 'A', value: -30 };
@@ -705,7 +704,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'totalPrice',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const addedProps: ImmutableProps[] = [];
@@ -713,7 +713,7 @@ describe('CommutativeAggregateStep', () => {
                 addedProps.push({ ...props });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             inputPipeline.add('item1', { category: 'Electronics', price: 500 });
             inputPipeline.add('item2', { category: 'Electronics', price: 300 });
             
@@ -736,7 +736,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'myCustomAggregate',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedNames: string[] = [];
@@ -744,7 +745,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedNames.push('myCustomAggregate'); // Property name is known at registration time
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             inputPipeline.add('item1', { category: 'A', value: 10 });
             
             expect(modifiedNames.length).toBeGreaterThan(0);
@@ -765,7 +766,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'totalPrice',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const addedEvents: Array<{ props: ImmutableProps }> = [];
@@ -779,7 +781,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as { add: (key: string, props: any) => void };
+            const inputPipeline = rootInput;
             
             // Add 5 items
             for (let i = 0; i < 5; i++) {
@@ -884,7 +886,8 @@ describe('CommutativeAggregateStep', () => {
                 step,
                 ['items'],
                 'count',
-                { add: addOp, subtract: subtractOp }
+                { add: addOp, subtract: subtractOp },
+                undefined
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
@@ -892,10 +895,7 @@ describe('CommutativeAggregateStep', () => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
-            const inputPipeline = rootInput as {
-                add: (key: string, props: any) => void;
-                remove: (key: string, props: any) => void;
-            };
+            const inputPipeline = rootInput;
             
             const item1 = { category: 'A', name: 'First' };
             const item2 = { category: 'A', name: 'Second' };
