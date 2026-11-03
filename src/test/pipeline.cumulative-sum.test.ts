@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipeline } from '../index';
 import type { AddedHandler, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline';
 import { CumulativeSumStep } from '../steps/cumulative-sum';
@@ -202,7 +201,8 @@ describe('cumulativeSum (builder)', () => {
         ])
             .groupBy(['series'], 'seriesGroups')
             .in('items').defineProperty('change', point => point.change, ['change'])
-            .cumulativeSum('items', ['missing'] as string[], ['change'])
+            // @ts-expect-error An untyped caller can name a missing property; the runtime check rejects it.
+            .cumulativeSum('items', ['missing'], ['change'])
         ).toThrow('orderBy');
     });
 
@@ -214,7 +214,8 @@ describe('cumulativeSum (builder)', () => {
         ])
             .groupBy(['series'], 'seriesGroups')
             .in('items').defineProperty('change', point => point.change, ['change'])
-            .cumulativeSum('missing' as string, ['time'], ['change'])
+            // @ts-expect-error An untyped caller can name a missing array; the runtime check rejects it.
+            .cumulativeSum('missing', ['time'], ['change'])
         ).toThrow('array');
     });
 
@@ -252,7 +253,8 @@ describe('CumulativeSumStep (incremental behavior)', () => {
                         ],
                         objects: [],
                         mutableProperties: ['order', 'value', 'label']
-                    }
+                    },
+                    mutablePlacement: false
                 }
             ],
             collectionKey: [],

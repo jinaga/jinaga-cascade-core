@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipeline, type DescriptorNode, type TypeDescriptor } from '../index';
 import { createTestPipeline } from './helpers';
 import { ReplaceToDeltaStep } from '../steps/replace-to-delta';
@@ -180,14 +179,16 @@ function fakeDescriptorForReplaceToDelta(eventCollectionKey: string[]): TypeDesc
                     arrays: [
                         {
                             name: 'events',
-                            type: eventNode
+                            type: eventNode,
+                            mutablePlacement: false
                         }
                     ],
                     collectionKey: ['entityId'],
                     scalars: [{ name: 'entityId', type: 'string' }],
                     objects: [],
                     mutableProperties: []
-                }
+                },
+                mutablePlacement: false
             }
         ]
     };

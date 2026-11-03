@@ -1128,7 +1128,7 @@ export class PipelineBuilder<
         EntityArrayName extends ArrayPropertyNameAtCurrentPath<T, Path>,
         EventArrayName extends ArrayPropertyNameOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>>,
         EventItem extends ArrayItemAtPropertyOn<ArrayItemAtCurrentPath<T, Path, EntityArrayName>, EventArrayName>,
-        OutputProps extends readonly string[]
+        const OutputProps extends readonly string[]
     >(
         entityArrayName: EntityArrayName,
         eventArrayName: EventArrayName,

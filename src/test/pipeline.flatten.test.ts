@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipeline } from '../index';
 import { createTestPipeline } from './helpers';
 
@@ -213,20 +212,26 @@ describe('pipeline flatten', () => {
     });
 
     it('should reject invalid flatten configuration when referenced arrays do not exist', () => {
-        expect(() => (createPipeline<{ state: string }>() as any)
+        // The types reject these; an untyped caller reaches the runtime checks.
+        expect(() => createPipeline<{ state: string }>()
+            // @ts-expect-error There is no `cities` array.
             .flatten('cities', 'items', 'flatVenues'))
             .toThrow();
 
         expect(() => createPipeline<VenueRow>()
             .groupBy(['state'], 'states')
-            .flatten('states', 'missing', 'flatVenues'))
+            .in('items').groupBy(['city'], 'cities')
+            // @ts-expect-error A city has no `missing` array.
+            .flatten('cities', 'missing', 'flatVenues'))
             .toThrow();
     });
 
     it('should reject flatten configuration when output array collides at current scope', () => {
         expect(() => createPipeline<VenueRow>()
             .groupBy(['state'], 'states')
-            .flatten('states', 'items', 'states'))
+            .in('items').groupBy(['city'], 'cities')
+            // @ts-expect-error The output name is an array that already exists at this scope.
+            .flatten('cities', 'items', 'cities'))
             .toThrow();
     });
 
