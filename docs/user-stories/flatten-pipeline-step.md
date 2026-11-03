@@ -12,7 +12,7 @@ Several pipeline patterns produce a two-level structure — for example, entitie
 
 The step consumes a parent array and its child sub-array and produces a single output array at the same scope level. Each output item carries scalars from both its parent and its child, so entity-identifying properties remain available for downstream disambiguation or grouping. The output array replaces the parent array; scope-level properties above the parent array are preserved.
 
-When parent and child scalars share a name, the child's value takes precedence — the child is the more specific level, analogous to SQL column resolution in a join.
+A parent and child that share a property name cannot be flattened: the flattened item could show only one of the two values, so a name would mean the parent's on some rows and the child's on others. The author renames one of them first.
 
 ### Out of scope
 
@@ -45,11 +45,11 @@ When parent and child scalars share a name, the child's value takes precedence �
 **Then** those scope-level scalars shall be preserved unchanged in the output  
 **And** only the parent array shall be replaced by the output array.
 
-#### AC4: Child scalar takes precedence on name collision
+#### AC4: A name collision is rejected
 
-**Given** a parent scalar and a child scalar with the same name  
-**When** the step merges scalars into the output item  
-**Then** the child's value shall take precedence over the parent's value.
+**Given** a parent and a child that both have a property of the same name  
+**When** the author declares the flatten  
+**Then** the types shall reject it, and the runtime shall reject it when both descriptors declare the name.
 
 ### Incremental child and parent lifecycle
 

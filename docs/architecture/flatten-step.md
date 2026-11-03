@@ -20,7 +20,7 @@ For a given scope:
 
 - **Parent items** are items in the parent array. Each parent has scalars and a child sub-array.
 - **Child items** are items in the child sub-array within each parent.
-- **Output** is one item per (parent, child) pair. Each output item contains the parent's scalars and the child's scalars. On name collision, the child's scalar takes precedence (the child is the more specific level).
+- **Output** is one item per (parent, child) pair. Each output item contains the parent's scalars and the child's scalars. A parent and child that share a name are rejected when the flatten is declared: by the types, and by the runtime when both descriptors declare the name. A payload property the descriptor does not declare is outside the runtime check; for such a name, the child's value wins.
 
 The output array replaces the parent array. Parent-level properties above the parent array are preserved.
 
@@ -232,7 +232,7 @@ The step intercepts registrations for:
 | 9 | Add then remove same child | Returns to prior state exactly |
 | 10 | Different operation orders | Same final flattened set (commutativity) |
 | 11 | Empty parent (no children) | No flattened items for that parent |
-| 12 | Scalar name collision between parent and child | Child's value takes precedence |
+| 12 | Name collision between parent and child | Rejected when the flatten is declared |
 | 13 | Composite collection key uniqueness | Two children from different parents with same child key have distinct composite keys |
 
 ## Related Architecture Documents

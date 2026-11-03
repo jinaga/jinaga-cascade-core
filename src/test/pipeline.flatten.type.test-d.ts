@@ -37,3 +37,15 @@ type NestedInput = {
     );
 }
 
+
+// A parent and child that share a name cannot be flattened: the flattened row would show only one
+// of them. Rename one first.
+{
+    type Line = { cat: string; city: string; label: string; seats: number };
+    const byCity = () => createPipeline<Line>()
+        .groupBy(['cat'], 'cats')
+        .in('items').groupBy(['city'], 'cities');
+
+    expectError(byCity().in('cities').defineProperty('label', c => c.city).flatten('cities', 'items', 'flat'));
+    byCity().in('cities').defineProperty('cityLabel', c => c.city).flatten('cities', 'items', 'flat');
+}
