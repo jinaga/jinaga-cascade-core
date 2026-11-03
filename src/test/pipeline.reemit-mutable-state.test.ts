@@ -178,20 +178,21 @@ describe('groupBy regroup on a mutable key loses mutable values and descendants'
             expect(getOutput()).toEqual([{ tier: 'hi', tierTotal: 70 }]);
         });
 
-        it.failing('child array of a regrouped item is kept', () => {
+        it.failing('child array and its aggregate survive a regroup', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline()
                     .groupBy(['item'], 'groups')
                     .sum('items', 'v', 'total')
                     .defineProperty('tier', tierOf, ['total'])
                     .groupBy(['tier'], 'tiers')
-                    .sum(['groups', 'items'], 'v', 'lineSum')
+                    .in('groups')
+                    .sum('items', 'v', 'lineSum')
             );
             pipeline.add('1', { item: 'i', v: 30 });
             pipeline.add('2', { item: 'i', v: 40 });
-            const [tier] = getOutput();
-            expect(tier.lineSum).toBe(70); // observed: missing
-            expect(tier.groups[0].items).toHaveLength(2); // observed: only the line added after the regroup
+            const [group] = getOutput()[0].groups;
+            expect(group.lineSum).toBe(70); // observed: 40
+            expect(group.items).toHaveLength(2); // observed: only the line added after the regroup
         });
     });
 });
