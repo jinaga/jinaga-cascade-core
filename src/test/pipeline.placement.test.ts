@@ -7,6 +7,7 @@
  * the order in which they arrived, including when rows move between parents.
  */
 import { createPipeline, toPipelinePlainOutput } from '../index';
+import { getPathSegmentsFromDescriptor } from '../pipeline';
 import { createTestPipeline } from './helpers';
 
 /** Sorts every array so that outputs can be compared regardless of insertion order. */
@@ -617,5 +618,186 @@ describe('orphan children', () => {
         expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([
             { r: 'root', folders: [{ name: 'one', files: [] }] }
         ]);
+    });
+});
+
+describe('mutable placement (#30)', () => {
+    const tierOf = r => ((r.total ?? 0) > 50 ? 'hi' : 'lo');
+
+    /** Groups move between tiers; each tier has a value derived when it is created. */
+    const tiersByCategory = () => createPipeline()
+        .groupBy(['cat', 'item'], 'groups')
+        .sum('items', 'v', 'total')
+        .defineProperty('tier', tierOf, ['total'])
+        .groupBy(['cat', 'tier'], 'tiers')
+        .defineProperty('label', t => t.tier.toUpperCase())
+        .groupBy(['cat'], 'cats');
+
+    /** The array descriptor at a path; the root has none. */
+    function arrayAt(descriptor, path) {
+        let node = descriptor;
+        let array = undefined;
+        for (const segment of path) {
+            array = node.arrays.find(a => a.name === segment);
+            node = array.type;
+        }
+        return array;
+    }
+
+    /**
+     * Runs the operations, and returns the levels of the moves the pipeline emitted that its
+     * descriptor does not declare, and the number of moves.
+     */
+    function undeclaredMoves(builder, operations) {
+        const descriptor = builder.getTypeDescriptor();
+        const lastBuilder = builder.lastBuilder;
+        const buildGraph = lastBuilder.buildGraph.bind(lastBuilder);
+        let graph;
+        lastBuilder.buildGraph = ctx => (graph = buildGraph(ctx));
+        const pipeline = builder.build(() => {});
+        const undeclared = new Set<string>();
+        let moves = 0;
+        for (const path of getPathSegmentsFromDescriptor(descriptor)) {
+            graph.lastStep.onPlaced(path, () => {
+                moves += 1;
+                if (!arrayAt(descriptor, path)?.mutablePlacement) {
+                    undeclared.add(path.join('.'));
+                }
+            });
+        }
+        operations.forEach(operation => operation(pipeline));
+        pipeline.flush();
+        return { undeclared: [...undeclared], moves };
+    }
+
+    it('a flattened item takes on the values of the parent it moves to', () => {
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            tiersByCategory().flatten('tiers', 'groups', 'flat')
+        );
+        pipeline.add('1', { cat: 'c', item: 'a', v: 30 });
+        expect(getOutput()).toEqual([
+            { cat: 'c', flat: [{ tier: 'lo', label: 'LO', item: 'a', total: 30, items: [{ v: 30 }] }] }
+        ]);
+        pipeline.add('2', { cat: 'c', item: 'a', v: 40 });
+        expect(getOutput()).toEqual([
+            { cat: 'c', flat: [{ tier: 'hi', label: 'HI', item: 'a', total: 70, items: [{ v: 30 }, { v: 40 }] }] }
+        ]);
+    });
+
+    it('a step after flatten sees an inherited value change', () => {
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            tiersByCategory()
+                .flatten('tiers', 'groups', 'flat')
+                .in('flat')
+                .groupBy(['label'], 'labels')
+        );
+        pipeline.add('1', { cat: 'c', item: 'a', v: 30 });
+        pipeline.add('2', { cat: 'c', item: 'a', v: 40 });
+        expect(getOutput()).toEqual([
+            { cat: 'c', labels: [{ label: 'HI', flat: [{ tier: 'hi', item: 'a', total: 70, items: [{ v: 30 }, { v: 40 }] }] }] }
+        ]);
+    });
+
+    it('a child object of the same name does not shadow an inherited value', () => {
+        // groupBy copies the source object's descriptor to the group level, which has no value for it.
+        const emptyNode = { arrays: [], collectionKey: [], scalars: [], objects: [], mutableProperties: [] };
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline('rows', [], [], [{ name: 'label', type: emptyNode }])
+                .groupBy(['cat', 'item'], 'groups')
+                .sum('rows', 'v', 'total')
+                .defineProperty('tier', tierOf, ['total'])
+                .groupBy(['cat', 'tier'], 'tiers')
+                .defineProperty('label', t => t.tier.toUpperCase())
+                .groupBy(['cat'], 'cats')
+                .flatten('tiers', 'groups', 'flat')
+        );
+        pipeline.add('1', { cat: 'c', item: 'a', v: 30 });
+        pipeline.add('2', { cat: 'c', item: 'a', v: 40 });
+        expect(getOutput()[0].flat[0].label).toBe('HI');
+    });
+
+    it('dropping an array keeps the placement of the levels around it', () => {
+        const builder = () => createPipeline()
+            .groupBy(['cat', 'item'], 'groups')
+            .sum('items', 'v', 'total')
+            .defineProperty('tier', tierOf, ['total'])
+            .groupBy(['cat', 'tier'], 'tiers')
+            .defineProperty('label', t => t.tier.toUpperCase())
+            .in('groups')
+            .dropProperty('items')
+            .groupBy(['cat'], 'cats')
+            .flatten('tiers', 'groups', 'flat');
+        expect(arrayAt(builder().getTypeDescriptor(), ['flat']).mutablePlacement).toBe(true);
+        const [pipeline, getOutput] = createTestPipeline(builder);
+        pipeline.add('1', { cat: 'c', item: 'a', v: 30 });
+        pipeline.add('2', { cat: 'c', item: 'a', v: 40 });
+        expect(getOutput()).toEqual([{ cat: 'c', flat: [{ tier: 'hi', label: 'HI', item: 'a', total: 70 }] }]);
+    });
+
+    it('records which arrays have items that can move', () => {
+        const descriptor = tiersByCategory().getTypeDescriptor();
+        expect(arrayAt(descriptor, ['tiers']).mutablePlacement).toBe(false);
+        expect(arrayAt(descriptor, ['tiers', 'groups']).mutablePlacement).toBe(true);
+        expect(arrayAt(descriptor, ['tiers', 'groups', 'items']).mutablePlacement).toBe(false);
+
+        const flattened = tiersByCategory().flatten('tiers', 'groups', 'flat').getTypeDescriptor();
+        expect(arrayAt(flattened, ['flat']).mutablePlacement).toBe(true);
+        expect(flattened.mutableProperties).toEqual(expect.arrayContaining(['tier', 'label']));
+    });
+
+    it('inherited values are not mutable when the child cannot move', () => {
+        const descriptor = createPipeline()
+            .groupBy(['cat', 'sub'], 'subs')
+            .groupBy(['cat'], 'cats')
+            .flatten('subs', 'items', 'flat')
+            .getTypeDescriptor();
+        expect(arrayAt(descriptor, ['flat']).mutablePlacement).toBe(false);
+        expect(descriptor.mutableProperties).toEqual([]);
+    });
+
+    it('source arrays never move', () => {
+        const descriptor = createPipeline('roots', [], [
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [], objects: [], mutableProperties: [] } }
+        ]).getTypeDescriptor();
+        expect(arrayAt(descriptor, ['files']).mutablePlacement).toBe(false);
+    });
+
+    describe('every move is at a level declared to move', () => {
+        const rows = [
+            p => p.add('1', { cat: 'c', item: 'a', v: 30 }),
+            p => p.add('2', { cat: 'c', item: 'a', v: 40 }),
+            p => p.remove('2', { cat: 'c', item: 'a', v: 40 })
+        ];
+
+        it('groupBy on a mutable key', () => {
+            const { undeclared, moves } = undeclaredMoves(tiersByCategory(), rows);
+            expect(moves).toBeGreaterThan(0);
+            expect(undeclared).toEqual([]);
+        });
+
+        it('flatten of a parent that moves', () => {
+            const builder = createPipeline()
+                .groupBy(['item'], 'groups')
+                .sum('items', 'v', 'total')
+                .defineProperty('tier', tierOf, ['total'])
+                .groupBy(['tier'], 'tiers')
+                .flatten('groups', 'items', 'lines');
+            const { undeclared, moves } = undeclaredMoves(builder, rows);
+            expect(moves).toBeGreaterThan(0);
+            expect(undeclared).toEqual([]);
+        });
+
+        it('a nested groupBy of items that move', () => {
+            const builder = createPipeline()
+                .groupBy(['item'], 'groups')
+                .sum('items', 'v', 'total')
+                .defineProperty('tier', tierOf, ['total'])
+                .groupBy(['tier'], 'tiers')
+                .in('groups')
+                .groupBy(['item'], 'byItem');
+            const { undeclared, moves } = undeclaredMoves(builder, rows);
+            expect(moves).toBeGreaterThan(0);
+            expect(undeclared).toEqual([]);
+        });
     });
 });

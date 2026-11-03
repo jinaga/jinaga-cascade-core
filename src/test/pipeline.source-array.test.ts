@@ -1,5 +1,5 @@
 import { createPipeline, toPipelinePlainOutput, type KeyedArray } from '../index';
-import type { ArrayDescriptor, DescriptorNode, PipelineRuntimeDiagnostic } from '../pipeline';
+import type { PipelineRuntimeDiagnostic, SourceArrayDescriptor, SourceNode } from '../pipeline';
 import { getPathSegmentsFromDescriptor } from '../pipeline';
 import { createTestPipeline, simulateState } from './helpers';
 
@@ -7,7 +7,7 @@ type Folder = { folderName: string };
 type Bookmark = { url: string };
 type SizedBookmark = { url: string; size: number };
 
-const scalarNode = (scalars: DescriptorNode['scalars'], arrays: ArrayDescriptor[] = []): DescriptorNode => ({
+const scalarNode = (scalars: SourceNode['scalars'], arrays: SourceArrayDescriptor[] = []): SourceNode => ({
     arrays,
     collectionKey: [],
     scalars,
@@ -15,7 +15,7 @@ const scalarNode = (scalars: DescriptorNode['scalars'], arrays: ArrayDescriptor[
     mutableProperties: []
 });
 
-const bookmarksArray = (extraScalars: DescriptorNode['scalars'] = []): ArrayDescriptor => ({
+const bookmarksArray = (extraScalars: SourceNode['scalars'] = []): SourceArrayDescriptor => ({
     name: 'bookmarks',
     type: scalarNode([{ name: 'url', type: 'string' }, ...extraScalars])
 });
@@ -194,7 +194,7 @@ describe('source-level arrays', () => {
         type TaggedBookmark = { url: string; tags: KeyedArray<Tag> };
 
         function nestedPipeline() {
-            const bookmarksWithTags: ArrayDescriptor = {
+            const bookmarksWithTags: SourceArrayDescriptor = {
                 name: 'bookmarks',
                 type: scalarNode(
                     [{ name: 'url', type: 'string' }],

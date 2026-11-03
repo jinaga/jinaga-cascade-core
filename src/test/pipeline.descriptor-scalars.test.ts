@@ -91,7 +91,8 @@ describe('getScalarsAtPath utility', () => {
                     ],
                     objects: [],
                     mutableProperties: []
-                }
+                },
+                mutablePlacement: false
             }],
             collectionKey: [],
             scalars: [],
@@ -130,13 +131,15 @@ describe('getScalarsAtPath utility', () => {
                             scalars: [{ name: 'deep', type: 'boolean' }],
                             objects: [],
                             mutableProperties: []
-                        }
+                        },
+                        mutablePlacement: false
                     }],
                     collectionKey: [],
                     scalars: [],
                     objects: [],
                     mutableProperties: []
-                }
+                },
+                mutablePlacement: false
             }],
             collectionKey: [],
             scalars: [],

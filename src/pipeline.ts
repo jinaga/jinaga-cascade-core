@@ -120,11 +120,35 @@ export interface TypeDescriptor extends DescriptorNode {
 export interface ArrayDescriptor {
     name: string;
     type: DescriptorNode;
+    /**
+     * Whether an item of this array can move to another parent after it is added. Only a
+     * nested array has items with a parent, so the root has no such flag.
+     */
+    mutablePlacement: boolean;
 }
 
 export interface ObjectDescriptor {
     name: string;
     type: DescriptorNode;
+}
+
+/**
+ * The shape of a source row's declared arrays and objects. A source child never moves to
+ * another parent, so a source array has no `mutablePlacement`: the input sets it.
+ */
+export type SourceNode = Omit<DescriptorNode, 'arrays' | 'objects'> & {
+    arrays: SourceArrayDescriptor[];
+    objects: SourceObjectDescriptor[];
+};
+
+export interface SourceArrayDescriptor {
+    name: string;
+    type: SourceNode;
+}
+
+export interface SourceObjectDescriptor {
+    name: string;
+    type: SourceNode;
 }
 
 /**

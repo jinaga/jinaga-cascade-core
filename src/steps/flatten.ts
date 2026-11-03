@@ -148,11 +148,14 @@ function transformDescriptorAtScope(
             )
         };
 
+        // A flattened item moves when its parent moves (with the parent's other children)
+        // or when it moves to another parent.
         const arrays = node.arrays.map(arrayDescriptor => {
             if (arrayDescriptor.name === parentArrayName) {
                 return {
                     name: outputArrayName,
-                    type: flattenedNode
+                    type: flattenedNode,
+                    mutablePlacement: parentArray.mutablePlacement || childArray.mutablePlacement
                 };
             }
             return arrayDescriptor;
@@ -185,6 +188,32 @@ function transformDescriptorAtScope(
     };
 }
 
+/**
+ * The parent values a flattened item inherits: those its child does not shadow. They change
+ * when the child moves to another parent, so they are mutable when the child array's
+ * placement is.
+ */
+function inheritedMutableProperties(
+    descriptor: TypeDescriptor,
+    scopePath: string[],
+    parentArrayName: string,
+    childArrayName: string
+): string[] {
+    const parentArray = navigateToScopeNode(descriptor, [...scopePath])?.arrays
+        .find(arrayDescriptor => arrayDescriptor.name === parentArrayName);
+    const childArray = parentArray?.type.arrays.find(arrayDescriptor => arrayDescriptor.name === childArrayName);
+    if (!parentArray || !childArray || !childArray.mutablePlacement) {
+        return [];
+    }
+    // As in `FlattenStep.isShadowed`: only a child's declared scalars shadow a parent value.
+    // A child may declare an object it has no value for, so objects do not.
+    const shadowed = new Set(childArray.type.scalars.map(scalar => scalar.name));
+    return [
+        ...parentArray.type.scalars.map(scalar => scalar.name),
+        ...parentArray.type.objects.map(objectDescriptor => objectDescriptor.name)
+    ].filter(name => !shadowed.has(name));
+}
+
 function transformFlattenDescriptor(
     inputDescriptor: TypeDescriptor,
     parentPath: string[],
@@ -196,8 +225,12 @@ function transformFlattenDescriptor(
     const childArrayName = childPath[childPath.length - 1];
     const outputArrayName = outputPath[outputPath.length - 1];
     assertValidFlattenConfiguration(inputDescriptor, scopePath, parentArrayName, childArrayName, outputArrayName);
+    const transformed = transformDescriptorAtScope(inputDescriptor, [...scopePath], parentArrayName, childArrayName, outputArrayName);
+    // Mutable properties are recorded at the root of the descriptor.
+    const inherited = inheritedMutableProperties(inputDescriptor, scopePath, parentArrayName, childArrayName);
     return {
-        ...transformDescriptorAtScope(inputDescriptor, [...scopePath], parentArrayName, childArrayName, outputArrayName),
+        ...transformed,
+        mutableProperties: [...new Set([...transformed.mutableProperties, ...inherited])],
         rootCollectionName: inputDescriptor.rootCollectionName
     };
 }
