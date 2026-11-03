@@ -524,7 +524,7 @@ describe('MinMaxAggregate auto-detection of mutable properties', () => {
             pipeline.add('v2', { groupId: 'G1', itemId: 'B', baseValue: 20 });
             pipeline.add('v3', { groupId: 'G1', itemId: 'C', baseValue: 30 });
             
-            let output = getOutput();
+            const output = getOutput();
             expect(output[0].maxValue).toBe(30); // C is max
 
             // "Change" C by removing and re-adding with different value
@@ -1438,7 +1438,7 @@ describe('PickByMinMax auto-detection of mutable properties', () => {
             pipeline.add('o2', { categoryId: 'catX', productId: 'prodB', amount: 20 });
             pipeline.add('o3', { categoryId: 'catX', productId: 'prodC', amount: 30 });
             
-            let output = getOutput();
+            const output = getOutput();
             // A and B both have adjustedPrice=10
             // Since A was added first, it should be picked
             expect(output[0].cheapestProduct?.adjustedPrice).toBe(10);

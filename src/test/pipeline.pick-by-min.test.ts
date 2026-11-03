@@ -424,8 +424,8 @@ describe('pickByMin', () => {
             const output = getOutput();
             const group = output.find(g => g.category === 'A');
             
-            // Verify the array is removed (use 'as any' since dropProperty removes it from type)
-            expect((group as any)?.items).toBeUndefined();
+            // Verify the array is removed
+            expect(group).not.toHaveProperty('items');
             
             // Verify the picked object is still present
             expect(group?.cheapestItem).toBeDefined();

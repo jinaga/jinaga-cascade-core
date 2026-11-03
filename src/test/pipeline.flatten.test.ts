@@ -79,7 +79,7 @@ describe('pipeline flatten', () => {
         // Child-level score values should still win on name collision.
         pipeline.add('r2', { state: 'TX', city: 'Dallas', score: 202, one: 1 });
         output = getOutput();
-        const scores = sortByJson(output[0].flatRows.map((row: any) => row.score));
+        const scores = sortByJson(output[0].flatRows.map((row) => row.score));
 
         expect(scores).toEqual(sortByJson([101, 202]));
     });
@@ -147,7 +147,7 @@ describe('pipeline flatten', () => {
         pipeline.add('a1', { state: 'TX', city: 'Dallas', venue: 'A', seats: 10 });
         pipeline.add('b1', { state: 'TX', city: 'Dallas', venue: 'B', seats: 20 });
         let output = getOutput();
-        let flat = sortByJson(output[0].flatVenues.map((v: any) => ({
+        let flat = sortByJson(output[0].flatVenues.map((v) => ({
             city: v.city,
             venue: v.venue,
             venueSeats: v.venueSeats
@@ -159,7 +159,7 @@ describe('pipeline flatten', () => {
 
         pipeline.add('a2', { state: 'TX', city: 'Dallas', venue: 'A', seats: 5 });
         output = getOutput();
-        flat = sortByJson(output[0].flatVenues.map((v: any) => ({
+        flat = sortByJson(output[0].flatVenues.map((v) => ({
             city: v.city,
             venue: v.venue,
             venueSeats: v.venueSeats

@@ -75,7 +75,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -106,7 +106,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -139,7 +139,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -175,7 +175,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -215,7 +215,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -252,7 +252,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -291,7 +291,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -330,7 +330,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['department'], 'employees');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { salary: number }).salary;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { salary: number }).salary;
             
@@ -380,7 +380,7 @@ describe('CommutativeAggregateStep', () => {
                 .in('items').groupBy(['city'], 'cities');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { capacity: number }).capacity;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { capacity: number }).capacity;
             
@@ -413,7 +413,7 @@ describe('CommutativeAggregateStep', () => {
                 .in('items').groupBy(['city'], 'cities');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, _item) => (acc ?? 0) + 1;
             const subtractOp: NumericSubtractOp = (acc, _item) => acc - 1;
             
@@ -452,7 +452,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             
             let receivedUndefined = false;
             const addOp: NumericAddOp = (acc, item) => {
@@ -490,7 +490,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             
             const undefinedCount: { count: number } = { count: 0 };
             const addOp: NumericAddOp = (acc, item) => {
@@ -531,7 +531,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             
             type Stats = { min: number; max: number; sum: number; count: number };
             
@@ -588,7 +588,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
@@ -624,7 +624,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
@@ -656,7 +656,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
@@ -696,7 +696,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -728,7 +728,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { value: number }).value;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { value: number }).value;
             
@@ -758,7 +758,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, item) => (acc ?? 0) + (item as { price: number }).price;
             const subtractOp: NumericSubtractOp = (acc, item) => acc - (item as { price: number }).price;
             
@@ -878,7 +878,7 @@ describe('CommutativeAggregateStep', () => {
                 .groupBy(['category'], 'items');
             
             const { rootInput, lastStep } = graphFromPipelineBuilder(builder);
-            const step = lastStep as Step;
+            const step = lastStep;
             const addOp: NumericAddOp = (acc, _item) => (acc ?? 0) + 1;
             const subtractOp: NumericSubtractOp = (acc, _item) => acc - 1;
             
@@ -1193,7 +1193,7 @@ describe('CommutativeAggregateStep', () => {
                 pipeline.add('item1', item1);
 
                 let output = getOutput();
-                let group = output.find(g => g.category === 'A');
+                const group = output.find(g => g.category === 'A');
                 expect(group?.total).toBe(42);
 
                 pipeline.remove('item1', item1);

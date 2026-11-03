@@ -1,4 +1,4 @@
-import { createPipeline, type KeyedArray, type Transform } from '../index';
+import { createPipeline, type KeyedArray, type PipelineOutput, type Transform } from '../index';
 
 describe('pipeline runtime sessions', () => {
     beforeEach(() => {
@@ -26,16 +26,15 @@ describe('pipeline runtime sessions', () => {
         type RowA = { group: string; value: number };
         type RowB = { category: string; score: number };
 
-        const storeA = createStateStore<any>();
-        const storeB = createStateStore<any>();
+        const builderA = createPipeline<RowA>()
+            .groupBy(['group'], 'groups');
+        const storeA = createStateStore<PipelineOutput<typeof builderA>>();
+        const sessionA = builderA.build(storeA.setState, { flushDelayMs: 100 });
 
-        const sessionA = createPipeline<RowA>()
-            .groupBy(['group'], 'groups')
-            .build(storeA.setState, { flushDelayMs: 100 });
-
-        const sessionB = createPipeline<RowB>()
-            .groupBy(['category'], 'categories')
-            .build(storeB.setState, { flushDelayMs: 100 });
+        const builderB = createPipeline<RowB>()
+            .groupBy(['category'], 'categories');
+        const storeB = createStateStore<PipelineOutput<typeof builderB>>();
+        const sessionB = builderB.build(storeB.setState, { flushDelayMs: 100 });
 
         sessionA.add('a1', { group: 'G1', value: 10 });
         sessionB.add('b1', { category: 'C1', score: 100 });
@@ -53,11 +52,10 @@ describe('pipeline runtime sessions', () => {
 
     it('dispose({ flush: false }) drops pending operations deterministically', () => {
         type Row = { group: string; value: number };
-        const store = createStateStore<any>();
-
-        const session = createPipeline<Row>()
-            .groupBy(['group'], 'groups')
-            .build(store.setState, { flushDelayMs: 1000 });
+        const builder2 = createPipeline<Row>()
+            .groupBy(['group'], 'groups');
+        const store = createStateStore<PipelineOutput<typeof builder2>>();
+        const session = builder2.build(store.setState, { flushDelayMs: 1000 });
 
         session.add('a1', { group: 'G1', value: 10 });
         session.dispose();
@@ -69,11 +67,10 @@ describe('pipeline runtime sessions', () => {
 
     it('dispose({ flush: true }) drains pending operations before closing', () => {
         type Row = { group: string; value: number };
-        const store = createStateStore<any>();
-
-        const session = createPipeline<Row>()
-            .groupBy(['group'], 'groups')
-            .build(store.setState, { flushDelayMs: 1000 });
+        const builder3 = createPipeline<Row>()
+            .groupBy(['group'], 'groups');
+        const store = createStateStore<PipelineOutput<typeof builder3>>();
+        const session = builder3.build(store.setState, { flushDelayMs: 1000 });
 
         session.add('a1', { group: 'G1', value: 10 });
         session.dispose({ flush: true });
@@ -85,12 +82,12 @@ describe('pipeline runtime sessions', () => {
 
     it('drops operations after dispose and emits diagnostics instead of mutating state', () => {
         type Row = { group: string; value: number };
-        const store = createStateStore<any>();
         const diagnostics: string[] = [];
 
-        const session = createPipeline<Row>()
-            .groupBy(['group'], 'groups')
-            .build(store.setState, {
+        const builder4 = createPipeline<Row>()
+            .groupBy(['group'], 'groups');
+        const store = createStateStore<PipelineOutput<typeof builder4>>();
+        const session = builder4.build(store.setState, {
                 flushDelayMs: 100,
                 onDiagnostic: diagnostic => diagnostics.push(diagnostic.code)
             });
@@ -105,14 +102,14 @@ describe('pipeline runtime sessions', () => {
 
     it('prevents post-dispose adds from propagating through nested pipeline steps', () => {
         type Row = { attendeePublicKey: string; round: number; amount: number };
-        const store = createStateStore<any>();
         const diagnostics: string[] = [];
 
-        const session = createPipeline<Row, 'allocations'>('allocations')
+        const builder5 = createPipeline<Row, 'allocations'>('allocations')
             .groupBy(['attendeePublicKey'], 'attendees')
             .in('allocations')
-            .groupBy(['round'], 'rounds')
-            .build(store.setState, {
+            .groupBy(['round'], 'rounds');
+        const store = createStateStore<PipelineOutput<typeof builder5>>();
+        const session = builder5.build(store.setState, {
                 flushDelayMs: 100,
                 onDiagnostic: diagnostic => diagnostics.push(diagnostic.code)
             });
@@ -127,14 +124,14 @@ describe('pipeline runtime sessions', () => {
 
     it('prevents post-dispose removes from propagating through nested pipeline steps', () => {
         type Row = { attendeePublicKey: string; round: number; amount: number };
-        const store = createStateStore<any>();
         const diagnostics: string[] = [];
 
-        const session = createPipeline<Row, 'allocations'>('allocations')
+        const builder6 = createPipeline<Row, 'allocations'>('allocations')
             .groupBy(['attendeePublicKey'], 'attendees')
             .in('allocations')
-            .groupBy(['round'], 'rounds')
-            .build(store.setState, {
+            .groupBy(['round'], 'rounds');
+        const store = createStateStore<PipelineOutput<typeof builder6>>();
+        const session = builder6.build(store.setState, {
                 flushDelayMs: 100,
                 onDiagnostic: diagnostic => diagnostics.push(diagnostic.code)
             });
@@ -154,14 +151,14 @@ describe('pipeline runtime sessions', () => {
 
     it('drops missing-parent nested adds and emits diagnostics', () => {
         type Row = { attendeePublicKey: string; round: number; amount: number };
-        const resilientStore = createStateStore<any>();
         const resilientDiagnostics: string[] = [];
 
-        const resilientSession = createPipeline<Row, 'allocations'>('allocations')
+        const builder7 = createPipeline<Row, 'allocations'>('allocations')
             .groupBy(['attendeePublicKey'], 'attendees')
             .in('allocations')
-            .groupBy(['round'], 'rounds')
-            .build(resilientStore.setState, {
+            .groupBy(['round'], 'rounds');
+        const resilientStore = createStateStore<PipelineOutput<typeof builder7>>();
+        const resilientSession = builder7.build(resilientStore.setState, {
                 flushDelayMs: 1000,
                 onDiagnostic: diagnostic => resilientDiagnostics.push(diagnostic.code)
             });
