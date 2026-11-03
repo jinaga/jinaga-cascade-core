@@ -170,15 +170,44 @@ export function getScalarsAtPath(
     return current.scalars;
 }
 
+/**
+ * Names of the mutable properties at every level of a descriptor. Mutable properties are
+ * recorded at the root of the descriptor even when they belong to nested levels.
+ */
+export function collectAllMutableProperties(descriptor: DescriptorNode): string[] {
+    const names = new Set<string>(descriptor.mutableProperties);
+    for (const array of descriptor.arrays) {
+        collectAllMutableProperties(array.type).forEach(name => names.add(name));
+    }
+    return [...names];
+}
+
 export type ImmutableProps = {
     [key: string]: unknown;
 };
 
-export type AddedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
+/*
+ * Event protocol.
+ *
+ * A node is identified by its level (segment path) and its key. Keys are unique within a
+ * level across the whole pipeline, so a node's identity never depends on where it is placed.
+ * A node's placement is the key of its parent at the level above. Placement is a changeable
+ * value: it is set by `onAdded` and changed by `onPlaced`. Descendants keep their own
+ * placement when an ancestor moves, so a move is a single event.
+ *
+ * `onAdded` carries the node's complete current values. `onModified` carries the old and new
+ * value of one property. `onRemoved` carries the node's values at removal.
+ */
 
-export type RemovedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
+/** `parentKey` is undefined for nodes at the root level. */
+export type AddedHandler = (parentKey: string | undefined, key: string, immutableProps: ImmutableProps) => void;
 
-export type ModifiedHandler = (keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void;
+export type RemovedHandler = (key: string, immutableProps: ImmutableProps) => void;
+
+export type ModifiedHandler = (key: string, oldValue: unknown, newValue: unknown) => void;
+
+/** A node at a nested level moved from one parent to another. */
+export type PlacedHandler = (key: string, oldParentKey: string, newParentKey: string) => void;
 
 export function getPathSegmentsFromDescriptor(descriptor: TypeDescriptor): string[][] {
     // Include the path to the root of the descriptor
@@ -208,6 +237,7 @@ export interface Step {
     onAdded(pathSegments: string[], handler: AddedHandler): void;
     onRemoved(pathSegments: string[], handler: RemovedHandler): void;
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void;
 }
 
 export interface BuiltStepGraph {

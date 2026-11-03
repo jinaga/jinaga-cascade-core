@@ -1,318 +1,316 @@
-import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, RemovedHandler, ModifiedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
-import { pathsMatch, pathStartsWith } from '../util/path.js';
+import type {
+    AddedHandler,
+    BuildContext,
+    BuiltStepGraph,
+    ImmutableProps,
+    ModifiedHandler,
+    PlacedHandler,
+    RemovedHandler,
+    Step,
+    StepBuilder,
+    TypeDescriptor
+} from '../pipeline.js';
+import { collectAllMutableProperties, getPathSegmentsFromDescriptor } from '../pipeline.js';
+import { pathStartsWith } from '../util/path.js';
 
-/**
- * State tracked for each item seen by the filter step.
- */
-interface ItemState {
-    immutableProps: ImmutableProps;
-    mutableValues: Map<string, unknown>;
-    keyPath: string[];
-    passed: boolean;
+interface NodeRecord {
+    parentKey: string | undefined;
+    /** Complete current values of the node. */
+    props: ImmutableProps;
+}
+
+interface LevelHandlers {
+    added: AddedHandler[];
+    removed: RemovedHandler[];
+    placed: PlacedHandler[];
+    modified: Map<string, ModifiedHandler[]>;
+}
+
+function levelId(segmentPath: string[]): string {
+    return JSON.stringify(segmentPath);
 }
 
 /**
- * A step that filters items based on a predicate function.
+ * Keeps the items at a scope for which the predicate holds, together with their descendants.
  *
- * For filter re-evaluation on mutable property changes, this step tracks:
- * - All items (not just those that passed) with their state
- * - Handlers for add/remove events to emit during re-evaluation
- *
- * When a mutable property changes:
- * - Re-evaluate the predicate with the new value
- * - If result changes from false->true: emit onAdded
- * - If result changes from true->false: emit onRemoved
- *
- * IMPORTANT: When a parent item is blocked by the filter, all nested operations
- * for that parent must also be blocked until/unless the parent passes.
+ * Visibility is membership: a hidden item and its subtree are not in the output at all. The
+ * step therefore keeps the complete current state of every node at or below its scope. When
+ * an item becomes visible it is added with its current values, followed by its subtree; when
+ * it becomes hidden its subtree is removed, children first. The change that triggered either
+ * transition is not forwarded, because the add already carries it.
  */
 export class FilterStep<T> implements Step {
-    // Track ALL items (passed or not) with their state
-    private itemStates: Map<string, ItemState> = new Map();
-    
-    // Store handlers for re-evaluation (registered via onAdded/onRemoved)
-    private addedHandler: AddedHandler | null = null;
-    private removedHandler: RemovedHandler | null = null;
-    
-    // Track pending nested operations for items that don't pass the filter yet
-    // key -> Map of pendingPath -> Array of pending operations
-    private pendingNestedAdds: Map<string, Array<{ pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps }>> = new Map();
-    private pendingNestedModifications: Map<string, Array<{ pathSegments: string[], propertyName: string, keyPath: string[], key: string, oldValue: unknown, newValue: unknown }>> = new Map();
-    
-    // Store nested handlers for replaying when parent passes
-    private nestedAddedHandlers: Map<string, AddedHandler> = new Map();
-    private nestedRemovedHandlers: Map<string, RemovedHandler> = new Map();
-    private nestedModifiedHandlers: Map<string, Map<string, ModifiedHandler>> = new Map();
-    
+    /** The scope and every level below it. */
+    private readonly levels: string[][];
+    private readonly nodes = new Map<string, Map<string, NodeRecord>>();
+    /** Children of each node, by child level and parent key. */
+    private readonly children = new Map<string, Map<string, Set<string>>>();
+    /** Keys of the scope items for which the predicate holds. */
+    private readonly visible = new Set<string>();
+    private readonly handlers = new Map<string, LevelHandlers>();
+    /** Properties this step listens to upstream, per level. */
+    private readonly listened = new Map<string, Set<string>>();
+
     constructor(
         private input: Step,
         private predicate: (item: T) => boolean,
         private scopeSegments: string[],
-        private mutableProperties: string[] = []
+        private predicateProperties: string[],
+        inputDescriptor: TypeDescriptor
     ) {
-        // Register for mutable property changes if any are specified
-        if (mutableProperties.length > 0 && this.scopeSegments.length === 0) {
-            // For root-level filtering, register for mutable properties
-            mutableProperties.forEach(propName => {
-                this.input.onModified(this.scopeSegments, propName, (keyPath, key, oldValue, newValue) => {
-                    this.handleMutablePropertyChange(keyPath, key, propName, oldValue, newValue);
-                });
-            });
-        }
-    }
+        this.levels = getPathSegmentsFromDescriptor(inputDescriptor)
+            .filter(path => pathStartsWith(path, this.scopeSegments));
+        const mutableProperties = collectAllMutableProperties(inputDescriptor);
 
-    private composeItem(immutableProps: ImmutableProps, mutableValues: Map<string, unknown>): T {
-        const mutableProps: Record<string, unknown> = {};
-        for (const propName of this.mutableProperties) {
-            mutableProps[propName] = mutableValues.get(propName);
-        }
-        return { ...immutableProps, ...mutableProps } as T;
-    }
-
-    private evaluatePredicate(immutableProps: ImmutableProps, mutableValues: Map<string, unknown>): boolean {
-        const item = this.composeItem(immutableProps, mutableValues);
-        return this.predicate(item);
-    }
-
-    /**
-     * Gets the parent key from a keyPath for nested operations.
-     * For root-level filtering (scopeSegments = []), the parent key is the first element of keyPath.
-     */
-    private getParentKeyFromKeyPath(keyPath: string[]): string | undefined {
-        if (this.scopeSegments.length === 0 && keyPath.length > 0) {
-            return keyPath[0];
-        }
-        return undefined;
-    }
-
-    /**
-     * Checks if a path is nested under the filter's scope level.
-     */
-    private isNestedPath(pathSegments: string[]): boolean {
-        return pathSegments.length > this.scopeSegments.length &&
-               pathStartsWith(pathSegments, this.scopeSegments);
-    }
-
-    private handleMutablePropertyChange(_keyPath: string[], key: string, propertyName: string, _oldValue: unknown, newValue: unknown): void {
-        const itemState = this.itemStates.get(key);
-        if (!itemState) {
-            // Item not tracked (shouldn't happen if properly added first)
-            return;
-        }
-
-        // Update mutable value
-        itemState.mutableValues.set(propertyName, newValue);
-
-        // Re-evaluate predicate
-        const nowPasses = this.evaluatePredicate(itemState.immutableProps, itemState.mutableValues);
-        const previouslyPassed = itemState.passed;
-
-        if (nowPasses && !previouslyPassed) {
-            // Item now passes - emit onAdded, then replay pending nested operations
-            itemState.passed = true;
-            if (this.addedHandler) {
-                const composedItem = this.composeItem(itemState.immutableProps, itemState.mutableValues);
-                this.addedHandler(itemState.keyPath, key, composedItem as ImmutableProps);
+        for (const level of this.levels) {
+            this.nodes.set(levelId(level), new Map());
+            this.children.set(levelId(level), new Map());
+            this.handlers.set(levelId(level), { added: [], removed: [], placed: [], modified: new Map() });
+            this.input.onAdded(level, (parentKey, key, props) => this.handleAdded(level, parentKey, key, props));
+            this.input.onRemoved(level, key => this.handleRemoved(level, key));
+            this.input.onPlaced(level, (key, _oldParentKey, newParentKey) => this.handlePlaced(level, key, newParentKey));
+            for (const propertyName of new Set([...mutableProperties, ...this.predicateProperties])) {
+                this.listen(level, propertyName);
             }
-            
-            // Replay pending nested adds for this parent
-            this.replayPendingNestedOperations(key);
-        } else if (!nowPasses && previouslyPassed) {
-            // Item no longer passes - emit onRemoved
-            itemState.passed = false;
-            if (this.removedHandler) {
-                const composedItem = this.composeItem(itemState.immutableProps, itemState.mutableValues);
-                this.removedHandler(itemState.keyPath, key, composedItem as ImmutableProps);
-            }
-        }
-        // If state unchanged, no action needed
-    }
-
-    /**
-     * Replay any pending nested operations when a parent passes the filter.
-     */
-    private replayPendingNestedOperations(parentKey: string): void {
-        // Replay nested adds
-        const pendingAdds = this.pendingNestedAdds.get(parentKey);
-        if (pendingAdds) {
-            for (const pending of pendingAdds) {
-                const pathKey = JSON.stringify(pending.pathSegments);
-                const handler = this.nestedAddedHandlers.get(pathKey);
-                if (handler) {
-                    handler(pending.keyPath, pending.key, pending.immutableProps);
-                }
-            }
-            this.pendingNestedAdds.delete(parentKey);
-        }
-
-        // Replay nested modifications (property updates that occurred while parent was blocked)
-        const pendingMods = this.pendingNestedModifications.get(parentKey);
-        if (pendingMods) {
-            for (const pending of pendingMods) {
-                const pathKey = JSON.stringify(pending.pathSegments);
-                const handlersForPath = this.nestedModifiedHandlers.get(pathKey);
-                if (handlersForPath) {
-                    const handler = handlersForPath.get(pending.propertyName);
-                    if (handler) {
-                        handler(pending.keyPath, pending.key, pending.oldValue, pending.newValue);
-                    }
-                }
-            }
-            this.pendingNestedModifications.delete(parentKey);
         }
     }
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
-        if (this.isAtScopeSegments(pathSegments)) {
-            // Store handler for re-evaluation
-            this.addedHandler = handler;
-            
-            this.input.onAdded(pathSegments, (keyPath, key, immutableProps) => {
-                const mutableValues = new Map<string, unknown>();
-                // Initialize mutable values (they'll be updated via onModified if they change)
-                for (const propName of this.mutableProperties) {
-                    mutableValues.set(propName, immutableProps[propName]);
-                }
-                
-                const passes = this.evaluatePredicate(immutableProps, mutableValues);
-                
-                // Track ALL items with their state
-                this.itemStates.set(key, {
-                    immutableProps,
-                    mutableValues,
-                    keyPath,
-                    passed: passes
-                });
-                
-                if (passes) {
-                    handler(keyPath, key, immutableProps);
-                }
-            });
-        } else if (this.isNestedPath(pathSegments)) {
-            // Store handler for potential replay
-            const pathKey = JSON.stringify(pathSegments);
-            this.nestedAddedHandlers.set(pathKey, handler);
-            
-            // For nested paths, only forward if parent passes the filter
-            this.input.onAdded(pathSegments, (keyPath, key, immutableProps) => {
-                const parentKey = this.getParentKeyFromKeyPath(keyPath);
-                if (parentKey) {
-                    const parentState = this.itemStates.get(parentKey);
-                    if (parentState && parentState.passed) {
-                        // Parent passes, forward the nested add
-                        handler(keyPath, key, immutableProps);
-                    } else {
-                        // Parent doesn't pass (or doesn't exist yet), queue the add
-                        if (!this.pendingNestedAdds.has(parentKey)) {
-                            this.pendingNestedAdds.set(parentKey, []);
-                        }
-                        this.pendingNestedAdds.get(parentKey)!.push({ pathSegments, keyPath, key, immutableProps });
-                    }
-                } else {
-                    // No parent key derivable, pass through
-                    handler(keyPath, key, immutableProps);
-                }
-            });
-        } else {
-            this.input.onAdded(pathSegments, handler);
+        const levelHandlers = this.handlers.get(levelId(pathSegments));
+        if (levelHandlers) {
+            levelHandlers.added.push(handler);
+            return;
         }
+        this.input.onAdded(pathSegments, handler);
     }
 
     onRemoved(pathSegments: string[], handler: RemovedHandler): void {
-        if (this.isAtScopeSegments(pathSegments)) {
-            // Store handler for re-evaluation
-            this.removedHandler = handler;
-            
-            this.input.onRemoved(pathSegments, (keyPath, key, immutableProps) => {
-                const itemState = this.itemStates.get(key);
-                if (itemState && itemState.passed) {
-                    handler(keyPath, key, immutableProps);
-                }
-                // Remove from tracking and clean up pending operations
-                this.itemStates.delete(key);
-                this.pendingNestedAdds.delete(key);
-                this.pendingNestedModifications.delete(key);
-            });
-        } else if (this.isNestedPath(pathSegments)) {
-            // Store handler for potential replay
-            const pathKey = JSON.stringify(pathSegments);
-            this.nestedRemovedHandlers.set(pathKey, handler);
-            
-            // For nested paths, only forward if parent passes
-            this.input.onRemoved(pathSegments, (keyPath, key, immutableProps) => {
-                const parentKey = this.getParentKeyFromKeyPath(keyPath);
-                if (parentKey) {
-                    const parentState = this.itemStates.get(parentKey);
-                    if (parentState && parentState.passed) {
-                        handler(keyPath, key, immutableProps);
-                    }
-                    // If parent doesn't pass, the remove is silently ignored
-                    // (the item was never added to downstream, so no need to remove)
-                } else {
-                    handler(keyPath, key, immutableProps);
-                }
-            });
-        } else {
-            this.input.onRemoved(pathSegments, handler);
+        const levelHandlers = this.handlers.get(levelId(pathSegments));
+        if (levelHandlers) {
+            levelHandlers.removed.push(handler);
+            return;
         }
+        this.input.onRemoved(pathSegments, handler);
     }
 
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
-        if (this.isAtScopeSegments(pathSegments)) {
-            // For mutable properties we're tracking at the scope level
-            if (this.mutableProperties.includes(propertyName)) {
-                // Only forward if item passes
-                this.input.onModified(pathSegments, propertyName, (keyPath, key, oldValue, newValue) => {
-                    const itemState = this.itemStates.get(key);
-                    if (itemState && itemState.passed) {
-                        handler(keyPath, key, oldValue, newValue);
-                    }
-                });
-            } else {
-                // For non-mutable properties at scope level, only forward if passes
-                this.input.onModified(pathSegments, propertyName, (keyPath, key, oldValue, newValue) => {
-                    const itemState = this.itemStates.get(key);
-                    if (itemState && itemState.passed) {
-                        handler(keyPath, key, oldValue, newValue);
-                    }
-                });
+        const levelHandlers = this.handlers.get(levelId(pathSegments));
+        if (levelHandlers) {
+            this.listen(pathSegments, propertyName);
+            const handlers = levelHandlers.modified.get(propertyName) ?? [];
+            handlers.push(handler);
+            levelHandlers.modified.set(propertyName, handlers);
+            return;
+        }
+        this.input.onModified(pathSegments, propertyName, handler);
+    }
+
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        const levelHandlers = this.handlers.get(levelId(pathSegments));
+        if (levelHandlers) {
+            levelHandlers.placed.push(handler);
+            return;
+        }
+        this.input.onPlaced(pathSegments, handler);
+    }
+
+    private listen(level: string[], propertyName: string): void {
+        const id = levelId(level);
+        let names = this.listened.get(id);
+        if (!names) {
+            names = new Set();
+            this.listened.set(id, names);
+        }
+        if (names.has(propertyName)) {
+            return;
+        }
+        names.add(propertyName);
+        this.input.onModified(level, propertyName, (key, _oldValue, newValue) => {
+            this.handleModified(level, propertyName, key, newValue);
+        });
+    }
+
+    private isScope(level: string[]): boolean {
+        return level.length === this.scopeSegments.length;
+    }
+
+    private childLevels(level: string[]): string[][] {
+        return this.levels.filter(other => other.length === level.length + 1 && pathStartsWith(other, level));
+    }
+
+    private record(level: string[], key: string): NodeRecord | undefined {
+        return this.nodes.get(levelId(level))?.get(key);
+    }
+
+    /** A node is visible when its ancestor at the scope passes the predicate. */
+    private isVisible(level: string[], key: string | undefined): boolean {
+        let currentLevel = level;
+        let currentKey = key;
+        while (currentLevel.length > this.scopeSegments.length) {
+            if (currentKey === undefined) {
+                return false;
             }
-        } else if (this.isNestedPath(pathSegments)) {
-            // Store handler for potential replay
-            const pathKey = JSON.stringify(pathSegments);
-            if (!this.nestedModifiedHandlers.has(pathKey)) {
-                this.nestedModifiedHandlers.set(pathKey, new Map());
-            }
-            this.nestedModifiedHandlers.get(pathKey)!.set(propertyName, handler);
-            
-            // For nested paths, only forward if parent passes
-            this.input.onModified(pathSegments, propertyName, (keyPath, key, oldValue, newValue) => {
-                const parentKey = this.getParentKeyFromKeyPath(keyPath);
-                if (parentKey) {
-                    const parentState = this.itemStates.get(parentKey);
-                    if (parentState && parentState.passed) {
-                        handler(keyPath, key, oldValue, newValue);
-                    } else {
-                        // Queue modification for replay
-                        if (!this.pendingNestedModifications.has(parentKey)) {
-                            this.pendingNestedModifications.set(parentKey, []);
-                        }
-                        this.pendingNestedModifications.get(parentKey)!.push({
-                            pathSegments, propertyName, keyPath, key, oldValue, newValue
-                        });
-                    }
-                } else {
-                    handler(keyPath, key, oldValue, newValue);
-                }
-            });
-        } else {
-            // Forward all other modifications
-            this.input.onModified(pathSegments, propertyName, handler);
+            currentKey = this.record(currentLevel, currentKey)?.parentKey;
+            currentLevel = currentLevel.slice(0, -1);
+        }
+        return currentKey !== undefined && this.visible.has(currentKey);
+    }
+
+    private linkChild(level: string[], parentKey: string | undefined, key: string): void {
+        if (this.isScope(level) || parentKey === undefined) {
+            return;
+        }
+        const byParent = this.children.get(levelId(level))!;
+        let keys = byParent.get(parentKey);
+        if (!keys) {
+            keys = new Set();
+            byParent.set(parentKey, keys);
+        }
+        keys.add(key);
+    }
+
+    private unlinkChild(level: string[], parentKey: string | undefined, key: string): void {
+        if (this.isScope(level) || parentKey === undefined) {
+            return;
+        }
+        const byParent = this.children.get(levelId(level))!;
+        const keys = byParent.get(parentKey);
+        keys?.delete(key);
+        if (keys && keys.size === 0) {
+            byParent.delete(parentKey);
         }
     }
 
-    private isAtScopeSegments(pathSegments: string[]): boolean {
-        return pathsMatch(pathSegments, this.scopeSegments);
+    private levelHandlers(level: string[]): LevelHandlers {
+        return this.handlers.get(levelId(level))!;
+    }
+
+    /** Emits the node and then its subtree, each with current values. */
+    private admit(level: string[], key: string): void {
+        const record = this.record(level, key);
+        if (!record) {
+            return;
+        }
+        this.levelHandlers(level).added.forEach(handler => handler(record.parentKey, key, record.props));
+        for (const childLevel of this.childLevels(level)) {
+            for (const childKey of this.children.get(levelId(childLevel))!.get(key) ?? []) {
+                this.admit(childLevel, childKey);
+            }
+        }
+    }
+
+    /** Removes the node's subtree, children first, and then the node. */
+    private evict(level: string[], key: string): void {
+        const record = this.record(level, key);
+        if (!record) {
+            return;
+        }
+        for (const childLevel of this.childLevels(level)) {
+            for (const childKey of this.children.get(levelId(childLevel))!.get(key) ?? []) {
+                this.evict(childLevel, childKey);
+            }
+        }
+        this.levelHandlers(level).removed.forEach(handler => handler(key, record.props));
+    }
+
+    private handleAdded(level: string[], parentKey: string | undefined, key: string, props: ImmutableProps): void {
+        this.nodes.get(levelId(level))!.set(key, { parentKey, props });
+        this.linkChild(level, parentKey, key);
+        if (this.isScope(level)) {
+            if (this.predicate(props as T)) {
+                this.visible.add(key);
+                this.admit(level, key);
+            }
+        } else if (this.isVisible(level.slice(0, -1), parentKey)) {
+            this.admit(level, key);
+        }
+    }
+
+    private handleRemoved(level: string[], key: string): void {
+        const record = this.record(level, key);
+        if (!record) {
+            return;
+        }
+        // Downstream received the node's subtree, so it gets the matching removes, children first.
+        if (this.isVisible(level, key)) {
+            this.evict(level, key);
+        }
+        this.unlinkChild(level, record.parentKey, key);
+        this.forget(level, key);
+    }
+
+    /** Drops a removed node and its subtree, which left the input along with it. */
+    private forget(level: string[], key: string): void {
+        for (const childLevel of this.childLevels(level)) {
+            const byParent = this.children.get(levelId(childLevel))!;
+            for (const childKey of byParent.get(key) ?? []) {
+                this.forget(childLevel, childKey);
+            }
+            byParent.delete(key);
+        }
+        this.nodes.get(levelId(level))!.delete(key);
+        if (this.isScope(level)) {
+            this.visible.delete(key);
+        }
+    }
+
+    private handleModified(level: string[], propertyName: string, key: string, newValue: unknown): void {
+        const record = this.record(level, key);
+        if (!record) {
+            return;
+        }
+        const oldValue = record.props[propertyName];
+        record.props = { ...record.props, [propertyName]: newValue };
+
+        if (this.isScope(level) && this.predicateProperties.includes(propertyName)) {
+            const wasVisible = this.visible.has(key);
+            const isVisible = this.predicate(record.props as T);
+            if (!wasVisible && isVisible) {
+                this.visible.add(key);
+                this.admit(level, key);
+                return;
+            }
+            if (wasVisible && !isVisible) {
+                this.evict(level, key);
+                this.visible.delete(key);
+                return;
+            }
+        }
+
+        if (this.isVisible(level, key)) {
+            this.levelHandlers(level).modified.get(propertyName)?.forEach(handler => handler(key, oldValue, newValue));
+        }
+    }
+
+    private handlePlaced(level: string[], key: string, newParentKey: string): void {
+        const record = this.record(level, key);
+        if (!record) {
+            return;
+        }
+        const oldParentKey = record.parentKey;
+        if (this.isScope(level)) {
+            // Moving a scope item does not change whether it passes.
+            record.parentKey = newParentKey;
+            if (this.visible.has(key) && oldParentKey !== undefined) {
+                this.levelHandlers(level).placed.forEach(handler => handler(key, oldParentKey, newParentKey));
+            }
+            return;
+        }
+
+        const parentLevel = level.slice(0, -1);
+        const wasVisible = this.isVisible(parentLevel, oldParentKey);
+        const isVisible = this.isVisible(parentLevel, newParentKey);
+        if (wasVisible && !isVisible) {
+            this.evict(level, key);
+        }
+        this.unlinkChild(level, oldParentKey, key);
+        record.parentKey = newParentKey;
+        this.linkChild(level, newParentKey, key);
+        if (wasVisible && isVisible && oldParentKey !== undefined) {
+            this.levelHandlers(level).placed.forEach(handler => handler(key, oldParentKey, newParentKey));
+        } else if (!wasVisible && isVisible) {
+            this.admit(level, key);
+        }
     }
 }
 
@@ -333,7 +331,13 @@ export class FilterBuilder implements StepBuilder {
         const up = this.upstream.buildGraph(ctx);
         return {
             ...up,
-            lastStep: new FilterStep(up.lastStep, this.predicate, this.scopeSegments, this.mutableProperties)
+            lastStep: new FilterStep(
+                up.lastStep,
+                this.predicate,
+                this.scopeSegments,
+                this.mutableProperties,
+                this.upstream.getTypeDescriptor()
+            )
         };
     }
 }

@@ -1,4 +1,4 @@
-import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 
 /**
  * Operator called when an item is added to the aggregated array.
@@ -35,13 +35,6 @@ interface CommutativeAggregateConfig<TItem, TAggregate> {
     subtract: SubtractOperator<TItem, TAggregate>;
 }
 
-/**
- * Computes a hash key for a key path (for map lookups).
- */
-function computeKeyPathHash(keyPath: string[]): string {
-    return keyPath.join('::');
-}
-
 function transformCommutativeAggregateDescriptor(
     inputDescriptor: TypeDescriptor,
     propertyName: string
@@ -68,23 +61,16 @@ function transformCommutativeAggregateDescriptor(
 }
 
 /**
- * A step that computes an aggregate value over items in a nested array.
+ * A step that computes an aggregate value over the items of an array, per parent.
  *
- * This step:
- * 1. Registers for add/remove events at the target array level
- * 2. Maintains aggregate state keyed by parent path
- * 3. Emits onModified events when the aggregate changes
- * 4. Transforms the type by replacing the array with the aggregate property
- *
- * **IMPORTANT: Event Channel Separation**
- * - `onAdded`/`onRemoved` pass through immutable properties ONLY (no aggregate)
- * - `onModified` is the ONLY channel for communicating aggregate values
- * - This follows the system pattern: mutable/computed properties use onModified
- *
- * @template TInput - The input type to the step
- * @template TPath - The tuple of array name segments forming the path to the target array
- * @template TPropertyName - The name of the new aggregate property
- * @template TAggregate - The type of the aggregate value
+ * - `onAdded`/`onRemoved` pass through unchanged; the aggregate is delivered only via
+ *   `onModified` at the parent level.
+ * - Each item contributes to the aggregate of its current parent. A move (`onPlaced`)
+ *   subtracts the item from the old parent and adds it to the new one.
+ * - When the aggregated property is mutable, an item contributes only once its value is
+ *   defined; a change subtracts the previous snapshot and adds the new one.
+ * - A parent with no contributing items has no aggregate, whatever it had before, and a
+ *   change that leaves the aggregate as it was emits nothing.
  */
 export class CommutativeAggregateStep<
     TItem extends ImmutableProps,
@@ -92,29 +78,21 @@ export class CommutativeAggregateStep<
     TPropertyName extends string,
     TAggregate
 > implements Step {
-    
-    /** Maps parent key path hash to current aggregate value */
+
+    /** Current aggregate per parent key; absent while no item contributes. */
     private aggregateValues: Map<string, TAggregate> = new Map();
-    
-    /** Maps parent key path hash to count of items (for cleanup tracking) */
-    private itemCounts: Map<string, number> = new Map();
-    
-    /** Handlers for modified events at various levels */
-    private modifiedHandlers: Array<{
-        pathSegments: string[];
-        propertyName: string;
-        handler: ModifiedHandler;
-    }> = [];
-    
+
+    /** Number of contributing items per parent key. */
+    private contributorCounts: Map<string, number> = new Map();
+
+    /** Placement and latest snapshot of each item. */
+    private items: Map<string, { parentKey: string; item: TItem }> = new Map();
+
+    private modifiedHandlers: ModifiedHandler[] = [];
+
     /** Whether the property being aggregated is mutable (auto-detected) */
     private isPropertyMutable: boolean = false;
 
-    /**
-     * Tracks full item snapshots by parent path so mutable-property updates can
-     * reapply operators with the real TItem shape rather than a partial record.
-     */
-    private itemSnapshots: Map<string, Map<string, TItem>> = new Map();
-    
     constructor(
         private input: Step,
         private segmentPath: TPath,
@@ -123,274 +101,124 @@ export class CommutativeAggregateStep<
         private propertyToAggregate: string | undefined,
         inputDescriptor?: TypeDescriptor
     ) {
-        // Register with input step to receive item add/remove events at the target array level
-        this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
-            this.handleItemAdded(keyPath, itemKey, immutableProps);
-        });
-        
-        this.input.onRemoved(this.segmentPath, (keyPath, itemKey, immutableProps) => {
-            this.handleItemRemoved(keyPath, itemKey, immutableProps);
-        });
-        
-        // Auto-detect mutable properties from TypeDescriptor if propertyToAggregate is specified
-        let effectiveMutableProperties: string[] = [];
-        if (propertyToAggregate) {
-            // Check if the property to aggregate is mutable in the TypeDescriptor
-            // Note: DefinePropertyStep and CommutativeAggregateStep add mutable properties at the root level,
-            // not at the nested array level, so we check root-level mutableProperties
-            const rootMutableProperties = inputDescriptor?.mutableProperties ?? [];
-            if (rootMutableProperties.includes(propertyToAggregate)) {
-                effectiveMutableProperties = [propertyToAggregate];
-                this.isPropertyMutable = true;
+        this.input.onAdded(this.segmentPath, (parentKey, itemKey, immutableProps) => {
+            if (parentKey !== undefined) {
+                this.handleItemAdded(parentKey, itemKey, immutableProps);
             }
-        }
-        
-        // Register for mutable property changes at the item level
-        if (effectiveMutableProperties.length > 0) {
-            effectiveMutableProperties.forEach(propName => {
-                this.input.onModified(this.segmentPath, propName, (keyPath, itemKey, oldValue, newValue) => {
-                    this.handleItemPropertyChanged(keyPath, itemKey, propName, oldValue, newValue);
-                });
+        });
+        this.input.onRemoved(this.segmentPath, itemKey => {
+            this.handleItemRemoved(itemKey);
+        });
+        this.input.onPlaced(this.segmentPath, (itemKey, _oldParentKey, newParentKey) => {
+            this.handleItemPlaced(itemKey, newParentKey);
+        });
+
+        // Mutable properties are recorded at the root of the descriptor.
+        if (propertyToAggregate && (inputDescriptor?.mutableProperties ?? []).includes(propertyToAggregate)) {
+            this.isPropertyMutable = true;
+            this.input.onModified(this.segmentPath, propertyToAggregate, (itemKey, _oldValue, newValue) => {
+                this.handleItemPropertyChanged(itemKey, propertyToAggregate, newValue);
             });
         }
     }
-    
+
     onAdded(pathSegments: string[], handler: AddedHandler): void {
         this.input.onAdded(pathSegments, handler);
     }
-    
+
     onRemoved(pathSegments: string[], handler: RemovedHandler): void {
         this.input.onRemoved(pathSegments, handler);
     }
-    
+
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
         if (this.isParentPath(pathSegments) && propertyName === this.propertyName) {
-            // Handler wants modification events at parent level for this aggregate property
-            // This is the channel for receiving aggregate values
-            this.modifiedHandlers.push({
-                pathSegments,
-                propertyName,
-                handler
-            });
+            this.modifiedHandlers.push(handler);
         }
-        // Always pass through to input for other property modifications
         this.input.onModified(pathSegments, propertyName, handler);
     }
-    
-    /**
-     * Checks if the given path segments represent the parent level (where aggregate property lives)
-     */
+
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        this.input.onPlaced(pathSegments, handler);
+    }
+
     private isParentPath(pathSegments: string[]): boolean {
-        // Parent path segments are segmentPath without the last element
         const parentSegments = this.segmentPath.slice(0, -1);
-        
-        if (pathSegments.length !== parentSegments.length) {
-            return false;
-        }
-        
-        return pathSegments.every((segment, i) => segment === parentSegments[i]);
+        return pathSegments.length === parentSegments.length &&
+            pathSegments.every((segment, i) => segment === parentSegments[i]);
     }
 
-    private asAggregateItem(item: ImmutableProps): TItem {
-        return item as TItem;
+    private contributes(item: TItem): boolean {
+        return !(this.isPropertyMutable && this.propertyToAggregate && item[this.propertyToAggregate] === undefined);
     }
 
-    private getItemSnapshotsForParent(parentKeyHash: string): Map<string, TItem> {
-        const existingSnapshots = this.itemSnapshots.get(parentKeyHash);
-        if (existingSnapshots) {
-            return existingSnapshots;
-        }
-        const snapshots = new Map<string, TItem>();
-        this.itemSnapshots.set(parentKeyHash, snapshots);
-        return snapshots;
+    private emit(parentKey: string, oldValue: TAggregate | undefined, newValue: TAggregate | undefined): void {
+        this.modifiedHandlers.forEach(handler => handler(parentKey, oldValue, newValue));
     }
-    
+
     /**
-     * Handle when an item is added to the target array
+     * Removes `withdrawn` from and adds `deposited` to one parent's aggregate, and emits the
+     * change once, if there is one. A parent with no contributing items has no aggregate,
+     * however many it had before.
      */
-    private handleItemAdded(keyPath: string[], itemKey: string, item: ImmutableProps): void {
-        // keyPath contains the runtime keys leading to this item
-        // For segmentPath ['cities', 'venues'], keyPath might be ['hash_TX', 'hash_Dallas']
-        
-        const parentKeyPath = keyPath;
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const itemSnapshots = this.getItemSnapshotsForParent(parentKeyHash);
-        itemSnapshots.set(itemKey, this.asAggregateItem(item));
-        
-        // Track item count for cleanup
-        const currentCount = this.itemCounts.get(parentKeyHash) ?? 0;
-        this.itemCounts.set(parentKeyHash, currentCount + 1);
-        
-        // If the property being aggregated is mutable, the value won't be available yet in onAdded.
-        // The initial value will come via onModified from the upstream step.
-        // In this case, skip aggregation here and let handleItemPropertyChanged handle it.
-        if (this.isPropertyMutable && this.propertyToAggregate) {
-            const propValue = item[this.propertyToAggregate];
-            if (propValue === undefined) {
-                // Property not available yet - wait for onModified
-                // Initialize aggregate to undefined if first item
-                if (!this.aggregateValues.has(parentKeyHash)) {
-                    // Don't set any aggregate yet - wait for onModified
-                }
-                return;
-            }
+    private update(parentKey: string, withdrawn: TItem | undefined, deposited: TItem | undefined): void {
+        const current = this.aggregateValues.get(parentKey);
+        let count = this.contributorCounts.get(parentKey) ?? 0;
+        let value = current;
+        if (withdrawn !== undefined && this.contributes(withdrawn) && value !== undefined) {
+            count -= 1;
+            value = count > 0 ? this.config.subtract(value, withdrawn) : undefined;
         }
-        
-        // Compute new aggregate
-        const currentAggregate = this.aggregateValues.get(parentKeyHash);
-        const newAggregate = this.config.add(currentAggregate, this.asAggregateItem(item));
-        this.aggregateValues.set(parentKeyHash, newAggregate);
-        
-        // Emit modification event
-        // The parent key is the last element of parentKeyPath
-        // The key path to the parent is everything before that
-        if (parentKeyPath.length > 0) {
-            const parentKey = parentKeyPath[parentKeyPath.length - 1];
-            const keyPathToParent = parentKeyPath.slice(0, -1);
-            
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, currentAggregate, newAggregate);
-            });
+        if (deposited !== undefined && this.contributes(deposited)) {
+            count += 1;
+            value = this.config.add(value, deposited);
+        }
+        if (count > 0 && value !== undefined) {
+            this.contributorCounts.set(parentKey, count);
+            this.aggregateValues.set(parentKey, value);
         } else {
-            // Parent is at root level - edge case
-            // In this case, modifiedHandlers at root level would receive updates
-            // But this scenario should be handled differently based on the design
-            // For now, we'll emit to handlers registered at root
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', currentAggregate, newAggregate);
-            });
+            this.contributorCounts.delete(parentKey);
+            this.aggregateValues.delete(parentKey);
+            value = undefined;
+        }
+        if (!Object.is(current, value)) {
+            this.emit(parentKey, current, value);
         }
     }
-    
-    /**
-     * Handle when a mutable property of an aggregated item changes
-     */
-    private handleItemPropertyChanged(keyPath: string[], itemKey: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
-        const parentKeyPath = keyPath;
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const itemSnapshots = this.getItemSnapshotsForParent(parentKeyHash);
-        const existingSnapshot = itemSnapshots.get(itemKey);
 
-        if (!existingSnapshot) {
+    private handleItemAdded(parentKey: string, itemKey: string, immutableProps: ImmutableProps): void {
+        const item = immutableProps as TItem;
+        this.items.set(itemKey, { parentKey, item });
+        this.update(parentKey, undefined, item);
+    }
+
+    private handleItemRemoved(itemKey: string): void {
+        const record = this.items.get(itemKey);
+        if (!record) {
             return;
         }
-
-        const updatedSnapshot = this.asAggregateItem({
-            ...existingSnapshot,
-            [propertyName]: newValue
-        });
-        itemSnapshots.set(itemKey, updatedSnapshot);
-        
-        // Get the current aggregate
-        const currentAggregate = this.aggregateValues.get(parentKeyHash);
-        
-        // Handle the case where this is the first value for a mutable property
-        // (oldValue is undefined, no aggregate yet)
-        if (currentAggregate === undefined && oldValue === undefined) {
-            // This is the initial value for the property - treat as a fresh add.
-            const newAggregate = this.config.add(undefined, updatedSnapshot);
-            this.aggregateValues.set(parentKeyHash, newAggregate);
-            
-            // Emit modification event
-            if (parentKeyPath.length > 0) {
-                const parentKey = parentKeyPath[parentKeyPath.length - 1];
-                const keyPathToParent = parentKeyPath.slice(0, -1);
-                
-                this.modifiedHandlers.forEach(({ handler }) => {
-                    handler(keyPathToParent, parentKey, undefined, newAggregate);
-                });
-            } else {
-                this.modifiedHandlers.forEach(({ handler }) => {
-                    handler([], '', undefined, newAggregate);
-                });
-            }
-            return;
-        }
-        
-        if (currentAggregate === undefined) {
-            // No aggregate yet and not a fresh add - this shouldn't happen but handle gracefully
-            return;
-        }
-        
-        const previousSnapshot = this.asAggregateItem({
-            ...updatedSnapshot,
-            [propertyName]: oldValue
-        });
-        
-        // Compute new aggregate: subtract old value, add new value
-        const intermediateAggregate = this.config.subtract(currentAggregate, previousSnapshot);
-        const newAggregate = this.config.add(intermediateAggregate, updatedSnapshot);
-        
-        // Update stored aggregate
-        this.aggregateValues.set(parentKeyHash, newAggregate);
-        
-        // Emit modification event to downstream handlers
-        if (parentKeyPath.length > 0) {
-            const parentKey = parentKeyPath[parentKeyPath.length - 1];
-            const keyPathToParent = parentKeyPath.slice(0, -1);
-            
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, currentAggregate, newAggregate);
-            });
-        } else {
-            // Parent is at root level
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', currentAggregate, newAggregate);
-            });
-        }
+        this.items.delete(itemKey);
+        this.update(record.parentKey, record.item, undefined);
     }
-    
-    /**
-     * Handle when an item is removed from the target array
-     */
-    private handleItemRemoved(keyPath: string[], itemKey: string, item: ImmutableProps): void {
-        const parentKeyPath = keyPath;
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const itemSnapshots = this.itemSnapshots.get(parentKeyHash);
-        
-        // Get current aggregate
-        const currentAggregate = this.aggregateValues.get(parentKeyHash);
-        if (currentAggregate === undefined) {
-            throw new Error(`No aggregate value for parent ${parentKeyHash}`);
-        }
-        
-        // Compute new aggregate
-        const removedItem = itemSnapshots?.get(itemKey) ?? this.asAggregateItem(item);
-        const newAggregate = this.config.subtract(currentAggregate, removedItem);
-        
-        // Update item count and clean up if no items remain
-        const currentCount = this.itemCounts.get(parentKeyHash) ?? 0;
-        const newCount = currentCount - 1;
-        
-        if (newCount > 0) {
-            this.itemCounts.set(parentKeyHash, newCount);
-            this.aggregateValues.set(parentKeyHash, newAggregate);
-        } else {
-            this.itemCounts.delete(parentKeyHash);
-            this.aggregateValues.delete(parentKeyHash);
-            this.itemSnapshots.delete(parentKeyHash);
-        }
 
-        if (itemSnapshots) {
-            itemSnapshots.delete(itemKey);
-            if (itemSnapshots.size === 0) {
-                this.itemSnapshots.delete(parentKeyHash);
-            }
+    private handleItemPlaced(itemKey: string, newParentKey: string): void {
+        const record = this.items.get(itemKey);
+        if (!record) {
+            return;
         }
-        
-        // Emit modification event
-        if (parentKeyPath.length > 0) {
-            const parentKey = parentKeyPath[parentKeyPath.length - 1];
-            const keyPathToParent = parentKeyPath.slice(0, -1);
-            
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler(keyPathToParent, parentKey, currentAggregate, newAggregate);
-            });
-        } else {
-            this.modifiedHandlers.forEach(({ handler }) => {
-                handler([], '', currentAggregate, newAggregate);
-            });
+        const oldParentKey = record.parentKey;
+        record.parentKey = newParentKey;
+        this.update(oldParentKey, record.item, undefined);
+        this.update(newParentKey, undefined, record.item);
+    }
+
+    private handleItemPropertyChanged(itemKey: string, propertyName: string, newValue: unknown): void {
+        const record = this.items.get(itemKey);
+        if (!record) {
+            return;
         }
+        const previous = record.item;
+        record.item = { ...previous, [propertyName]: newValue } as TItem;
+        this.update(record.parentKey, previous, record.item);
     }
 }
 

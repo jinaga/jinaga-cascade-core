@@ -2,7 +2,7 @@
 import { createPipeline, type DescriptorNode, type TypeDescriptor } from '../index';
 import { createTestPipeline } from './helpers';
 import { ReplaceToDeltaStep } from '../steps/replace-to-delta';
-import type { ImmutableProps, ModifiedHandler, Step } from '../pipeline';
+import type { AddedHandler, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step } from '../pipeline';
 
 type AllocationRow = {
     effectiveClass: string;
@@ -93,8 +93,6 @@ function normalizeOutput(
         .sort((left, right) => left.effectiveClass.localeCompare(right.effectiveClass));
 }
 
-type AddedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
-type RemovedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
 
 class FakeStep implements Step {
     private readonly addedHandlers = new Map<string, AddedHandler[]>();
@@ -124,26 +122,36 @@ class FakeStep implements Step {
         this.modifiedHandlers.set(key, handlers);
     }
 
-    emitAdded(pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
-        const handlers = this.addedHandlers.get(JSON.stringify(pathSegments)) ?? [];
-        handlers.forEach(handler => handler(keyPath, key, immutableProps));
+    private readonly placedHandlers = new Map<string, PlacedHandler[]>();
+
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        const key = JSON.stringify(pathSegments);
+        this.placedHandlers.set(key, [...(this.placedHandlers.get(key) ?? []), handler]);
     }
 
-    emitRemoved(pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
+    emitPlaced(pathSegments: string[], key: string, oldParentKey: string, newParentKey: string): void {
+        (this.placedHandlers.get(JSON.stringify(pathSegments)) ?? []).forEach(handler => handler(key, oldParentKey, newParentKey));
+    }
+
+    emitAdded(pathSegments: string[], parentKey: string | undefined, key: string, immutableProps: ImmutableProps): void {
+        const handlers = this.addedHandlers.get(JSON.stringify(pathSegments)) ?? [];
+        handlers.forEach(handler => handler(parentKey, key, immutableProps));
+    }
+
+    emitRemoved(pathSegments: string[], key: string, immutableProps: ImmutableProps): void {
         const handlers = this.removedHandlers.get(JSON.stringify(pathSegments)) ?? [];
-        handlers.forEach(handler => handler(keyPath, key, immutableProps));
+        handlers.forEach(handler => handler(key, immutableProps));
     }
 
     emitModified(
         pathSegments: string[],
         propertyName: string,
-        keyPath: string[],
         key: string,
         oldValue: unknown,
         newValue: unknown
     ): void {
         const handlers = this.modifiedHandlers.get(`${JSON.stringify(pathSegments)}::${propertyName}`) ?? [];
-        handlers.forEach(handler => handler(keyPath, key, oldValue, newValue));
+        handlers.forEach(handler => handler(key, oldValue, newValue));
     }
 }
 
@@ -431,16 +439,15 @@ describe('ReplaceToDeltaStep internals', () => {
         );
 
         const modifiedEvents: Array<{ key: string; oldValue: unknown; newValue: unknown }> = [];
-        step.onModified(['entities', 'events'], 'delta', (keyPath, key, oldValue, newValue) => {
-            expect(keyPath).toEqual(['entity-1']);
+        step.onModified(['entities', 'events'], 'delta', (key, oldValue, newValue) => {
             modifiedEvents.push({ key, oldValue, newValue });
         });
 
-        fakeInput.emitAdded(['entities'], [], 'entity-1', { entityId: 'E1' });
-        fakeInput.emitAdded(['entities', 'events'], ['entity-1'], 'event-1', { time: 1, id: 't1', amount: 10 });
-        fakeInput.emitAdded(['entities', 'events'], ['entity-1'], 'event-2', { time: 2, id: 't2', amount: 15 });
+        fakeInput.emitAdded(['entities'], 'root', 'entity-1', { entityId: 'E1' });
+        fakeInput.emitAdded(['entities', 'events'], 'entity-1', 'event-1', { time: 1, id: 't1', amount: 10 });
+        fakeInput.emitAdded(['entities', 'events'], 'entity-1', 'event-2', { time: 2, id: 't2', amount: 15 });
 
-        fakeInput.emitModified(['entities', 'events'], 'amount', ['entity-1'], 'event-1', 10, 12);
+        fakeInput.emitModified(['entities', 'events'], 'amount', 'event-1', 10, 12);
 
         expect(modifiedEvents).toEqual([
             { key: 'event-1', oldValue: 10, newValue: 12 },
@@ -477,21 +484,59 @@ describe('ReplaceToDeltaStep internals', () => {
         );
 
         const modifiedEvents: Array<{ key: string; oldValue: unknown; newValue: unknown }> = [];
-        step.onModified(['entities', 'events'], 'delta', (_keyPath, key, oldValue, newValue) => {
+        step.onModified(['entities', 'events'], 'delta', (key, oldValue, newValue) => {
             modifiedEvents.push({ key, oldValue, newValue });
         });
 
-        fakeInput.emitAdded(['entities'], [], 'entity-1', { entityId: 'E1' });
-        fakeInput.emitAdded(['entities', 'events'], ['entity-1'], 'event-1', { time: 1, id: 't1', amount: 10 });
-        fakeInput.emitAdded(['entities', 'events'], ['entity-1'], 'event-2', { time: 2, id: 't2', amount: 15 });
+        fakeInput.emitAdded(['entities'], 'root', 'entity-1', { entityId: 'E1' });
+        fakeInput.emitAdded(['entities', 'events'], 'entity-1', 'event-1', { time: 1, id: 't1', amount: 10 });
+        fakeInput.emitAdded(['entities', 'events'], 'entity-1', 'event-2', { time: 2, id: 't2', amount: 15 });
 
         // Move event-1 after event-2 by changing mutable orderBy field.
         // Expected:
         // - event-2 becomes baseline delta: 15 (from previous 5)
         // - event-1 becomes successor delta: -5 (from previous 10)
-        fakeInput.emitModified(['entities', 'events'], 'time', ['entity-1'], 'event-1', 1, 3);
+        fakeInput.emitModified(['entities', 'events'], 'time', 'event-1', 1, 3);
 
         expect(modifiedEvents).toContainEqual({ key: 'event-2', oldValue: 5, newValue: 15 });
         expect(modifiedEvents).toContainEqual({ key: 'event-1', oldValue: 10, newValue: -5 });
+    });
+
+    it('should recompute deltas in both entities when an event moves between them', () => {
+        const fakeInput = new FakeStep(fakeDescriptorForReplaceToDelta(['id']));
+        const step = new ReplaceToDeltaStep(
+            fakeInput,
+            ['entities'],
+            'events',
+            ['time', 'id'],
+            ['amount'],
+            ['delta'],
+            fakeInput.descriptor
+        );
+
+        const deltas = new Map<string, unknown>();
+        step.onAdded(['entities', 'events'], (_parentKey, key, props) => deltas.set(key, props.delta));
+        step.onModified(['entities', 'events'], 'delta', (key, _oldValue, newValue) => deltas.set(key, newValue));
+        const placed: Array<[string, string, string]> = [];
+        step.onPlaced(['entities', 'events'], (key, from, to) => placed.push([key, from, to]));
+
+        fakeInput.emitAdded(['entities', 'events'], 'E1', 'a1', { time: 1, id: 'a1', amount: 10 });
+        fakeInput.emitAdded(['entities', 'events'], 'E1', 'a2', { time: 2, id: 'a2', amount: 15 });
+        fakeInput.emitAdded(['entities', 'events'], 'E1', 'a3', { time: 3, id: 'a3', amount: 18 });
+        fakeInput.emitAdded(['entities', 'events'], 'E2', 'b1', { time: 1, id: 'b1', amount: 100 });
+        fakeInput.emitAdded(['entities', 'events'], 'E2', 'b3', { time: 3, id: 'b3', amount: 130 });
+        expect(Object.fromEntries(deltas)).toEqual({ a1: 10, a2: 5, a3: 3, b1: 100, b3: 30 });
+
+        fakeInput.emitPlaced(['entities', 'events'], 'a2', 'E1', 'E2');
+        expect(placed).toEqual([['a2', 'E1', 'E2']]);
+        // E1: a1, a3. E2: b1, a2, b3.
+        expect(Object.fromEntries(deltas)).toEqual({ a1: 10, a2: -85, a3: 8, b1: 100, b3: 115 });
+
+        fakeInput.emitModified(['entities', 'events'], 'amount', 'a2', 15, 20);
+        expect(Object.fromEntries(deltas)).toEqual({ a1: 10, a2: -80, a3: 8, b1: 100, b3: 110 });
+
+        step.onRemoved(['entities', 'events'], key => deltas.delete(key));
+        fakeInput.emitRemoved(['entities', 'events'], 'a2', { time: 2, id: 'a2', amount: 20 });
+        expect(Object.fromEntries(deltas)).toEqual({ a1: 10, a3: 8, b1: 100, b3: 30 });
     });
 });

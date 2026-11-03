@@ -29,3 +29,11 @@ export function computeGroupKey(obj: object, groupingProperties: string[]): stri
     return computeHash(canonical);
 }
 
+
+/**
+ * Key of a child node, unique within its level: combines the parent's key with the
+ * child's key, which need only be unique within its parent.
+ */
+export function computeChildKey(parentKey: string, childKey: string): string {
+    return computeHash(JSON.stringify([parentKey, childKey]));
+}

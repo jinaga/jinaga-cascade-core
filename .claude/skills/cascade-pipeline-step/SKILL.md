@@ -1,6 +1,6 @@
 ---
 name: cascade-pipeline-step
-description: Design and implement new pipeline steps for @jinaga/cascade-core. Use when creating a new Step class, adding a builder method to PipelineBuilder, or modifying the event propagation logic of an existing step. Covers the Step interface contract, three-channel event propagation (onAdded/onRemoved/onModified), TypeDescriptor transformation, builder integration, commutativity requirements, and testing patterns.
+description: Design and implement new pipeline steps for @jinaga/cascade-core. Use when creating a new Step class, adding a builder method to PipelineBuilder, or modifying the event propagation logic of an existing step. Covers the Step interface contract, four-channel event propagation (onAdded/onRemoved/onModified/onPlaced), identity and placement, TypeDescriptor transformation, builder integration, commutativity requirements, and testing patterns.
 ---
 
 # Cascade Pipeline Step
@@ -10,10 +10,11 @@ Implement new pipeline steps that participate in cascade-core's incremental reac
 ## Constraints
 
 1. **Commutativity** — The same final `KeyedArray` must result regardless of the order `add`/`remove` are called. Output must be a deterministic function of the current item set, not the arrival order. See [Commutativity Strategies](references/step-patterns.md#commutativity-strategies) for per-step strategies and how to prove this property.
-2. **Three-channel only** — Structural changes use `onAdded`/`onRemoved`. Mutable/computed values use `onModified`. No side-channel state.
-3. **Exact inverses** — `remove(key, props)` must perfectly undo `add(key, props)`. The `onModified` handler carries `(oldValue, newValue)` so downstream steps can subtract the old contribution and add the new without full recomputation.
-4. **No `_` prefix** on private members.
-5. **Degrees of freedom** — Only introduce a new field if it represents an independently varying domain variable not captured by existing fields. If derivable from other state, derive on read. See `AGENTS.md`.
+2. **Four channels only** — Membership changes use `onAdded`/`onRemoved`. Mutable/computed values use `onModified`. A change of parent uses `onPlaced`. No side-channel state.
+3. **Identity, not position** — A node is identified by its level and key; its parent is a changeable value. Key state by node key, never by a path of ancestors. A step that moves a node emits `onPlaced`, never remove + add. See [Placement](../../../docs/architecture/placement.md).
+4. **Exact inverses** — `remove(key, props)` must perfectly undo `add(key, props)`. The `onModified` handler carries `(oldValue, newValue)` so downstream steps can subtract the old contribution and add the new without full recomputation.
+5. **No `_` prefix** on private members.
+6. **Degrees of freedom** — Only introduce a new field if it represents an independently varying domain variable not captured by existing fields. If derivable from other state, derive on read. See `AGENTS.md`.
 
 ## Workflow
 
@@ -56,6 +57,7 @@ describe('myNewStep', () => {
 - Multiple items, correct combined result
 - Remove → output reverts (inverse correctness)
 - Different insertion orders → same final result (commutativity)
+- Item moves to another parent (`onPlaced`) → both parents update; descendants unaffected
 - Mutable property upstream change → downstream updates
 - Empty/edge cases
 
@@ -77,26 +79,22 @@ File: `src/steps/<step-name>.ts`
 
 Read [step-patterns.md](references/step-patterns.md) for the detailed reference on each pattern below.
 
-**Constructor** — Accept `input: Step`, `segmentPath`, `propertyName`, step-specific config, and any descriptor metadata required at runtime (for example upstream `TypeDescriptor` or derived mutable-property lists). Register `input.onAdded(segmentPath, ...)` and `input.onRemoved(segmentPath, ...)`. Register `input.onModified(...)` based on constructor metadata. Step constructors are called by the Builder's `buildGraph(ctx)` method during `build()`, not during the fluent method chain.
+**Constructor** — Accept `input: Step`, `segmentPath`, `propertyName`, step-specific config, and any descriptor metadata required at runtime (for example upstream `TypeDescriptor` or derived mutable-property lists). Register `input.onAdded(segmentPath, ...)`, `input.onRemoved(segmentPath, ...)` and `input.onPlaced(segmentPath, ...)`. Register `input.onModified(...)` based on constructor metadata. Step constructors are called by the Builder's `buildGraph(ctx)` method during `build()`, not during the fluent method chain.
 
 **Descriptor transform** — Keep descriptor shaping in Builder code (`getTypeDescriptor()`) as a pure transform from `this.upstream.getTypeDescriptor()`. Use helpers from `src/util/descriptor-transform.ts` (`appendObjectIfMissing`, `appendMutableIfMissing`, `emptyDescriptorNode`). Always add the output property to `mutableProperties` if it can change after initial add.
 
 **onAdded/onRemoved** — Forward to `this.input` unless this step augments the payload at the matching scope (Transform/Join pattern) or manages structural layers (GroupBy pattern).
 
+**onPlaced** — Forward to `this.input` unless this step owns the level (GroupBy's item level, or a step that re-emits items, like cumulativeSum).
+
 **onModified** — If `pathSegments` matches the parent path and `propertyName` matches this step's output property, capture the handler. Always also forward to `this.input` (except DefinePropertyStep which returns early for its synthetic property to prevent double-registration).
 
-**State** — Use `Map<string, T>` keyed by `computeKeyPathHash(keyPath)`. Use `IndexedHeap` (from `src/util/indexed-heap.ts`) when O(log n) ordered access is needed.
+**State** — Key per-item state by item key (storing the item's `parentKey`), and per-parent state by parent key. Use `IndexedHeap` (from `src/util/indexed-heap.ts`) when O(log n) ordered access is needed.
 
-**Emitting modifications** — Extract `parentKey` and `keyPathToParent` from the full `parentKeyPath`:
+**Emitting modifications** — Address the node by its key:
 
 ```typescript
-if (parentKeyPath.length > 0) {
-    const parentKey = parentKeyPath[parentKeyPath.length - 1];
-    const keyPathToParent = parentKeyPath.slice(0, -1);
-    this.modifiedHandlers.forEach(h => h(keyPathToParent, parentKey, oldValue, newValue));
-} else {
-    this.modifiedHandlers.forEach(h => h([], '', oldValue, newValue));
-}
+this.modifiedHandlers.forEach(h => h(parentKey, oldValue, newValue));
 ```
 
 ### 5. Add the Builder class

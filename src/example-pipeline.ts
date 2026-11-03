@@ -22,8 +22,8 @@ interface OutputCategory {
         value: number;
         name: string;
     }>;
-    totalValue: number;
-    itemCount: number;
+    totalValue: number | undefined;
+    itemCount: number | undefined;
     averageValue: number | undefined;
     maxValue: number | undefined;
     minValue: number | undefined;

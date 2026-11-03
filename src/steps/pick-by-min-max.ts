@@ -6,6 +6,7 @@ import type {
     ImmutableProps,
     ModifiedHandler,
     ObjectDescriptor,
+    PlacedHandler,
     RemovedHandler,
     Step,
     StepBuilder,
@@ -13,13 +14,6 @@ import type {
 } from '../pipeline.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
 import { appendMutableIfMissing, appendObjectIfMissing, emptyDescriptorNode } from '../util/descriptor-transform.js';
-
-/**
- * Computes a hash key for a key path (for map lookups).
- */
-function computeKeyPathHash(keyPath: string[]): string {
-    return keyPath.join('::');
-}
 
 /**
  * Determines if a value is numeric.
@@ -118,8 +112,9 @@ function transformPickByMinMaxDescriptor(
 }
 
 interface ItemRecord {
-    immutableProps: ImmutableProps;
-    mutableProps: Record<string, unknown>;
+    parentKey: string;
+    /** Complete current values of the item. */
+    props: ImmutableProps;
 }
 
 interface HeapValue {
@@ -140,7 +135,7 @@ export class PickByMinMaxStep<
     TPath extends string[],
     TPropertyName extends string
 > implements Step {
-    /** Canonical payload store for all tracked items */
+    /** Placement and current values of every tracked item. */
     private readonly items: Map<string, ItemRecord> = new Map();
 
     /** Heap per parent for ordered comparison values */
@@ -160,23 +155,37 @@ export class PickByMinMaxStep<
         private comparator: (value1: number | string, value2: number | string) => number,
         inputDescriptor: TypeDescriptor
     ) {
-        const rootMutableProperties = inputDescriptor.mutableProperties;
-        const isPropertyMutable = rootMutableProperties.includes(comparisonProperty);
-
-        this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
-            this.handleItemAdded(keyPath, itemKey, immutableProps);
-        });
-
-        this.input.onRemoved(this.segmentPath, (keyPath, itemKey) => {
-            this.handleItemRemoved(keyPath, itemKey);
-        });
-
-        if (isPropertyMutable) {
-            for (const mutableProp of rootMutableProperties) {
-                this.input.onModified(this.segmentPath, mutableProp, (keyPath, itemKey, _oldValue, newValue) => {
-                    this.handleMutablePropertyChanged(keyPath, itemKey, mutableProp, newValue);
-                });
+        this.input.onAdded(this.segmentPath, (parentKey, itemKey, immutableProps) => {
+            if (parentKey !== undefined) {
+                this.items.set(itemKey, { parentKey, props: immutableProps });
+                this.insert(itemKey);
+                this.emitModification(parentKey);
             }
+        });
+        this.input.onRemoved(this.segmentPath, itemKey => {
+            const record = this.items.get(itemKey);
+            if (record) {
+                this.withdraw(itemKey);
+                this.items.delete(itemKey);
+                this.emitModification(record.parentKey);
+            }
+        });
+        this.input.onPlaced(this.segmentPath, (itemKey, oldParentKey, newParentKey) => {
+            const record = this.items.get(itemKey);
+            if (record) {
+                this.withdraw(itemKey);
+                record.parentKey = newParentKey;
+                this.insert(itemKey);
+                this.emitModification(oldParentKey);
+                this.emitModification(newParentKey);
+            }
+        });
+
+        // The picked object is the whole item, so every mutable property is tracked.
+        for (const mutableProp of inputDescriptor.mutableProperties) {
+            this.input.onModified(this.segmentPath, mutableProp, (itemKey, _oldValue, newValue) => {
+                this.handleMutablePropertyChanged(itemKey, mutableProp, newValue);
+            });
         }
     }
 
@@ -195,9 +204,10 @@ export class PickByMinMaxStep<
         this.input.onModified(pathSegments, propertyName, handler);
     }
 
-    /**
-     * Checks if the given path segments represent the parent level (where picked object property lives).
-     */
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        this.input.onPlaced(pathSegments, handler);
+    }
+
     private isParentPath(pathSegments: string[]): boolean {
         const parentSegments = this.segmentPath.slice(0, -1);
         if (pathSegments.length !== parentSegments.length) {
@@ -206,12 +216,20 @@ export class PickByMinMaxStep<
         return pathSegments.every((segment, index) => segment === parentSegments[index]);
     }
 
-    private getItemKeyHash(parentKeyPath: string[], itemKey: string): string {
-        return computeKeyPathHash([...parentKeyPath, itemKey]);
+    private getComparisonValue(itemRecord: ItemRecord): number | string | undefined {
+        return parseComparisonValue(itemRecord.props[this.comparisonProperty]);
     }
 
-    private getOrCreateHeap(parentKeyHash: string): IndexedHeap<HeapValue> {
-        let heap = this.heaps.get(parentKeyHash);
+    private insert(itemKey: string): void {
+        const record = this.items.get(itemKey);
+        if (!record) {
+            return;
+        }
+        const comparisonValue = this.getComparisonValue(record);
+        if (comparisonValue === undefined) {
+            return;
+        }
+        let heap = this.heaps.get(record.parentKey);
         if (!heap) {
             heap = new IndexedHeap<HeapValue>((left, right) => {
                 const comparisonResult = this.comparator(left.comparisonValue, right.comparisonValue);
@@ -226,165 +244,61 @@ export class PickByMinMaxStep<
                 }
                 return 0;
             });
-            this.heaps.set(parentKeyHash, heap);
+            this.heaps.set(record.parentKey, heap);
         }
-        return heap;
+        heap.insert({ comparisonValue, tieBreakerId: itemKey }, itemKey);
     }
 
-    private removeHeapIfEmpty(parentKeyHash: string): void {
-        const heap = this.heaps.get(parentKeyHash);
-        if (heap?.isEmpty()) {
-            this.heaps.delete(parentKeyHash);
-        }
-    }
-
-    private getCurrentPropertyValue(itemRecord: ItemRecord, property: string): unknown {
-        if (Object.prototype.hasOwnProperty.call(itemRecord.mutableProps, property)) {
-            return itemRecord.mutableProps[property];
-        }
-        return itemRecord.immutableProps[property];
-    }
-
-    private getComparisonValue(itemRecord: ItemRecord): number | string | undefined {
-        const rawValue = this.getCurrentPropertyValue(itemRecord, this.comparisonProperty);
-        return parseComparisonValue(rawValue);
-    }
-
-    private handleItemAdded(parentKeyPath: string[], itemKey: string, item: ImmutableProps): void {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const itemKeyHash = this.getItemKeyHash(parentKeyPath, itemKey);
-        const itemRecord: ItemRecord = {
-            immutableProps: item,
-            mutableProps: {}
-        };
-
-        this.items.set(itemKeyHash, itemRecord);
-
-        const comparisonValue = this.getComparisonValue(itemRecord);
-        if (comparisonValue !== undefined) {
-            this.getOrCreateHeap(parentKeyHash).insert(
-                {
-                    comparisonValue,
-                    tieBreakerId: itemKeyHash
-                },
-                itemKeyHash
-            );
-        }
-
-        this.emitModification(parentKeyPath);
-    }
-
-    private handleItemRemoved(parentKeyPath: string[], itemKey: string): void {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const itemKeyHash = this.getItemKeyHash(parentKeyPath, itemKey);
-
-        const heap = this.heaps.get(parentKeyHash);
-        if (heap) {
-            heap.removeById(itemKeyHash);
-            this.removeHeapIfEmpty(parentKeyHash);
-        }
-
-        this.items.delete(itemKeyHash);
-        this.emitModification(parentKeyPath);
-    }
-
-    /**
-     * Handle when any mutable property of an item changes.
-     */
-    private handleMutablePropertyChanged(
-        parentKeyPath: string[],
-        itemKey: string,
-        property: string,
-        newValue: unknown
-    ): void {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const itemKeyHash = this.getItemKeyHash(parentKeyPath, itemKey);
-        const itemRecord = this.items.get(itemKeyHash);
-        if (!itemRecord) {
+    private withdraw(itemKey: string): void {
+        const record = this.items.get(itemKey);
+        if (!record) {
             return;
         }
-
-        const oldComparisonValue =
-            property === this.comparisonProperty
-                ? this.getComparisonValue(itemRecord)
-                : undefined;
-
-        // Always store the latest mutable value, including null/undefined.
-        // Undefined/null must shadow immutable props for correct valid -> null transitions.
-        itemRecord.mutableProps[property] = newValue;
-
-        if (property === this.comparisonProperty) {
-            const newComparisonValue = this.getComparisonValue(itemRecord);
-            if (!comparisonValuesEqual(oldComparisonValue, newComparisonValue)) {
-                const heap = this.heaps.get(parentKeyHash);
-                if (heap) {
-                    heap.removeById(itemKeyHash);
-                    this.removeHeapIfEmpty(parentKeyHash);
-                }
-                if (newComparisonValue !== undefined) {
-                    this.getOrCreateHeap(parentKeyHash).insert(
-                        {
-                            comparisonValue: newComparisonValue,
-                            tieBreakerId: itemKeyHash
-                        },
-                        itemKeyHash
-                    );
-                }
+        const heap = this.heaps.get(record.parentKey);
+        if (heap) {
+            heap.removeById(itemKey);
+            if (heap.isEmpty()) {
+                this.heaps.delete(record.parentKey);
             }
         }
-
-        this.emitModification(parentKeyPath);
     }
 
-    private materializePickedItem(parentKeyHash: string): ImmutableProps | undefined {
-        const heap = this.heaps.get(parentKeyHash);
-        if (!heap) {
-            return undefined;
+    private handleMutablePropertyChanged(itemKey: string, property: string, newValue: unknown): void {
+        const record = this.items.get(itemKey);
+        if (!record) {
+            return;
         }
-
-        let topEntry = heap.peek();
-        while (topEntry) {
-            const itemRecord = this.items.get(topEntry.id);
-            if (itemRecord) {
-                return {
-                    ...itemRecord.immutableProps,
-                    ...itemRecord.mutableProps
-                };
-            }
-            heap.removeById(topEntry.id);
-            topEntry = heap.peek();
+        const oldComparisonValue = this.getComparisonValue(record);
+        record.props = { ...record.props, [property]: newValue };
+        if (!comparisonValuesEqual(oldComparisonValue, this.getComparisonValue(record))) {
+            this.withdraw(itemKey);
+            this.insert(itemKey);
         }
+        this.emitModification(record.parentKey);
+    }
 
-        this.heaps.delete(parentKeyHash);
-        return undefined;
+    private materializePickedItem(parentKey: string): ImmutableProps | undefined {
+        const topEntry = this.heaps.get(parentKey)?.peek();
+        return topEntry ? this.items.get(topEntry.id)?.props : undefined;
     }
 
     /**
      * Emits a modification event for the picked object.
      */
-    private emitModification(parentKeyPath: string[]): void {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const oldPickedItem = this.lastEmitted.get(parentKeyHash);
-        const newPickedItem = this.materializePickedItem(parentKeyHash);
+    private emitModification(parentKey: string): void {
+        const oldPickedItem = this.lastEmitted.get(parentKey);
+        const newPickedItem = this.materializePickedItem(parentKey);
 
         if (newPickedItem === undefined) {
-            this.lastEmitted.delete(parentKeyHash);
+            this.lastEmitted.delete(parentKey);
         } else {
-            this.lastEmitted.set(parentKeyHash, newPickedItem);
+            this.lastEmitted.set(parentKey, newPickedItem);
         }
 
-        if (parentKeyPath.length > 0) {
-            const parentKey = parentKeyPath[parentKeyPath.length - 1];
-            const keyPathToParent = parentKeyPath.slice(0, -1);
-            this.modifiedHandlers.forEach(handler => {
-                handler(keyPathToParent, parentKey, oldPickedItem, newPickedItem);
-            });
-            return;
+        // The same picked object, unchanged, is not a change.
+        if (!Object.is(oldPickedItem, newPickedItem)) {
+            this.modifiedHandlers.forEach(handler => handler(parentKey, oldPickedItem, newPickedItem));
         }
-
-        this.modifiedHandlers.forEach(handler => {
-            handler([], '', oldPickedItem, newPickedItem);
-        });
     }
 }
 

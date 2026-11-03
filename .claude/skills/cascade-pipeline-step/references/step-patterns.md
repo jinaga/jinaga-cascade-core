@@ -54,7 +54,7 @@ The built-in `sum` satisfies these trivially (addition of numbers). Custom aggre
 
 ## Mutable Property Propagation Chain
 
-Steps form a reactive chain where `onModified` events propagate downstream. Each link carries `(keyPath, key, oldValue, newValue)`, giving every downstream step enough information to compute its inverse without full recomputation.
+Steps form a reactive chain where `onModified` events propagate downstream. Each link carries `(key, oldValue, newValue)`, giving every downstream step enough information to compute its inverse without full recomputation.
 
 ### Example: pickByMax → defineProperty → sum
 
@@ -73,11 +73,11 @@ sum("attendees", "a0", "t0") listens for onModified("a0") →
 
 ### Why old + new values matter
 
-The `ModifiedHandler` signature `(keyPath, key, oldValue, newValue)` is deliberate. It enables incremental updates without full recomputation:
+The `ModifiedHandler` signature `(key, oldValue, newValue)` is deliberate. It enables incremental updates without full recomputation:
 
 - **Aggregates** subtract the old contribution and add the new: `newAcc = add(subtract(acc, oldItem), newItem)`. This is O(1) per modification rather than O(n) re-aggregation.
 - **DefineProperty** uses old/new to detect whether the computed value actually changed, suppressing no-op emissions.
-- **GroupBy** uses old/new grouping values to move an item from old group to new group (remove + add) rather than re-partitioning all items.
+- **GroupBy** uses the new grouping value to move an item to its new group with one `onPlaced` event. The item's values and descendants are untouched, so nothing is re-emitted.
 
 ### Multiple emissions per input event
 
@@ -97,20 +97,26 @@ File: `src/pipeline.ts`
 
 ```typescript
 export type ImmutableProps = { [key: string]: unknown };
-export type AddedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
-export type RemovedHandler = (keyPath: string[], key: string, immutableProps: ImmutableProps) => void;
-export type ModifiedHandler = (keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void;
+export type AddedHandler = (parentKey: string | undefined, key: string, immutableProps: ImmutableProps) => void;
+export type RemovedHandler = (key: string, immutableProps: ImmutableProps) => void;
+export type ModifiedHandler = (key: string, oldValue: unknown, newValue: unknown) => void;
+export type PlacedHandler = (key: string, oldParentKey: string, newParentKey: string) => void;
 
 export interface Step {
     onAdded(pathSegments: string[], handler: AddedHandler): void;
     onRemoved(pathSegments: string[], handler: RemovedHandler): void;
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void;
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void;
 }
 ```
 
-**Three event channels:**
-- `onAdded` / `onRemoved` — structural membership changes (item appeared / disappeared)
-- `onModified` — a named mutable property on an existing item changed
+**Identity and placement.** A node is identified by its level (`pathSegments`) and its `key`. Keys are unique within a level across the whole pipeline: root keys by contract, and every key a step creates below the root is derived from the parent's key (`computeChildKey`). A node's parent is its *placement*, a changeable value. See [Placement](../../../../docs/architecture/placement.md).
+
+**Four event channels:**
+- `onAdded` — a node appeared under `parentKey` (undefined at the root level). The payload carries the node's complete current values.
+- `onRemoved` — a node disappeared.
+- `onModified` — a named mutable property of an existing node changed.
+- `onPlaced` — a node at a nested level moved to another parent. Its descendants keep their own placement, so they do not move separately.
 
 **pathSegments** identifies which logical array path in the type tree the subscriber cares about (e.g. `[]` for root, `['cities', 'venues']` for nested array). Steps compare or prefix-match these to decide whether to handle or forward.
 
@@ -151,11 +157,14 @@ Every Step registers listeners on its upstream `input` Step in the constructor. 
 
 ```typescript
 constructor(private input: Step, private segmentPath: string[], ...) {
-    this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
-        this.handleItemAdded(keyPath, itemKey, immutableProps);
+    this.input.onAdded(this.segmentPath, (parentKey, itemKey, immutableProps) => {
+        this.handleItemAdded(parentKey, itemKey, immutableProps);
     });
-    this.input.onRemoved(this.segmentPath, (keyPath, itemKey, immutableProps) => {
-        this.handleItemRemoved(keyPath, itemKey, immutableProps);
+    this.input.onRemoved(this.segmentPath, itemKey => {
+        this.handleItemRemoved(itemKey);
+    });
+    this.input.onPlaced(this.segmentPath, (itemKey, oldParentKey, newParentKey) => {
+        this.handleItemPlaced(itemKey, newParentKey);
     });
 }
 ```
@@ -166,8 +175,8 @@ constructor(private input: Step, private segmentPath: string[], ...) {
 const rootMutableProperties = inputDescriptor.mutableProperties;
 
 if (rootMutableProperties.includes(propertyToWatch)) {
-    this.input.onModified(this.segmentPath, propertyToWatch, (keyPath, itemKey, oldValue, newValue) => {
-        this.handleItemPropertyChanged(keyPath, itemKey, oldValue, newValue);
+    this.input.onModified(this.segmentPath, propertyToWatch, (itemKey, oldValue, newValue) => {
+        this.handleItemPropertyChanged(itemKey, oldValue, newValue);
     });
 }
 ```
@@ -178,7 +187,7 @@ Check upstream `mutableProperties` at the root level. Builders pass descriptor m
 
 ## Handler Forwarding
 
-The `onAdded`/`onRemoved`/`onModified` methods serve two purposes:
+The `onAdded`/`onRemoved`/`onModified`/`onPlaced` methods serve two purposes:
 1. **Capture handlers** for this step's own output properties
 2. **Forward to `this.input`** for anything this step doesn't own
 
@@ -201,6 +210,10 @@ onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandle
     }
     this.input.onModified(pathSegments, propertyName, handler);
 }
+
+onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+    this.input.onPlaced(pathSegments, handler);
+}
 ```
 
 ### Pattern: DefineProperty/Enrich steps (augment onAdded payload)
@@ -210,9 +223,9 @@ The step wraps the `onAdded` handler to inject computed/enriched values into the
 ```typescript
 onAdded(pathSegments: string[], handler: AddedHandler): void {
     if (pathsMatch(pathSegments, this.scopeSegments)) {
-        this.input.onAdded(pathSegments, (keyPath, key, immutableProps) => {
+        this.input.onAdded(pathSegments, (parentKey, key, immutableProps) => {
             const computed = this.compute(immutableProps);
-            handler(keyPath, key, { ...immutableProps, [this.propertyName]: computed });
+            handler(parentKey, key, { ...immutableProps, [this.propertyName]: computed });
         });
     } else {
         this.input.onAdded(pathSegments, handler);
@@ -225,16 +238,16 @@ onAdded(pathSegments: string[], handler: AddedHandler): void {
 ```typescript
 onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
     if (propertyName === this.propertyName && pathsMatch(pathSegments, this.scopeSegments)) {
-        this.modifiedHandlers.push({ pathSegments, propertyName, handler });
+        this.modifiedHandlers.push(handler);
         return; // Do NOT forward — this property is synthetic
     }
     this.input.onModified(pathSegments, propertyName, handler);
 }
 ```
 
-### Pattern: GroupBy (path rewriting)
+### Pattern: GroupBy (placement)
 
-GroupBy inserts a `groupKey` into keyPaths for nested paths, intercepting registrations and rewriting keyPaths in callbacks:
+GroupBy owns the group level and the item level. Paths below the item level map to the input by replacing the item level with the scope; keys pass through unchanged, because a descendant's parent is the item, not the group.
 
 ```typescript
 onAdded(pathSegments: string[], handler: AddedHandler): void {
@@ -242,38 +255,25 @@ onAdded(pathSegments: string[], handler: AddedHandler): void {
         this.groupAddedHandlers.push(handler);
     } else if (this.isAtItemLevel(pathSegments)) {
         this.itemAddedHandlers.push(handler);
-    } else if (this.isBelowItemLevel(pathSegments)) {
-        const shiftedSegments = pathSegments.slice(itemSegmentPath.length);
-        this.input.onAdded([...this.scopeSegments, ...shiftedSegments], (keyPath, key, props) => {
-            const groupKey = this.itemKeyToGroupKey.get(keyPath[this.scopeSegments.length]);
-            const modifiedKeyPath = [...keyPath.slice(0, scopeLen), groupKey, ...keyPath.slice(scopeLen)];
-            handler(modifiedKeyPath, key, props);
-        });
     } else {
-        this.input.onAdded(pathSegments, handler);
+        this.input.onAdded(this.toInputPath(pathSegments), handler);
     }
 }
 ```
 
+When a grouping value changes, the item moves: the new group is added if needed, `onPlaced(item, oldGroup, newGroup)` is emitted, and the old group is removed if it is now empty.
+
 ---
 
-## Key Path Management
+## State Keys
 
-Steps use `keyPath` (runtime key array) and `pathSegments` (schema-level array names) differently:
+Steps use `pathSegments` (schema-level array names) to register, and node keys to track state:
 
 - **pathSegments** = array names in the TypeDescriptor tree (e.g. `['cities', 'venues']`)
-- **keyPath** = runtime hash keys identifying a specific path through the data (e.g. `['hash_TX', 'hash_Dallas']`)
+- **key** = a node's key, unique within its level
+- **parentKey** = the node's placement, delivered by `onAdded` and changed by `onPlaced`
 
-### Computing parent context
-
-```typescript
-function computeKeyPathHash(keyPath: string[]): string {
-    return keyPath.join('::');
-}
-
-// Parent key path = keyPath as received (it's already the path to the parent context)
-const parentKeyHash = computeKeyPathHash(parentKeyPath);
-```
+Key per-item state by the item's key and store its `parentKey` in that record. Key per-parent state (an aggregate, a heap, a sorted list) by the parent's key. Never key state by a path of ancestors: an ancestor can move without notifying the item.
 
 ### isParentPath helper
 
@@ -291,23 +291,15 @@ private isParentPath(pathSegments: string[]): boolean {
 
 ## Modification Emission
 
-When a step needs to notify downstream that a property changed, it calls its stored `modifiedHandlers`. The emission pattern extracts `parentKey` and `keyPathToParent` from the full `parentKeyPath`:
+Aggregate and pick steps emit at the parent level, addressed by the parent's key:
 
 ```typescript
-private emitModification(parentKeyPath: string[], oldValue: unknown, newValue: unknown): void {
-    if (parentKeyPath.length > 0) {
-        const parentKey = parentKeyPath[parentKeyPath.length - 1];
-        const keyPathToParent = parentKeyPath.slice(0, -1);
-        this.modifiedHandlers.forEach(handler => {
-            handler(keyPathToParent, parentKey, oldValue, newValue);
-        });
-    } else {
-        this.modifiedHandlers.forEach(handler => {
-            handler([], '', oldValue, newValue);
-        });
-    }
+private emit(parentKey: string, oldValue: unknown, newValue: unknown): void {
+    this.modifiedHandlers.forEach(handler => handler(parentKey, oldValue, newValue));
 }
 ```
+
+On `onPlaced(item, oldParent, newParent)`, remove the item's contribution from `oldParent`, add it to `newParent`, and emit for both.
 
 ---
 
@@ -502,8 +494,8 @@ sources.mySource.add('key1', { ... });
 
 ### Structural steps (reshape the tree)
 
-**GroupByStep**: splits items into groups by key properties, creating a new array nesting level. Intercepts all three channel registrations and rewrites keyPaths. Handles mutable grouping properties (re-group on change).
+**GroupByStep**: splits items into groups by key properties, creating a new array nesting level. Owns the group and item levels and forwards everything below the item level unchanged. A change to a mutable grouping property moves the item with `onPlaced`.
 
 ### Join steps (cross-pipeline enrichment)
 
-**EnrichStep**: subscribes to both a primary `input` and a separate `secondary` step. Joins on key properties. Maintains secondary state as a `KeyedArray`. Emits `onModified` for the enriched property when either side changes.
+**EnrichStep**: subscribes to both a primary `input` and a separate `secondary` step. Joins on key properties. Maintains secondary state as a `KeyedArray` located through a `PlacementIndex`. Emits `onModified` for the enriched property when either side changes.

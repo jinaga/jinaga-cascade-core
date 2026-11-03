@@ -1,11 +1,10 @@
 // @ts-nocheck
 import { createPipeline } from '../index';
-import type { AddedHandler, ImmutableProps, ModifiedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline';
+import type { AddedHandler, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, TypeDescriptor } from '../pipeline';
 import { CumulativeSumStep } from '../steps/cumulative-sum';
 import { createTestPipeline } from './helpers';
 
 type ModifiedEvent = {
-    keyPath: string[];
     key: string;
     oldValue: unknown;
     newValue: unknown;
@@ -40,26 +39,29 @@ class FakeInputStep implements Step {
         this.modifiedHandlers.set(registrationKey, handlers);
     }
 
-    emitAdded(pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
-        const pathKey = JSON.stringify(pathSegments);
-        (this.addedHandlers.get(pathKey) ?? []).forEach(handler => handler(keyPath, key, immutableProps));
+    onPlaced(_pathSegments: string[], _handler: PlacedHandler): void {
+        // Items in these tests never move.
     }
 
-    emitRemoved(pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
+    emitAdded(pathSegments: string[], parentKey: string, key: string, immutableProps: ImmutableProps): void {
         const pathKey = JSON.stringify(pathSegments);
-        (this.removedHandlers.get(pathKey) ?? []).forEach(handler => handler(keyPath, key, immutableProps));
+        (this.addedHandlers.get(pathKey) ?? []).forEach(handler => handler(parentKey, key, immutableProps));
+    }
+
+    emitRemoved(pathSegments: string[], key: string, immutableProps: ImmutableProps): void {
+        const pathKey = JSON.stringify(pathSegments);
+        (this.removedHandlers.get(pathKey) ?? []).forEach(handler => handler(key, immutableProps));
     }
 
     emitModified(
         pathSegments: string[],
         propertyName: string,
-        keyPath: string[],
         key: string,
         oldValue: unknown,
         newValue: unknown
     ): void {
         const registrationKey = `${JSON.stringify(pathSegments)}::${propertyName}`;
-        (this.modifiedHandlers.get(registrationKey) ?? []).forEach(handler => handler(keyPath, key, oldValue, newValue));
+        (this.modifiedHandlers.get(registrationKey) ?? []).forEach(handler => handler(key, oldValue, newValue));
     }
 }
 
@@ -268,8 +270,8 @@ describe('CumulativeSumStep (incremental behavior)', () => {
         );
 
         const modified: ModifiedEvent[] = [];
-        step.onModified(['items'], 'value', (keyPath, key, oldValue, newValue) => {
-            modified.push({ keyPath, key, oldValue, newValue });
+        step.onModified(['items'], 'value', (key, oldValue, newValue) => {
+            modified.push({ key, oldValue, newValue });
         });
 
         return { fakeInput, step, modified };
@@ -278,26 +280,26 @@ describe('CumulativeSumStep (incremental behavior)', () => {
     it('should propagate cumulative value modifications through suffix on input value change', () => {
         const { fakeInput, modified } = createStepHarness();
 
-        fakeInput.emitAdded(['items'], [], 'i1', { order: 1, value: 10, label: 'A' });
-        fakeInput.emitAdded(['items'], [], 'i2', { order: 2, value: 5, label: 'B' });
+        fakeInput.emitAdded(['items'], 'g1', 'i1', { order: 1, value: 10, label: 'A' });
+        fakeInput.emitAdded(['items'], 'g1', 'i2', { order: 2, value: 5, label: 'B' });
         modified.length = 0;
 
-        fakeInput.emitModified(['items'], 'value', [], 'i1', 10, 13);
+        fakeInput.emitModified(['items'], 'value', 'i1', 10, 13);
 
         expect(modified).toEqual([
-            { keyPath: [], key: 'i1', oldValue: 10, newValue: 13 },
-            { keyPath: [], key: 'i2', oldValue: 15, newValue: 18 }
+            { key: 'i1', oldValue: 10, newValue: 13 },
+            { key: 'i2', oldValue: 15, newValue: 18 }
         ]);
     });
 
     it('should emit no cumulative modifications for zero-delta value changes', () => {
         const { fakeInput, modified } = createStepHarness();
 
-        fakeInput.emitAdded(['items'], [], 'i1', { order: 1, value: 10, label: 'A' });
-        fakeInput.emitAdded(['items'], [], 'i2', { order: 2, value: 5, label: 'B' });
+        fakeInput.emitAdded(['items'], 'g1', 'i1', { order: 1, value: 10, label: 'A' });
+        fakeInput.emitAdded(['items'], 'g1', 'i2', { order: 2, value: 5, label: 'B' });
         modified.length = 0;
 
-        fakeInput.emitModified(['items'], 'value', [], 'i1', 10, 10);
+        fakeInput.emitModified(['items'], 'value', 'i1', 10, 10);
 
         expect(modified).toEqual([]);
     });
@@ -306,15 +308,15 @@ describe('CumulativeSumStep (incremental behavior)', () => {
         const { fakeInput, step } = createStepHarness();
 
         const forwarded: ModifiedEvent[] = [];
-        step.onModified(['items'], 'label', (keyPath, key, oldValue, newValue) => {
-            forwarded.push({ keyPath, key, oldValue, newValue });
+        step.onModified(['items'], 'label', (key, oldValue, newValue) => {
+            forwarded.push({ key, oldValue, newValue });
         });
 
-        fakeInput.emitAdded(['items'], [], 'i1', { order: 1, value: 10, label: 'A' });
-        fakeInput.emitModified(['items'], 'label', [], 'i1', 'A', 'B');
+        fakeInput.emitAdded(['items'], 'g1', 'i1', { order: 1, value: 10, label: 'A' });
+        fakeInput.emitModified(['items'], 'label', 'i1', 'A', 'B');
 
         expect(forwarded).toEqual([
-            { keyPath: [], key: 'i1', oldValue: 'A', newValue: 'B' }
+            { key: 'i1', oldValue: 'A', newValue: 'B' }
         ]);
     });
 });

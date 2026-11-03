@@ -5,6 +5,7 @@ import type {
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
+    PlacedHandler,
     RemovedHandler,
     Step,
     StepBuilder,
@@ -12,11 +13,8 @@ import type {
 } from '../pipeline.js';
 import { appendMutableIfMissing, appendObjectIfMissing } from '../util/descriptor-transform.js';
 import { pathsMatch } from '../util/path.js';
-import { getPathSegmentsFromDescriptor as getAllPathSegmentsFromDescriptor } from '../pipeline.js';
-
-function keyPathHash(keyPath: string[]): string {
-    return keyPath.join('::');
-}
+import { collectAllMutableProperties, getPathSegmentsFromDescriptor as getAllPathSegmentsFromDescriptor } from '../pipeline.js';
+import { PlacementIndex, addNode, modifyNode, moveNode, removeNode, type KeyedTree } from '../util/keyed-tree.js';
 
 function stableSerialize(value: unknown): string {
     return JSON.stringify(value);
@@ -41,17 +39,11 @@ type EmitDiagnostic = (diagnostic: {
 }) => void;
 
 interface PrimaryRecord {
-    keyPath: string[];
-    primaryKey: string;
     immutableProps: ImmutableProps;
     /** Serialized join tuple when indexed; null when the row has no valid join (same as add skipped). */
     joinKeyHash: string | null;
 }
 
-interface SecondaryRecord {
-    keyPath: string[];
-    immutableProps: ImmutableProps;
-}
 
 function addObjectAtPath(
     descriptor: DescriptorNode,
@@ -156,14 +148,14 @@ export class EnrichBuilder implements StepBuilder {
     }
 }
 
-type KeyedArray<T> = { key: string; value: T }[];
-
 export class EnrichStep implements Step {
     private readonly primaryRowsById = new Map<string, PrimaryRecord>();
     private readonly primaryIdsByJoinKey = new Map<string, Set<string>>();
-    private readonly secondaryRowByJoinKey = new Map<string, SecondaryRecord>();
+    private readonly secondaryRowByJoinKey = new Map<string, ImmutableProps>();
     private readonly modifiedHandlers: ModifiedHandler[] = [];
-    private secondaryState: KeyedArray<ImmutableProps> = [];
+    /** The secondary pipeline's output, and the placement of each of its nested nodes. */
+    private secondaryState: KeyedTree = [];
+    private readonly secondaryPlacements = new PlacementIndex();
     private readonly secondaryCollectionKey: string[];
 
     constructor(
@@ -176,17 +168,17 @@ export class EnrichStep implements Step {
         secondaryDescriptor: TypeDescriptor,
         private readonly emitDiagnostic?: EmitDiagnostic
     ) {
-        this.input.onAdded(this.scopeSegments, (keyPath, key, immutableProps) => {
-            this.handlePrimaryAdded(keyPath, key, immutableProps);
+        this.input.onAdded(this.scopeSegments, (_parentKey, key, immutableProps) => {
+            this.handlePrimaryAdded(key, immutableProps);
         });
-        this.input.onRemoved(this.scopeSegments, (keyPath, key, immutableProps) => {
-            this.handlePrimaryRemoved(keyPath, key, immutableProps);
+        this.input.onRemoved(this.scopeSegments, key => {
+            this.handlePrimaryRemoved(key);
         });
 
         const primaryKeyColumns = new Set(this.primaryKey);
         for (const propertyName of primaryKeyColumns) {
-            this.input.onModified(this.scopeSegments, propertyName, (keyPath, key, _oldValue, newValue) => {
-                this.handlePrimaryJoinKeyPropertyModified(keyPath, key, propertyName, newValue);
+            this.input.onModified(this.scopeSegments, propertyName, (key, _oldValue, newValue) => {
+                this.handlePrimaryJoinKeyPropertyModified(key, propertyName, newValue);
             });
         }
 
@@ -195,15 +187,18 @@ export class EnrichStep implements Step {
         const mutableProperties = collectAllMutableProperties(secondaryDescriptor);
 
         for (const segmentPath of secondaryPaths) {
-            this.secondary.onAdded(segmentPath, (keyPath, key, immutableProps) => {
-                this.handleSecondaryAddedAtPath(segmentPath, keyPath, key, immutableProps);
+            this.secondary.onAdded(segmentPath, (parentKey, key, immutableProps) => {
+                this.handleSecondaryAdded(segmentPath, parentKey, key, immutableProps);
             });
-            this.secondary.onRemoved(segmentPath, (keyPath, key, immutableProps) => {
-                this.handleSecondaryRemovedAtPath(segmentPath, keyPath, key, immutableProps);
+            this.secondary.onRemoved(segmentPath, key => {
+                this.handleSecondaryRemoved(segmentPath, key);
+            });
+            this.secondary.onPlaced(segmentPath, (key, _oldParentKey, newParentKey) => {
+                this.handleSecondaryPlaced(segmentPath, key, newParentKey);
             });
             for (const propertyName of mutableProperties) {
-                this.secondary.onModified(segmentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
-                    this.handleSecondaryModifiedAtPath(segmentPath, keyPath, key, propertyName, newValue);
+                this.secondary.onModified(segmentPath, propertyName, (key, _oldValue, newValue) => {
+                    this.handleSecondaryModified(segmentPath, key, propertyName, newValue);
                 });
             }
         }
@@ -211,9 +206,9 @@ export class EnrichStep implements Step {
 
     onAdded(pathSegments: string[], handler: AddedHandler): void {
         if (pathsMatch(pathSegments, this.scopeSegments)) {
-            this.input.onAdded(pathSegments, (keyPath, key, immutableProps) => {
+            this.input.onAdded(pathSegments, (parentKey, key, immutableProps) => {
                 const enrichedValue = this.resolveEnrichmentForPrimary(immutableProps);
-                handler(keyPath, key, {
+                handler(parentKey, key, {
                     ...immutableProps,
                     [this.asProperty]: enrichedValue
                 });
@@ -225,9 +220,9 @@ export class EnrichStep implements Step {
 
     onRemoved(pathSegments: string[], handler: RemovedHandler): void {
         if (pathsMatch(pathSegments, this.scopeSegments)) {
-            this.input.onRemoved(pathSegments, (keyPath, key, immutableProps) => {
+            this.input.onRemoved(pathSegments, (key, immutableProps) => {
                 const enrichedValue = this.resolveEnrichmentForPrimary(immutableProps);
-                handler(keyPath, key, {
+                handler(key, {
                     ...immutableProps,
                     [this.asProperty]: enrichedValue
                 });
@@ -244,8 +239,8 @@ export class EnrichStep implements Step {
         this.input.onModified(pathSegments, propertyName, handler);
     }
 
-    private primaryId(keyPath: string[], key: string): string {
-        return `${keyPathHash(keyPath)}::${key}`;
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        this.input.onPlaced(pathSegments, handler);
     }
 
     private secondaryJoinFromSecondaryRow(row: ImmutableProps): string | null {
@@ -294,8 +289,7 @@ export class EnrichStep implements Step {
         if (joinHash === null) {
             return this.whenMissing;
         }
-        const matched = this.secondaryRowByJoinKey.get(joinHash);
-        return matched?.immutableProps ?? this.whenMissing;
+        return this.secondaryRowByJoinKey.get(joinHash) ?? this.whenMissing;
     }
 
     private resolveEnrichmentForPrimary(primaryRow: ImmutableProps): ImmutableProps | undefined {
@@ -303,15 +297,12 @@ export class EnrichStep implements Step {
         return this.resolveEnrichmentFromJoinHash(joinHash);
     }
 
-    private handlePrimaryAdded(keyPath: string[], key: string, immutableProps: ImmutableProps): void {
+    private handlePrimaryAdded(key: string, immutableProps: ImmutableProps): void {
         const joinHash = this.primaryJoinFromPrimaryRow(immutableProps);
         if (joinHash === null) {
             return;
         }
-        const id = this.primaryId(keyPath, key);
-        this.primaryRowsById.set(id, {
-            keyPath,
-            primaryKey: key,
+        this.primaryRowsById.set(key, {
             immutableProps,
             joinKeyHash: joinHash
         });
@@ -320,16 +311,15 @@ export class EnrichStep implements Step {
             ids = new Set<string>();
             this.primaryIdsByJoinKey.set(joinHash, ids);
         }
-        ids.add(id);
+        ids.add(key);
     }
 
-    private handlePrimaryRemoved(keyPath: string[], key: string, _immutableProps: ImmutableProps): void {
-        const id = this.primaryId(keyPath, key);
-        const existing = this.primaryRowsById.get(id);
+    private handlePrimaryRemoved(key: string): void {
+        const existing = this.primaryRowsById.get(key);
         if (!existing) {
             return;
         }
-        this.primaryRowsById.delete(id);
+        this.primaryRowsById.delete(key);
         if (existing.joinKeyHash === null) {
             return;
         }
@@ -337,20 +327,14 @@ export class EnrichStep implements Step {
         if (!ids) {
             return;
         }
-        ids.delete(id);
+        ids.delete(key);
         if (ids.size === 0) {
             this.primaryIdsByJoinKey.delete(existing.joinKeyHash);
         }
     }
 
-    private handlePrimaryJoinKeyPropertyModified(
-        keyPath: string[],
-        key: string,
-        propertyName: string,
-        newValue: unknown
-    ): void {
-        const id = this.primaryId(keyPath, key);
-        const record = this.primaryRowsById.get(id);
+    private handlePrimaryJoinKeyPropertyModified(key: string, propertyName: string, newValue: unknown): void {
+        const record = this.primaryRowsById.get(key);
         if (!record) {
             return;
         }
@@ -371,23 +355,21 @@ export class EnrichStep implements Step {
         if (oldJoinHash !== null) {
             const oldSet = this.primaryIdsByJoinKey.get(oldJoinHash);
             if (oldSet) {
-                oldSet.delete(id);
+                oldSet.delete(key);
                 if (oldSet.size === 0) {
                     this.primaryIdsByJoinKey.delete(oldJoinHash);
                 }
             }
         }
 
+        record.joinKeyHash = newJoinHash;
         if (newJoinHash !== null) {
-            record.joinKeyHash = newJoinHash;
             let ids = this.primaryIdsByJoinKey.get(newJoinHash);
             if (!ids) {
                 ids = new Set<string>();
                 this.primaryIdsByJoinKey.set(newJoinHash, ids);
             }
-            ids.add(id);
-        } else {
-            record.joinKeyHash = null;
+            ids.add(key);
         }
 
         const previous = oldEnrichment ?? this.whenMissing;
@@ -396,67 +378,69 @@ export class EnrichStep implements Step {
             return;
         }
         this.modifiedHandlers.forEach(handler => {
-            handler(record.keyPath, record.primaryKey, previous, next);
+            handler(key, previous, next);
         });
     }
 
-    private handleSecondaryAddedAtPath(
-        segmentPath: string[],
-        keyPath: string[],
-        key: string,
-        immutableProps: ImmutableProps
-    ): void {
-        const rootKey = this.getRootKey(segmentPath, keyPath, key);
-        if (!rootKey) {
-            return;
-        }
-        const oldRootRow = getRowByKey(this.secondaryState, rootKey);
-        this.secondaryState = addToKeyedArray(this.secondaryState, segmentPath, keyPath, key, immutableProps);
-        const newRootRow = getRowByKey(this.secondaryState, rootKey);
-        this.applySecondaryRootChange(oldRootRow, newRootRow);
-    }
-
-    private handleSecondaryRemovedAtPath(
-        segmentPath: string[],
-        keyPath: string[],
-        key: string,
-        _immutableProps: ImmutableProps
-    ): void {
-        const rootKey = this.getRootKey(segmentPath, keyPath, key);
-        if (!rootKey) {
-            return;
-        }
-        const oldRootRow = getRowByKey(this.secondaryState, rootKey);
-        this.secondaryState = removeFromKeyedArray(this.secondaryState, segmentPath, keyPath, key);
-        const newRootRow = getRowByKey(this.secondaryState, rootKey);
-        this.applySecondaryRootChange(oldRootRow, newRootRow);
-    }
-
-    private handleSecondaryModifiedAtPath(
-        segmentPath: string[],
-        keyPath: string[],
-        key: string,
-        propertyName: string,
-        newValue: unknown
-    ): void {
-        const rootKey = this.getRootKey(segmentPath, keyPath, key);
-        if (!rootKey) {
-            return;
-        }
-        const oldRootRow = getRowByKey(this.secondaryState, rootKey);
-        this.secondaryState = modifyInKeyedArray(this.secondaryState, segmentPath, keyPath, key, propertyName, newValue);
-        const newRootRow = getRowByKey(this.secondaryState, rootKey);
-        this.applySecondaryRootChange(oldRootRow, newRootRow);
-    }
-
-    private getRootKey(segmentPath: string[], keyPath: string[], key: string): string | null {
+    /** Key of the root row of the secondary output that contains a node. */
+    private secondaryRootKey(segmentPath: string[], key: string): string | undefined {
         if (segmentPath.length === 0) {
             return key;
         }
-        if (keyPath.length === 0) {
-            return null;
+        return this.secondaryPlacements.locateNode(segmentPath, key)?.[0];
+    }
+
+    /** Applies a change to the secondary output and propagates changes to affected root rows. */
+    private updateSecondary(rootKeys: (string | undefined)[], change: (state: KeyedTree) => KeyedTree | undefined): void {
+        const roots = [...new Set(rootKeys.filter((rootKey): rootKey is string => rootKey !== undefined))];
+        const oldRows = roots.map(rootKey => getRowByKey(this.secondaryState, rootKey));
+        const next = change(this.secondaryState);
+        if (next === undefined) {
+            return;
         }
-        return keyPath[0];
+        this.secondaryState = next;
+        roots.forEach((rootKey, index) => {
+            this.applySecondaryRootChange(oldRows[index], getRowByKey(this.secondaryState, rootKey));
+        });
+    }
+
+    private handleSecondaryAdded(segmentPath: string[], parentKey: string | undefined, key: string, immutableProps: ImmutableProps): void {
+        const keyPath = this.secondaryPlacements.locate(segmentPath, parentKey);
+        if (keyPath === undefined) {
+            return;
+        }
+        this.secondaryPlacements.set(segmentPath, key, parentKey);
+        const rootKey = segmentPath.length === 0 ? key : keyPath[0];
+        this.updateSecondary([rootKey], state => addNode(state, segmentPath, keyPath, key, immutableProps));
+    }
+
+    private handleSecondaryRemoved(segmentPath: string[], key: string): void {
+        const keyPath = this.secondaryPlacements.locateNode(segmentPath, key);
+        if (keyPath === undefined) {
+            return;
+        }
+        const rootKey = this.secondaryRootKey(segmentPath, key);
+        this.secondaryPlacements.delete(segmentPath, key);
+        this.updateSecondary([rootKey], state => removeNode(state, segmentPath, keyPath, key));
+    }
+
+    private handleSecondaryPlaced(segmentPath: string[], key: string, newParentKey: string): void {
+        const keyPath = this.secondaryPlacements.locateNode(segmentPath, key);
+        const toKeyPath = this.secondaryPlacements.locate(segmentPath, newParentKey);
+        if (keyPath === undefined || toKeyPath === undefined) {
+            return;
+        }
+        this.secondaryPlacements.set(segmentPath, key, newParentKey);
+        this.updateSecondary([keyPath[0], toKeyPath[0]], state => moveNode(state, segmentPath, keyPath, toKeyPath, key));
+    }
+
+    private handleSecondaryModified(segmentPath: string[], key: string, propertyName: string, newValue: unknown): void {
+        const keyPath = this.secondaryPlacements.locateNode(segmentPath, key);
+        if (keyPath === undefined) {
+            return;
+        }
+        const rootKey = this.secondaryRootKey(segmentPath, key);
+        this.updateSecondary([rootKey], state => modifyNode(state, segmentPath, keyPath, key, propertyName, newValue));
     }
 
     private applySecondaryRootChange(
@@ -472,7 +456,7 @@ export class EnrichStep implements Step {
         }
 
         if (newJoinHash !== null && newRootRow) {
-            this.secondaryRowByJoinKey.set(newJoinHash, { keyPath: [], immutableProps: newRootRow });
+            this.secondaryRowByJoinKey.set(newJoinHash, newRootRow);
             if (oldJoinHash === newJoinHash) {
                 this.emitModifiedForJoinKey(newJoinHash, oldRootRow, newRootRow);
             }
@@ -504,180 +488,13 @@ export class EnrichStep implements Step {
             return;
         }
         for (const id of impactedPrimaryIds) {
-            const record = this.primaryRowsById.get(id);
-            if (!record) {
-                continue;
-            }
             this.modifiedHandlers.forEach(handler => {
-                handler(record.keyPath, record.primaryKey, previous, next);
+                handler(id, previous, next);
             });
         }
     }
 }
 
-function collectAllMutableProperties(descriptor: DescriptorNode): string[] {
-    const mutableProps = new Set<string>();
-    for (const prop of descriptor.mutableProperties) {
-        mutableProps.add(prop);
-    }
-    for (const arrayDesc of descriptor.arrays) {
-        const nestedProps = collectAllMutableProperties(arrayDesc.type);
-        nestedProps.forEach(prop => mutableProps.add(prop));
-    }
-    return Array.from(mutableProps);
-}
-
-function createKeyToIndexMap<T>(state: KeyedArray<T>): Map<string, number> {
-    const keyToIndex = new Map<string, number>();
-    state.forEach((item, index) => keyToIndex.set(item.key, index));
-    return keyToIndex;
-}
-
-function addToKeyedArray<T>(
-    state: KeyedArray<T>,
-    segmentPath: string[],
-    keyPath: string[],
-    key: string,
-    immutableProps: ImmutableProps
-): KeyedArray<T> {
-    if (segmentPath.length === 0) {
-        return [...state, { key, value: immutableProps as T }];
-    }
-    const parentKey = keyPath[0];
-    const segment = segmentPath[0];
-    const keyToIndex = createKeyToIndexMap(state);
-    const existingItemIndex = keyToIndex.get(parentKey);
-    if (existingItemIndex === undefined) {
-        return state;
-    }
-    const existingItem = state[existingItemIndex];
-    const value = existingItem.value as Record<string, unknown>;
-    const existingArray = (value[segment] as KeyedArray<unknown>) || [];
-    const modifiedArray = addToKeyedArray(
-        existingArray,
-        segmentPath.slice(1),
-        keyPath.slice(1),
-        key,
-        immutableProps
-    );
-    const modifiedItem = {
-        key: parentKey,
-        value: {
-            ...value,
-            [segment]: modifiedArray
-        } as T
-    };
-    return [
-        ...state.slice(0, existingItemIndex),
-        modifiedItem,
-        ...state.slice(existingItemIndex + 1)
-    ];
-}
-
-function removeFromKeyedArray<T>(
-    state: KeyedArray<T>,
-    segmentPath: string[],
-    keyPath: string[],
-    key: string
-): KeyedArray<T> {
-    if (segmentPath.length === 0) {
-        return state.filter(item => item.key !== key);
-    }
-    const parentKey = keyPath[0];
-    const segment = segmentPath[0];
-    const keyToIndex = createKeyToIndexMap(state);
-    const existingItemIndex = keyToIndex.get(parentKey);
-    if (existingItemIndex === undefined) {
-        return state;
-    }
-    const existingItem = state[existingItemIndex];
-    const value = existingItem.value as Record<string, unknown>;
-    const existingArray = (value[segment] as KeyedArray<unknown>) || [];
-    const modifiedArray = removeFromKeyedArray(
-        existingArray,
-        segmentPath.slice(1),
-        keyPath.slice(1),
-        key
-    );
-    const modifiedItem = {
-        key: parentKey,
-        value: {
-            ...value,
-            [segment]: modifiedArray
-        } as T
-    };
-    return [
-        ...state.slice(0, existingItemIndex),
-        modifiedItem,
-        ...state.slice(existingItemIndex + 1)
-    ];
-}
-
-function modifyInKeyedArray<T>(
-    state: KeyedArray<T>,
-    segmentPath: string[],
-    keyPath: string[],
-    key: string,
-    name: string,
-    value: unknown
-): KeyedArray<T> {
-    if (segmentPath.length === 0) {
-        const keyToIndex = createKeyToIndexMap(state);
-        const existingItemIndex = keyToIndex.get(key);
-        if (existingItemIndex === undefined) {
-            return state;
-        }
-        const existingItem = state[existingItemIndex];
-        const existingValue = existingItem.value as Record<string, unknown>;
-        const modifiedItem = {
-            key,
-            value: {
-                ...existingValue,
-                [name]: value
-            } as T
-        };
-        return [
-            ...state.slice(0, existingItemIndex),
-            modifiedItem,
-            ...state.slice(existingItemIndex + 1)
-        ];
-    }
-
-    const parentKey = keyPath[0];
-    const segment = segmentPath[0];
-    const keyToIndex = createKeyToIndexMap(state);
-    const existingItemIndex = keyToIndex.get(parentKey);
-    if (existingItemIndex === undefined) {
-        return state;
-    }
-    const existingItem = state[existingItemIndex];
-    const existingValue = existingItem.value as Record<string, unknown>;
-    const existingArray = (existingValue[segment] as KeyedArray<unknown>) || [];
-    const modifiedArray = modifyInKeyedArray(
-        existingArray,
-        segmentPath.slice(1),
-        keyPath.slice(1),
-        key,
-        name,
-        value
-    );
-    const modifiedItem = {
-        key: parentKey,
-        value: {
-            ...existingValue,
-            [segment]: modifiedArray
-        } as T
-    };
-    return [
-        ...state.slice(0, existingItemIndex),
-        modifiedItem,
-        ...state.slice(existingItemIndex + 1)
-    ];
-}
-
-function getRowByKey(
-    state: KeyedArray<ImmutableProps>,
-    key: string
-): ImmutableProps | undefined {
-    return state.find(item => item.key === key)?.value;
+function getRowByKey(state: KeyedTree, key: string): ImmutableProps | undefined {
+    return state.find(item => item.key === key)?.value as ImmutableProps | undefined;
 }
