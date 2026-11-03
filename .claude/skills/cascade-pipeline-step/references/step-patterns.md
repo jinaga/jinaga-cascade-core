@@ -375,6 +375,12 @@ Each fluent method on `PipelineBuilder`:
 
 Builders are immutable and hold no mutable state. Steps are created later by `build()`.
 
+### Names that become properties
+
+A parameter whose value becomes a property, array or source name of the rows (an output property, a group level, a flattened array) must be typed `TName & SingleName<TName>` (`src/types/names.ts`; `SingleNames` for a tuple of names). The runtime creates exactly the name it is given, so a union or a widened `string` would give the rows a type that promises properties they do not have. Add `expectError` cases for both to `src/test/names.type.test-d.ts`.
+
+Tests stay type-checked: never add `@ts-nocheck`, `@ts-ignore` or `any` to make them compile. Loosen a type only to test what an untyped caller can do, with `@ts-expect-error` and a reason.
+
 ### Scope segments
 
 - Most methods reset scope to `[]` (the returned builder operates at root)
