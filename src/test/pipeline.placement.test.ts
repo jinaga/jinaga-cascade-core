@@ -367,17 +367,19 @@ describe('review regressions', () => {
         expect(diagnostics).toEqual([]);
     });
 
-    it('a child added before its parent is dropped and does not linger', () => {
+    it('a child added before its parent is refused, and no aggregate counts it (#31)', () => {
         const diagnostics: string[] = [];
         const builder = filesPipeline().sum('files', 'size', 'total');
         let state = [];
         const pipeline = builder.build(t => { state = t(state); }, { onDiagnostic: d => diagnostics.push(d.code) });
         pipeline.collection('files').add('F9', '1', { size: 10 });
         pipeline.add('F9', { name: 'nine' });
+        pipeline.collection('files').add('F9', '2', { size: 5 });
         pipeline.flush();
-        // The child and the aggregate change it caused are both reported and dropped.
-        expect([...diagnostics].sort()).toEqual(['missing_item_modify_dropped', 'missing_parent_add_dropped']);
-        expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([{ name: 'nine', files: [] }]);
+        expect(diagnostics).toEqual(['missing_parent_add_dropped']);
+        expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([
+            { name: 'nine', total: 5, files: [{ size: 5 }] }
+        ]);
     });
 });
 
@@ -586,5 +588,34 @@ describe('reentrant subscribers', () => {
         pipeline.flush();
         expect(diagnostics).toEqual([]);
         expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([{ g: 'a', n: 1, items: [{ v: 2 }] }]);
+    });
+});
+
+describe('orphan children', () => {
+    it('a grandchild whose parent was refused is refused too, and an orphan removal is a no-op', () => {
+        const diagnostics: string[] = [];
+        const builder = createPipeline('roots', [{ name: 'r', type: 'string' }], [
+            {
+                name: 'folders',
+                type: {
+                    arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }],
+                    collectionKey: [],
+                    scalars: [{ name: 'name', type: 'string' }],
+                    objects: [],
+                    mutableProperties: []
+                }
+            }
+        ]).in('folders').count('files', 'n');
+        let state = [];
+        const pipeline = builder.build(t => { state = t(state); }, { onDiagnostic: d => diagnostics.push(d.code) });
+        pipeline.add('R', { r: 'root' });
+        pipeline.collection('folders', 'files').add(['R', 'F1'], '1', { size: 10 });
+        pipeline.collection('folders', 'files').remove(['R', 'F1'], '1', { size: 10 });
+        pipeline.collection('folders').add('R', 'F1', { name: 'one' });
+        pipeline.flush();
+        expect(diagnostics).toEqual(['missing_parent_add_dropped']);
+        expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([
+            { r: 'root', folders: [{ name: 'one', files: [] }] }
+        ]);
     });
 });

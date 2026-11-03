@@ -32,8 +32,9 @@ export interface SourceBindableInput<T, TSources extends Record<string, unknown>
      * Emit an item add at a nested source path. `segmentPath` names the declared source
      * array (e.g. `['bookmarks']`); `parentKeyPath` is the runtime key path identifying the
      * parent item (length must equal `segmentPath.length`); `key` is the child's natural key.
+     * Returns false, and emits nothing, when that parent is not present.
      */
-    addAt(segmentPath: string[], parentKeyPath: string[], key: string, immutableProps: ImmutableProps): void;
+    addAt(segmentPath: string[], parentKeyPath: string[], key: string, immutableProps: ImmutableProps): boolean;
     removeAt(segmentPath: string[], parentKeyPath: string[], key: string, immutableProps: ImmutableProps): void;
 }
 
