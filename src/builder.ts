@@ -14,7 +14,7 @@ import {
     type TypeDescriptor
 } from './pipeline.js';
 import { type AddOperator, type SubtractOperator } from './steps/commutative-aggregate.js';
-import { NavigateToPath, TransformAtPath } from './types/path.js';
+import { NavigateToPath, TransformAndRenameAtPath, TransformAtPath } from './types/path.js';
 import { buildStepGraph } from './step-builders.js';
 import { DefinePropertyBuilder } from './steps/define-property.js';
 import { DropPropertyBuilder } from './steps/drop-property.js';
@@ -807,7 +807,7 @@ export class PipelineBuilder<
     ): PipelineBuilder<
         Path extends []
             ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
-            : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
+            : Expand<TransformAndRenameAtPath<T, Path, ArrayName, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
         TStart,
         [],
         Path extends [] ? ArrayName : RootScopeName,
@@ -828,7 +828,7 @@ export class PipelineBuilder<
         return this.rootScoped<
             Path extends []
                 ? Expand<{ [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>
-                : Expand<TransformAtPath<T, Path, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
+                : Expand<TransformAndRenameAtPath<T, Path, ArrayName, { [P in K]: NavigateToPath<T, Path>[P] } & { [P in CurrentScopeName<Path, RootScopeName>]: KeyedArray<{ [Q in Exclude<keyof NavigateToPath<T, Path>, K>]: NavigateToPath<T, Path>[Q] }> }>>,
             Path extends [] ? ArrayName : RootScopeName
         >(newBuilder);
     }
