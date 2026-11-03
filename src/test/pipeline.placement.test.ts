@@ -566,3 +566,25 @@ describe('aggregates match the proven model', () => {
         expect(seen).toEqual([]);
     });
 });
+
+describe('reentrant subscribers', () => {
+    it('a row added while its group is being created joins that group', () => {
+        const diagnostics: string[] = [];
+        const builder = createPipeline().groupBy(['g'], 'groups').count('items', 'n');
+        let state = [];
+        let pipeline;
+        let reacted = false;
+        pipeline = builder.build(t => {
+            state = t(state);
+            if (!reacted && state.length === 1) {
+                reacted = true;
+                pipeline.add('2', { g: 'a', v: 2 });
+            }
+        }, { batchSize: 1, onDiagnostic: d => diagnostics.push(d.code) });
+        pipeline.add('1', { g: 'a', v: 1 });
+        pipeline.remove('1', { g: 'a', v: 1 });
+        pipeline.flush();
+        expect(diagnostics).toEqual([]);
+        expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([{ g: 'a', n: 1, items: [{ v: 2 }] }]);
+    });
+});

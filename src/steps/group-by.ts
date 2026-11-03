@@ -278,10 +278,11 @@ export class GroupByStep<
     private join(item: TrackedItem): string {
         const groupKey = this.groupKeyOf(item);
         const size = this.groupSizes.get(groupKey) ?? 0;
+        // Record the member before notifying: a handler can add another row to this group.
+        this.groupSizes.set(groupKey, size + 1);
         if (size === 0) {
             this.groupAddedHandlers.forEach(handler => handler(item.parentKey, groupKey, item.groupingValues));
         }
-        this.groupSizes.set(groupKey, size + 1);
         return groupKey;
     }
 
