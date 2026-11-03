@@ -1,26 +1,7 @@
-// @ts-nocheck
 import { createPipeline } from '../index';
 import { createTestPipeline } from './helpers';
 
 describe('pipeline mutable properties', () => {
-    describe('onModified signature change', () => {
-        it('should pass property name at registration and oldValue/newValue in handler', () => {
-            const [pipeline, getOutput] = createTestPipeline(() =>
-                createPipeline<{ category: string; total: number }>()
-                    .sum('items', 'price', 'total')
-            );
-
-            // Access the step to register for modifications
-            // This test verifies the signature change works
-            pipeline.add('item1', { category: 'A', price: 100 } as any);
-            
-            // The sum step should emit onModified with new signature
-            // We'll verify this through the output
-            const output = getOutput();
-            expect(output).toBeDefined();
-        });
-    });
-
     describe('filter with mutable properties - re-evaluation', () => {
         /**
          * Scenario from design document Section 3.2 (Scenario 2):
@@ -35,7 +16,7 @@ describe('pipeline mutable properties', () => {
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
                         .sum('items', 'amount', 'totalAmount')
-                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                        .filter(item => item.totalAmount !== undefined && item.totalAmount > 100, ['totalAmount'])
                 );
 
                 // Step 1: Add an order with amount = 50 (below threshold of 100)
@@ -62,7 +43,7 @@ describe('pipeline mutable properties', () => {
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
                         .sum('items', 'amount', 'totalAmount')
-                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                        .filter(item => item.totalAmount !== undefined && item.totalAmount > 100, ['totalAmount'])
                 );
 
                 // Add orders to two different customers, both below threshold
@@ -96,7 +77,7 @@ describe('pipeline mutable properties', () => {
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
                         .sum('items', 'amount', 'totalAmount')
-                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                        .filter(item => item.totalAmount !== undefined && item.totalAmount > 100, ['totalAmount'])
                 );
 
                 // Add orders that put customer above threshold (150 > 100)
@@ -126,7 +107,7 @@ describe('pipeline mutable properties', () => {
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
                         .sum('items', 'amount', 'totalAmount')
-                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                        .filter(item => item.totalAmount !== undefined && item.totalAmount > 100, ['totalAmount'])
                 );
 
                 // Add enough orders to stay above threshold after removal
@@ -157,7 +138,7 @@ describe('pipeline mutable properties', () => {
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
                         .sum('items', 'amount', 'totalAmount')
-                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                        .filter(item => item.totalAmount !== undefined && item.totalAmount > 100, ['totalAmount'])
                 );
 
                 // Add order that puts customer exactly at boundary (100 is NOT > 100)
@@ -181,7 +162,7 @@ describe('pipeline mutable properties', () => {
                     createPipeline<{ customerId: string; amount: number }>()
                         .groupBy(['customerId'], 'orders')
                         .sum('items', 'amount', 'totalAmount')
-                        .filter(item => item.totalAmount > 100, ['totalAmount'])
+                        .filter(item => item.totalAmount !== undefined && item.totalAmount > 100, ['totalAmount'])
                 );
 
                 // Start above threshold
@@ -210,24 +191,22 @@ describe('pipeline mutable properties', () => {
 
     describe('defineProperty with mutable properties', () => {
         it('should recompute defined property when mutable dependency changes', () => {
-            const [pipeline, getOutput] = createTestPipeline(() => 
-                createPipeline<{ name: string; total: number }>()
-                    .sum('orders', 'amount', 'total')
-                    .defineProperty('status', item => {
-                        if (item.total < 500) return 'Bronze';
-                        if (item.total < 1000) return 'Silver';
+            const [pipeline, getOutput] = createTestPipeline(() =>
+                createPipeline<{ name: string; amount: number }>()
+                    .groupBy(['name'], 'customers')
+                    .sum('items', 'amount', 'total')
+                    .defineProperty('status', customer => {
+                        if (customer.total !== undefined && customer.total < 500) return 'Bronze';
+                        if (customer.total !== undefined && customer.total < 1000) return 'Silver';
                         return 'Gold';
                     }, ['total'])
             );
 
-            pipeline.add('customer1', { name: 'Alice', orders: [{ amount: 300 }] } as any);
-            
-            let output = getOutput();
-            // Note: This test requires full mutable properties implementation
-            // For now, we verify the API compiles and basic structure works
-            expect(output.length).toBeGreaterThan(0);
-            // The status computation depends on mutable 'total' property
-            // Full implementation would track mutable values and recompute on change
+            pipeline.add('o1', { name: 'Alice', amount: 300 });
+            expect(getOutput()).toEqual([{ name: 'Alice', total: 300, status: 'Bronze', items: [{ amount: 300 }] }]);
+
+            pipeline.add('o2', { name: 'Alice', amount: 400 });
+            expect(getOutput()[0].status).toBe('Silver');
         });
     });
 
@@ -255,8 +234,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])  // 'total' is a mutable property
                         .groupBy(['bucket'], 'entities')
@@ -300,8 +279,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])
                         .groupBy(['bucket'], 'entities')
@@ -347,8 +326,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])
                         .groupBy(['bucket'], 'entities')
@@ -381,8 +360,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])
                         .groupBy(['bucket'], 'entities')
@@ -415,8 +394,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])
                         .groupBy(['bucket'], 'entities')
@@ -461,8 +440,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])
                         .groupBy(['bucket'], 'entities')
@@ -492,8 +471,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])
                         .groupBy(['bucket'], 'entities')
@@ -531,8 +510,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])
                         .groupBy(['bucket'], 'entities')
@@ -555,8 +534,8 @@ describe('pipeline mutable properties', () => {
                         .groupBy(['entityId'], 'entries')
                         .sum('items', 'amount', 'total')
                         .defineProperty('bucket', item => {
-                            if (item.total < 200) return 'low';
-                            if (item.total < 400) return 'medium';
+                            if (item.total !== undefined && item.total < 200) return 'low';
+                            if (item.total !== undefined && item.total < 400) return 'medium';
                             return 'high';
                         }, ['total'])
                         .groupBy(['bucket'], 'entities')
@@ -651,7 +630,7 @@ describe('pipeline mutable properties', () => {
                         .sum('items', 'basePrice', 'totalSpent')
                         // Define discount based on totalSpent (mutable property)
                         // Discount is 10% if total > 200, otherwise 0
-                        .defineProperty('discountRate', item => item.totalSpent > 200 ? 0.1 : 0, ['totalSpent'])
+                        .defineProperty('discountRate', item => item.totalSpent !== undefined && item.totalSpent > 200 ? 0.1 : 0, ['totalSpent'])
                 );
 
                 // Add orders - first order for product A (not enough for discount)
@@ -697,7 +676,7 @@ describe('pipeline mutable properties', () => {
                         // Define adjusted price based on productTotal
                         // If productTotal > 100, adjusted = productTotal * 1.1, else productTotal
                         .in('products').defineProperty('adjustedTotal', item =>
-                            item.productTotal > 100 ? item.productTotal * 1.1 : item.productTotal,
+                            item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 1.1 : item.productTotal,
                             ['productTotal']
                         )
                         // Sum adjustedTotal at category level
@@ -740,7 +719,7 @@ describe('pipeline mutable properties', () => {
                         .in('items').groupBy(['productId'], 'products')
                         .in('products').sum('items', 'amount', 'productTotal')
                         .in('products').defineProperty('adjustedTotal', item =>
-                            item.productTotal > 100 ? item.productTotal * 1.2 : item.productTotal,
+                            item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 1.2 : item.productTotal,
                             ['productTotal']
                         )
                         .sum('products', 'adjustedTotal', 'categoryTotal')
@@ -785,7 +764,7 @@ describe('pipeline mutable properties', () => {
                         .in('items').groupBy(['productId'], 'products')
                         .in('products').sum('items', 'amount', 'productTotal')
                         .in('products').defineProperty('adjustedTotal', item =>
-                            item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
+                            item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal * 1.5 : item.productTotal,
                             ['productTotal']
                         )
                         .sum('products', 'adjustedTotal', 'categoryTotal')
@@ -830,12 +809,12 @@ describe('pipeline mutable properties', () => {
                         .in('items').groupBy(['productId'], 'products')
                         .in('products').sum('items', 'amount', 'productTotal')
                         .in('products').defineProperty('adjustedTotal', item =>
-                            item.productTotal > 50 ? item.productTotal * 2 : item.productTotal,
+                            item.productTotal !== undefined && item.productTotal > 50 ? item.productTotal * 2 : item.productTotal,
                             ['productTotal']
                         )
                         .sum('products', 'adjustedTotal', 'categoryTotal')
                         // Filter: only show categories with total > 200
-                        .filter(cat => cat.categoryTotal > 200, ['categoryTotal'])
+                        .filter(cat => cat.categoryTotal !== undefined && cat.categoryTotal > 200, ['categoryTotal'])
                 );
 
                 // Add product with small amount - category won't pass filter
@@ -872,7 +851,7 @@ describe('pipeline mutable properties', () => {
                         .in('products').sum('items', 'amount', 'productTotal')
                         // Zero out if productTotal > 100
                         .in('products').defineProperty('adjustedTotal', item =>
-                            item.productTotal > 100 ? 0 : item.productTotal,
+                            item.productTotal !== undefined && item.productTotal > 100 ? 0 : item.productTotal,
                             ['productTotal']
                         )
                         .sum('products', 'adjustedTotal', 'categoryTotal')
@@ -902,7 +881,7 @@ describe('pipeline mutable properties', () => {
                         .in('products').sum('items', 'amount', 'productTotal')
                         // If productTotal > 100, deduct fee: productTotal - 200
                         .in('products').defineProperty('netTotal', item =>
-                            item.productTotal > 100 ? item.productTotal - 200 : item.productTotal,
+                            item.productTotal !== undefined && item.productTotal > 100 ? item.productTotal - 200 : item.productTotal,
                             ['productTotal']
                         )
                         .sum('products', 'netTotal', 'categoryNet')
@@ -936,7 +915,7 @@ describe('pipeline mutable properties', () => {
                         .in('items').groupBy(['productId'], 'products')
                         .in('products').sum('items', 'amount', 'productTotal')
                         .in('products').defineProperty('bonus', item =>
-                            item.productTotal >= 100 ? 50 : 0,
+                            item.productTotal !== undefined && item.productTotal >= 100 ? 50 : 0,
                             ['productTotal']
                         )
                         .sum('products', 'bonus', 'totalBonus')
