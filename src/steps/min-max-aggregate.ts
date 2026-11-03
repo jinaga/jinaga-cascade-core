@@ -1,12 +1,5 @@
-import type { AddedHandler, BuildContext, BuiltStepGraph, ImmutableProps, ModifiedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
+import type { AddedHandler, BuildContext, BuiltStepGraph, ModifiedHandler, PlacedHandler, RemovedHandler, Step, StepBuilder, TypeDescriptor } from '../pipeline.js';
 import { IndexedHeap } from '../util/indexed-heap.js';
-
-/**
- * Computes a hash key for a key path (for map lookups).
- */
-function computeKeyPathHash(keyPath: string[]): string {
-    return keyPath.join('::');
-}
 
 /**
  * Parses a value as a finite number.
@@ -56,8 +49,11 @@ export class MinMaxAggregateStep<
     TPath extends string[],
     TPropertyName extends string
 > implements Step {
-    /** Canonical representation of values by parent group */
+    /** Values of each parent's items, ordered by the comparator. */
     private readonly heaps: Map<string, IndexedHeap<number>> = new Map();
+
+    /** Placement and current numeric value of each item. */
+    private readonly items: Map<string, { parentKey: string; value: number | undefined }> = new Map();
 
     /** Last emitted aggregate value per parent (for oldValue tracking) */
     private readonly lastEmitted: Map<string, number | undefined> = new Map();
@@ -73,20 +69,40 @@ export class MinMaxAggregateStep<
         private comparator: (a: number, b: number) => number,
         inputDescriptor: TypeDescriptor
     ) {
-        const rootMutableProperties = inputDescriptor.mutableProperties;
-        const isPropertyMutable = rootMutableProperties.includes(numericProperty);
-
-        this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
-            this.handleItemAdded(keyPath, itemKey, immutableProps);
+        this.input.onAdded(this.segmentPath, (parentKey, itemKey, immutableProps) => {
+            if (parentKey !== undefined) {
+                this.items.set(itemKey, { parentKey, value: parseNumericValue(immutableProps[this.numericProperty]) });
+                this.insert(itemKey);
+                this.emitModification(parentKey);
+            }
         });
-
-        this.input.onRemoved(this.segmentPath, (keyPath, itemKey) => {
-            this.handleItemRemoved(keyPath, itemKey);
+        this.input.onRemoved(this.segmentPath, itemKey => {
+            const record = this.items.get(itemKey);
+            if (record) {
+                this.withdraw(itemKey);
+                this.items.delete(itemKey);
+                this.emitModification(record.parentKey);
+            }
         });
-
-        if (isPropertyMutable) {
-            this.input.onModified(this.segmentPath, numericProperty, (keyPath, itemKey, _oldValue, newValue) => {
-                this.handleItemPropertyChanged(keyPath, itemKey, newValue);
+        this.input.onPlaced(this.segmentPath, (itemKey, oldParentKey, newParentKey) => {
+            const record = this.items.get(itemKey);
+            if (record) {
+                this.withdraw(itemKey);
+                record.parentKey = newParentKey;
+                this.insert(itemKey);
+                this.emitModification(oldParentKey);
+                this.emitModification(newParentKey);
+            }
+        });
+        if (inputDescriptor.mutableProperties.includes(numericProperty)) {
+            this.input.onModified(this.segmentPath, numericProperty, (itemKey, _oldValue, newValue) => {
+                const record = this.items.get(itemKey);
+                if (record) {
+                    this.withdraw(itemKey);
+                    record.value = parseNumericValue(newValue);
+                    this.insert(itemKey);
+                    this.emitModification(record.parentKey);
+                }
             });
         }
     }
@@ -106,9 +122,10 @@ export class MinMaxAggregateStep<
         this.input.onModified(pathSegments, propertyName, handler);
     }
 
-    /**
-     * Checks if the given path segments represent the parent level (where aggregate property lives).
-     */
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        this.input.onPlaced(pathSegments, handler);
+    }
+
     private isParentPath(pathSegments: string[]): boolean {
         const parentSegments = this.segmentPath.slice(0, -1);
         if (pathSegments.length !== parentSegments.length) {
@@ -117,81 +134,48 @@ export class MinMaxAggregateStep<
         return pathSegments.every((segment, index) => segment === parentSegments[index]);
     }
 
-    private getOrCreateHeap(parentKeyHash: string): IndexedHeap<number> {
-        let heap = this.heaps.get(parentKeyHash);
-        if (!heap) {
-            heap = new IndexedHeap<number>(this.comparator);
-            this.heaps.set(parentKeyHash, heap);
-        }
-        return heap;
-    }
-
-    private removeHeapIfEmpty(parentKeyHash: string): void {
-        const heap = this.heaps.get(parentKeyHash);
-        if (heap?.isEmpty()) {
-            this.heaps.delete(parentKeyHash);
-        }
-    }
-
-    private handleItemAdded(parentKeyPath: string[], itemKey: string, item: ImmutableProps): void {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const numericValue = parseNumericValue(item[this.numericProperty]);
-        if (numericValue !== undefined) {
-            this.getOrCreateHeap(parentKeyHash).insert(numericValue, itemKey);
-        }
-        this.emitModification(parentKeyPath);
-    }
-
-    private handleItemRemoved(parentKeyPath: string[], itemKey: string): void {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const heap = this.heaps.get(parentKeyHash);
-        if (heap) {
-            heap.removeById(itemKey);
-            this.removeHeapIfEmpty(parentKeyHash);
-        }
-        this.emitModification(parentKeyPath);
-    }
-
-    private handleItemPropertyChanged(parentKeyPath: string[], itemKey: string, newValue: unknown): void {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-
-        const existingHeap = this.heaps.get(parentKeyHash);
-        if (existingHeap) {
-            existingHeap.removeById(itemKey);
-            this.removeHeapIfEmpty(parentKeyHash);
-        }
-
-        const newNumericValue = parseNumericValue(newValue);
-        if (newNumericValue !== undefined) {
-            this.getOrCreateHeap(parentKeyHash).insert(newNumericValue, itemKey);
-        }
-
-        this.emitModification(parentKeyPath);
-    }
-
-    private emitModification(parentKeyPath: string[]): void {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const oldAggregate = this.lastEmitted.get(parentKeyHash);
-        const newAggregate = this.heaps.get(parentKeyHash)?.peek()?.value;
-
-        if (newAggregate === undefined) {
-            this.lastEmitted.delete(parentKeyHash);
-        } else {
-            this.lastEmitted.set(parentKeyHash, newAggregate);
-        }
-
-        if (parentKeyPath.length > 0) {
-            const parentKey = parentKeyPath[parentKeyPath.length - 1];
-            const keyPathToParent = parentKeyPath.slice(0, -1);
-            this.modifiedHandlers.forEach(handler => {
-                handler(keyPathToParent, parentKey, oldAggregate, newAggregate);
-            });
+    /** Adds the item's value to its parent's heap. */
+    private insert(itemKey: string): void {
+        const record = this.items.get(itemKey);
+        if (!record) {
             return;
         }
+        if (record.value !== undefined) {
+            let heap = this.heaps.get(record.parentKey);
+            if (!heap) {
+                heap = new IndexedHeap<number>(this.comparator);
+                this.heaps.set(record.parentKey, heap);
+            }
+            heap.insert(record.value, itemKey);
+        }
+    }
 
-        this.modifiedHandlers.forEach(handler => {
-            handler([], '', oldAggregate, newAggregate);
-        });
+    /** Removes the item's value from its parent's heap. */
+    private withdraw(itemKey: string): void {
+        const record = this.items.get(itemKey);
+        if (!record) {
+            return;
+        }
+        const heap = this.heaps.get(record.parentKey);
+        if (heap) {
+            heap.removeById(itemKey);
+            if (heap.isEmpty()) {
+                this.heaps.delete(record.parentKey);
+            }
+        }
+    }
+
+    private emitModification(parentKey: string): void {
+        const oldAggregate = this.lastEmitted.get(parentKey);
+        const newAggregate = this.heaps.get(parentKey)?.peek()?.value;
+
+        if (newAggregate === undefined) {
+            this.lastEmitted.delete(parentKey);
+        } else {
+            this.lastEmitted.set(parentKey, newAggregate);
+        }
+
+        this.modifiedHandlers.forEach(handler => handler(parentKey, oldAggregate, newAggregate));
     }
 }
 

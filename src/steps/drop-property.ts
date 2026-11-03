@@ -4,6 +4,7 @@ import type {
     BuiltStepGraph,
     ImmutableProps,
     ModifiedHandler,
+    PlacedHandler,
     RemovedHandler,
     Step,
     StepBuilder,
@@ -164,9 +165,9 @@ export class DropPropertyStep implements Step {
         } else {
             // Property behavior: filter the property from immutableProps
             if (this.isAtScopeSegments(pathSegments)) {
-                this.input.onAdded(pathSegments, (keyPath, key, immutableProps) => {
+                this.input.onAdded(pathSegments, (parentKey, key, immutableProps) => {
                     const { [this.propertyName]: _, ...rest } = immutableProps;
-                    handler(keyPath, key, rest as ImmutableProps);
+                    handler(parentKey, key, rest as ImmutableProps);
                 });
             } else {
                 this.input.onAdded(pathSegments, handler);
@@ -190,8 +191,18 @@ export class DropPropertyStep implements Step {
             if (this.isAtOrBelowTargetArray(pathSegments)) {
                 return;
             }
+        } else if (propertyName === this.propertyName && this.isAtScopeSegments(pathSegments)) {
+            // The property no longer exists at this scope, so neither do its changes.
+            return;
         }
         this.input.onModified(pathSegments, propertyName, handler);
+    }
+
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        if (this.isArrayProperty && this.isAtOrBelowTargetArray(pathSegments)) {
+            return;
+        }
+        this.input.onPlaced(pathSegments, handler);
     }
     
     private isAtScopeSegments(pathSegments: string[]): boolean {

@@ -1,4 +1,5 @@
 import {
+    collectAllMutableProperties,
     getPathSegmentsFromDescriptor,
     type CollectionInput,
     type DescriptorNode,
@@ -27,6 +28,7 @@ import { PickByMinMaxBuilder } from './steps/pick-by-min-max.js';
 import { FilterBuilder } from './steps/filter.js';
 import { ReplaceToDeltaBuilder } from './steps/replace-to-delta.js';
 import { EnrichBuilder } from './steps/enrich.js';
+import { PlacementIndex, addNode, modifyNode, moveNode, removeNode, type KeyedTree } from './util/keyed-tree.js';
 
 // Public types
 export type KeyedArray<T> = { key: string, value: T }[];
@@ -144,14 +146,19 @@ function assertCumulativeSumConfiguration(
     });
 }
 
+/**
+ * Operations on the output tree. Each carries the location (ancestor key path) it applies
+ * to, resolved when it is queued, so applying a batch is a pure function of the state.
+ */
 type PendingOperation =
     | { type: 'add', epoch: number, segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps }
     | { type: 'remove', epoch: number, segmentPath: string[], keyPath: string[], key: string }
-    | { type: 'modify', epoch: number, segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown };
+    | { type: 'modify', epoch: number, segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown }
+    | { type: 'move', epoch: number, segmentPath: string[], keyPath: string[], toKeyPath: string[], key: string };
 
-interface RuntimeApplyContext {
-    epoch: number;
-    emitDiagnostic: (diagnostic: PipelineRuntimeDiagnostic) => void;
+/** A move changes a node's placement, which diagnostics report as a modification. */
+function diagnosticOperationType(op: PendingOperation): 'add' | 'remove' | 'modify' {
+    return op.type === 'move' ? 'modify' : op.type;
 }
 
 class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends Record<string, unknown> = Record<never, never>>
@@ -162,6 +169,8 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
     private readonly runtimeOptions: Required<Pick<PipelineRuntimeOptions, 'batchSize' | 'flushDelayMs'>> &
         Pick<PipelineRuntimeOptions, 'onDiagnostic'>;
     private pendingOperations: PendingOperation[] = [];
+    /** Placement of every node in the output, as of the last queued operation. */
+    private readonly placements = new PlacementIndex();
     private flushTimer: ReturnType<typeof setTimeout> | null = null;
     private closed = false;
     private epoch = 1;
@@ -279,16 +288,122 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         return true;
     }
 
-    enqueueAdd(segmentPath: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
-        this.enqueueOperation({ type: 'add', epoch: this.epoch, segmentPath, keyPath, key, immutableProps });
+    enqueueAdd(segmentPath: string[], parentKey: string | undefined, key: string, immutableProps: ImmutableProps): void {
+        const keyPath = this.locateOrReport('add', segmentPath, parentKey, key);
+        if (keyPath === undefined) {
+            return;
+        }
+        if (this.enqueueOperation({ type: 'add', epoch: this.epoch, segmentPath, keyPath, key, immutableProps })) {
+            this.placements.set(segmentPath, key, parentKey);
+        }
     }
 
-    enqueueRemove(segmentPath: string[], keyPath: string[], key: string): void {
-        this.enqueueOperation({ type: 'remove', epoch: this.epoch, segmentPath, keyPath, key });
+    enqueueRemove(segmentPath: string[], key: string): void {
+        if (!this.placements.has(segmentPath, key)) {
+            // Removing a node that is not in the output changes nothing.
+            return;
+        }
+        const keyPath = this.locateNodeOrReport('remove', segmentPath, key);
+        if (keyPath === undefined) {
+            return;
+        }
+        if (this.enqueueOperation({ type: 'remove', epoch: this.epoch, segmentPath, keyPath, key })) {
+            this.placements.delete(segmentPath, key);
+        }
     }
 
-    enqueueModify(segmentPath: string[], keyPath: string[], key: string, name: string, value: unknown): void {
+    enqueueModify(segmentPath: string[], key: string, name: string, value: unknown): void {
+        const keyPath = this.locateNodeOrReport('modify', segmentPath, key);
+        if (keyPath === undefined) {
+            return;
+        }
         this.enqueueOperation({ type: 'modify', epoch: this.epoch, segmentPath, keyPath, key, name, value });
+    }
+
+    enqueueMove(segmentPath: string[], key: string, newParentKey: string): void {
+        const keyPath = this.locateNodeOrReport('modify', segmentPath, key);
+        const toKeyPath = this.locateOrReport('modify', segmentPath, newParentKey, key);
+        if (keyPath === undefined || toKeyPath === undefined) {
+            return;
+        }
+        if (this.enqueueOperation({ type: 'move', epoch: this.epoch, segmentPath, keyPath, toKeyPath, key })) {
+            this.placements.set(segmentPath, key, newParentKey);
+        }
+    }
+
+    private locateOrReport(
+        operationType: 'add' | 'remove' | 'modify',
+        segmentPath: string[],
+        parentKey: string | undefined,
+        key: string
+    ): string[] | undefined {
+        const keyPath = this.placements.locate(segmentPath, parentKey);
+        if (keyPath === undefined) {
+            this.reportMissingParent(operationType, segmentPath, key, parentKey);
+        }
+        return keyPath;
+    }
+
+    private locateNodeOrReport(
+        operationType: 'remove' | 'modify',
+        segmentPath: string[],
+        key: string
+    ): string[] | undefined {
+        if (!this.placements.has(segmentPath, key)) {
+            this.emitDiagnostic({
+                code: 'missing_item_modify_dropped',
+                message: `Attempted to ${operationType} key "${key}" at segment path [${segmentPath.join('.')}], but it is not in the output. Operation dropped.`,
+                operationType,
+                segmentPath,
+                key,
+                epoch: this.epoch
+            });
+            return undefined;
+        }
+        return this.locateOrReport(operationType, segmentPath, this.placements.parentOf(segmentPath, key), key);
+    }
+
+    private reportDroppedOperation(op: PendingOperation): void {
+        if (op.type === 'modify' && op.keyPath.length === 0) {
+            this.emitDiagnostic({
+                code: 'missing_item_modify_dropped',
+                message: `Attempted to modify missing item. Key: ${op.key}, Path: [${op.segmentPath.join('.')}]`,
+                operationType: 'modify',
+                segmentPath: op.segmentPath,
+                keyPath: op.keyPath,
+                key: op.key,
+                epoch: op.epoch
+            });
+            return;
+        }
+        // A move fails when its destination is missing; anything else, when its location is.
+        const keyPath = op.type === 'move' ? op.toKeyPath : op.keyPath;
+        this.reportMissingParent(diagnosticOperationType(op), op.segmentPath, op.key, keyPath[keyPath.length - 1], keyPath, op.epoch);
+    }
+
+    private reportMissingParent(
+        operationType: 'add' | 'remove' | 'modify',
+        segmentPath: string[],
+        key: string,
+        parentKey: string | undefined,
+        keyPath?: string[],
+        epoch: number = this.epoch
+    ): void {
+        const code = operationType === 'add'
+            ? 'missing_parent_add_dropped'
+            : operationType === 'remove'
+                ? 'missing_parent_remove_dropped'
+                : 'missing_parent_modify_dropped';
+        this.emitDiagnostic({
+            code,
+            message: `Attempted to ${operationType} key "${key}" at segment path [${segmentPath.join('.')}], but its parent "${parentKey}" was not found. Operation dropped.`,
+            operationType,
+            segmentPath,
+            keyPath,
+            key,
+            parentKey,
+            epoch
+        });
     }
 
     flush(): void {
@@ -305,31 +420,35 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         this.pendingOperations = [];
 
         this.setState(state => {
-            let result = state;
+            let result = state as KeyedTree;
 
             for (const op of operationsToApply) {
                 if (!this.shouldAcceptOperation(op)) {
                     continue;
                 }
 
-                const applyContext: RuntimeApplyContext = {
-                    emitDiagnostic: diagnostic => this.emitDiagnostic(diagnostic),
-                    epoch: op.epoch
-                };
-
+                let next: KeyedTree | undefined;
                 switch (op.type) {
                     case 'add':
-                        result = addToKeyedArray(result, op.segmentPath, op.keyPath, op.key, op.immutableProps, undefined, applyContext);
+                        next = addNode(result, op.segmentPath, op.keyPath, op.key, op.immutableProps);
                         break;
                     case 'remove':
-                        result = removeFromKeyedArray(result, op.segmentPath, op.keyPath, op.key, undefined, applyContext);
+                        next = removeNode(result, op.segmentPath, op.keyPath, op.key);
                         break;
                     case 'modify':
-                        result = modifyInKeyedArray(result, op.segmentPath, op.keyPath, op.key, op.name, op.value, undefined, applyContext);
+                        next = modifyNode(result, op.segmentPath, op.keyPath, op.key, op.name, op.value);
+                        break;
+                    case 'move':
+                        next = moveNode(result, op.segmentPath, op.keyPath, op.toKeyPath, op.key);
                         break;
                 }
+                if (next === undefined) {
+                    this.reportDroppedOperation(op);
+                    continue;
+                }
+                result = next;
             }
-            return result;
+            return result as KeyedArray<TState>;
         });
     }
 
@@ -356,13 +475,14 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         return this.closed;
     }
 
-    private enqueueOperation(operation: PendingOperation): void {
+    private enqueueOperation(operation: PendingOperation): boolean {
         if (!this.shouldAcceptOperation(operation)) {
-            return;
+            return false;
         }
 
         this.pendingOperations.push(operation);
         this.scheduleFlush();
+        return true;
     }
 
     private shouldAcceptOperation(operation: PendingOperation): boolean {
@@ -370,7 +490,7 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
             this.emitDiagnostic({
                 code: 'operation_after_dispose',
                 message: 'Dropping operation because the runtime session has been disposed.',
-                operationType: operation.type,
+                operationType: diagnosticOperationType(operation),
                 segmentPath: operation.segmentPath,
                 keyPath: operation.keyPath,
                 key: operation.key,
@@ -383,7 +503,7 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
             this.emitDiagnostic({
                 code: 'stale_epoch_operation_dropped',
                 message: 'Dropping stale operation from a previous runtime epoch.',
-                operationType: operation.type,
+                operationType: diagnosticOperationType(operation),
                 segmentPath: operation.segmentPath,
                 keyPath: operation.keyPath,
                 key: operation.key,
@@ -1299,312 +1419,27 @@ export class PipelineBuilder<
             runtimeOptions
         );
 
-        // Register handlers for each path the step will emit
+        // Register handlers for each path the step will emit. Mutable properties are recorded
+        // at the root of the descriptor even when they belong to nested levels, so every level
+        // listens for all of them.
+        const mutableProperties = collectAllMutableProperties(runtimeDescriptor);
         pathSegments.forEach(segmentPath => {
-            builtGraph.lastStep.onAdded(segmentPath, (keyPath, key, immutableProps) => {
-                session.enqueueAdd(segmentPath, keyPath, key, immutableProps);
+            builtGraph.lastStep.onAdded(segmentPath, (parentKey, key, immutableProps) => {
+                session.enqueueAdd(segmentPath, parentKey, key, immutableProps);
             });
-            
-            builtGraph.lastStep.onRemoved(segmentPath, (keyPath, key, _immutableProps) => {
-                session.enqueueRemove(segmentPath, keyPath, key);
+            builtGraph.lastStep.onRemoved(segmentPath, key => {
+                session.enqueueRemove(segmentPath, key);
             });
-            
-            // Register for mutable properties
-            // Collect all mutable properties from the entire type descriptor tree
-            // This handles cases where aggregates add mutable properties at root level
-            // even when they semantically belong at nested levels
-            const mutableProperties = collectAllMutableProperties(runtimeDescriptor);
-            
-            if (mutableProperties.length > 0) {
-                // Register for each mutable property at this path level
-                // Note: Aggregates emit modifications at the parent level of their array,
-                // so we register at both the current path and parent paths
-                mutableProperties.forEach(propertyName => {
-                    // Register at current path level
-                    builtGraph.lastStep.onModified(segmentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
-                        session.enqueueModify(segmentPath, keyPath, key, propertyName, newValue);
-                    });
-                    
-                    // Also register at parent level (for aggregates that emit at parent level)
-                    if (segmentPath.length > 0) {
-                        const parentPath = segmentPath.slice(0, -1);
-                        builtGraph.lastStep.onModified(parentPath, propertyName, (keyPath, key, _oldValue, newValue) => {
-                            session.enqueueModify(parentPath, keyPath, key, propertyName, newValue);
-                        });
-                    }
+            builtGraph.lastStep.onPlaced(segmentPath, (key, _oldParentKey, newParentKey) => {
+                session.enqueueMove(segmentPath, key, newParentKey);
+            });
+            mutableProperties.forEach(propertyName => {
+                builtGraph.lastStep.onModified(segmentPath, propertyName, (key, _oldValue, newValue) => {
+                    session.enqueueModify(segmentPath, key, propertyName, newValue);
                 });
-            }
-            // If no mutable properties, modifications won't be tracked (this is expected for immutable-only pipelines)
+            });
         });
 
         return session;
     }
 }
-
-/**
- * Collects all mutable properties from the entire type descriptor tree.
- * Returns a flat array of all mutable property names found at any level.
- */
-function collectAllMutableProperties(descriptor: DescriptorNode): string[] {
-    const mutableProps = new Set<string>();
-    
-    // Add mutable properties at this level
-    for (const prop of descriptor.mutableProperties) {
-        mutableProps.add(prop);
-    }
-    
-    // Recursively collect from nested arrays
-    for (const arrayDesc of descriptor.arrays) {
-        const nestedProps = collectAllMutableProperties(arrayDesc.type);
-        nestedProps.forEach(prop => mutableProps.add(prop));
-    }
-    
-    return Array.from(mutableProps);
-}
-
-/**
- * Creates a Map from keyed array for O(1) lookups.
- * This Map can be reused for multiple operations on the same array level.
- */
-function createKeyToIndexMap<T>(state: KeyedArray<T>): Map<string, number> {
-    const keyToIndex = new Map<string, number>();
-    state.forEach((item, index) => keyToIndex.set(item.key, index));
-    return keyToIndex;
-}
-
-function getObjectRecord(value: object): Record<string, unknown> {
-    return value as Record<string, unknown>;
-}
-
-function getNestedKeyedArray(value: object, segment: string): KeyedArray<object> {
-    const nestedValue = getObjectRecord(value)[segment];
-    return Array.isArray(nestedValue) ? nestedValue as KeyedArray<object> : [];
-}
-
-function withUpdatedProperty<T extends object>(value: T, propertyName: string, propertyValue: unknown): T {
-    return {
-        ...getObjectRecord(value),
-        [propertyName]: propertyValue
-    } as T;
-}
-
-function addToKeyedArray<T extends object>(
-    state: KeyedArray<T>,
-    segmentPath: string[],
-    keyPath: string[],
-    key: string,
-    immutableProps: ImmutableProps,
-    keyToIndexMap?: Map<string, number>,
-    runtimeApplyContext?: RuntimeApplyContext
-): KeyedArray<T> {
-    if (segmentPath.length === 0) {
-        if (keyPath.length !== 0) {
-            throw new Error("Mismatched path length when setting state");
-        }
-        return [...state, { key, value: immutableProps as T }];
-    }
-    else {
-        if (keyPath.length === 0) {
-            throw new Error("Mismatched path length when setting state");
-        }
-        const parentKey = keyPath[0];
-        const segment = segmentPath[0];
-        
-        // Use provided Map or create one for O(1) lookup
-        // Note: Map creation is O(N), but batching reduces the number of state updates
-        const keyToIndex = keyToIndexMap || createKeyToIndexMap(state);
-        
-        const existingItemIndex = keyToIndex.get(parentKey);
-        if (existingItemIndex === undefined) {
-            runtimeApplyContext?.emitDiagnostic({
-                code: 'missing_parent_add_dropped',
-                message: `Attempted to add key "${key}" at segment path [${segmentPath.join(".")}] with parent key "${parentKey}", but parent was not found in state. Operation dropped.`,
-                operationType: 'add',
-                segmentPath,
-                keyPath,
-                key,
-                parentKey,
-                epoch: runtimeApplyContext?.epoch
-            });
-            return state;
-        }
-        const existingItem = state[existingItemIndex];
-        const existingValue = existingItem.value;
-        const existingArray = getNestedKeyedArray(existingValue, segment);
-        const modifiedArray = addToKeyedArray(
-            existingArray,
-            segmentPath.slice(1),
-            keyPath.slice(1),
-            key,
-            immutableProps,
-            undefined,
-            runtimeApplyContext
-        );
-        const modifiedItem = {
-            key: parentKey,
-            value: withUpdatedProperty(existingValue, segment, modifiedArray)
-        };
-        return [
-            ...state.slice(0, existingItemIndex),
-            modifiedItem,
-            ...state.slice(existingItemIndex+1)
-        ];
-    }
-}
-
-function removeFromKeyedArray<T extends object>(
-    state: KeyedArray<T>,
-    segmentPath: string[],
-    keyPath: string[],
-    key: string,
-    keyToIndexMap?: Map<string, number>,
-    runtimeApplyContext?: RuntimeApplyContext
-): KeyedArray<T> {
-    if (segmentPath.length === 0) {
-        if (keyPath.length !== 0) {
-            throw new Error("Mismatched path length when removing from state");
-        }
-        return state.filter(item => item.key !== key);
-    }
-    else {
-        if (keyPath.length === 0) {
-            throw new Error("Mismatched path length when removing from state");
-        }
-        const parentKey = keyPath[0];
-        const segment = segmentPath[0];
-        
-        // Use provided Map or create one for O(1) lookup
-        // Note: Map creation is O(N), but batching reduces the number of state updates
-        const keyToIndex = keyToIndexMap || createKeyToIndexMap(state);
-        
-        const existingItemIndex = keyToIndex.get(parentKey);
-        if (existingItemIndex === undefined) {
-            runtimeApplyContext?.emitDiagnostic({
-                code: 'missing_parent_remove_dropped',
-                message: `Attempted to remove key "${key}" at segment path [${segmentPath.join(".")}] with parent key "${parentKey}", but parent was not found in state. Operation dropped.`,
-                operationType: 'remove',
-                segmentPath,
-                keyPath,
-                key,
-                parentKey,
-                epoch: runtimeApplyContext?.epoch
-            });
-            return state;
-        }
-        const existingItem = state[existingItemIndex];
-        const existingValue = existingItem.value;
-        const existingArray = getNestedKeyedArray(existingValue, segment);
-        const modifiedArray = removeFromKeyedArray(
-            existingArray,
-            segmentPath.slice(1),
-            keyPath.slice(1),
-            key,
-            undefined,
-            runtimeApplyContext
-        );
-        const modifiedItem = {
-            key: parentKey,
-            value: withUpdatedProperty(existingValue, segment, modifiedArray)
-        };
-        return [
-            ...state.slice(0, existingItemIndex),
-            modifiedItem,
-            ...state.slice(existingItemIndex+1)
-        ];
-    }
-}
-
-function modifyInKeyedArray<T extends object>(
-    state: KeyedArray<T>,
-    segmentPath: string[],
-    keyPath: string[],
-    key: string,
-    name: string,
-    value: unknown,
-    keyToIndexMap?: Map<string, number>,
-    runtimeApplyContext?: RuntimeApplyContext
-): KeyedArray<T> {
-    if (segmentPath.length === 0) {
-        if (keyPath.length !== 0) {
-            throw new Error("Mismatched path length when modifying state");
-        }
-        
-        // Use provided Map or create one for O(1) lookup
-        // Note: Map creation is O(N), but batching reduces the number of state updates
-        const keyToIndex = keyToIndexMap || createKeyToIndexMap(state);
-        
-        const existingItemIndex = keyToIndex.get(key);
-        if (existingItemIndex === undefined) {
-            runtimeApplyContext?.emitDiagnostic({
-                code: 'missing_item_modify_dropped',
-                message: `Attempted to modify missing item in KeyedArray. Key: ${key}, Path: [${segmentPath.join('.')}]`,
-                operationType: 'modify',
-                segmentPath,
-                keyPath,
-                key,
-                epoch: runtimeApplyContext?.epoch
-            });
-            return state;
-        }
-        const existingItem = state[existingItemIndex];
-        const existingValue = existingItem.value;
-        const modifiedItem = {
-            key: key,
-            value: withUpdatedProperty(existingValue, name, value)
-        };
-        return [
-            ...state.slice(0, existingItemIndex),
-            modifiedItem,
-            ...state.slice(existingItemIndex+1)
-        ];
-    }
-    else {
-        if (keyPath.length === 0) {
-            throw new Error("Mismatched path length when modifying state");
-        }
-        const parentKey = keyPath[0];
-        const segment = segmentPath[0];
-        
-        // Use provided Map or create one for O(1) lookup
-        // Note: Map creation is O(N), but batching reduces the number of state updates
-        const keyToIndex = keyToIndexMap || createKeyToIndexMap(state);
-        
-        const existingItemIndex = keyToIndex.get(parentKey);
-        if (existingItemIndex === undefined) {
-            runtimeApplyContext?.emitDiagnostic({
-                code: 'missing_parent_modify_dropped',
-                message: `Parent item with key '${parentKey}' not found when modifying nested state at segment path [${segmentPath.join(".")}] and key path [${keyPath.join(".")}]. Modification dropped.`,
-                operationType: 'modify',
-                segmentPath,
-                keyPath,
-                key,
-                parentKey,
-                epoch: runtimeApplyContext?.epoch
-            });
-            return state;
-        }
-        const existingItem = state[existingItemIndex];
-        const existingValue = existingItem.value;
-        const existingArray = getNestedKeyedArray(existingValue, segment);
-        const modifiedArray = modifyInKeyedArray(
-            existingArray,
-            segmentPath.slice(1),
-            keyPath.slice(1),
-            key,
-            name,
-            value,
-            undefined,
-            runtimeApplyContext
-        );
-        const modifiedItem = {
-            key: parentKey,
-            value: withUpdatedProperty(existingValue, segment, modifiedArray)
-        };
-        return [
-            ...state.slice(0, existingItemIndex),
-            modifiedItem,
-            ...state.slice(existingItemIndex+1)
-        ];
-    }
-}
-

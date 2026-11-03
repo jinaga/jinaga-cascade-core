@@ -4,6 +4,7 @@ import type {
     BuiltStepGraph,
     ImmutableProps,
     ModifiedHandler,
+    PlacedHandler,
     RemovedHandler,
     Step,
     StepBuilder,
@@ -15,6 +16,7 @@ type NormalizedOrderValue = number | string | undefined;
 
 interface ItemState {
     key: string;
+    parentKey: string;
     currentProps: ImmutableProps;
     orderValues: NormalizedOrderValue[];
     inputValues: Record<string, number>;
@@ -22,12 +24,8 @@ interface ItemState {
 }
 
 interface ParentState {
-    readonly itemsByKey: Map<string, ItemState>;
+    /** Keys of the parent's items in sort order. */
     readonly orderedKeys: string[];
-}
-
-function computeKeyPathHash(keyPath: string[]): string {
-    return keyPath.join('::');
 }
 
 function toFiniteNumber(value: unknown): number {
@@ -91,9 +89,11 @@ export class CumulativeSumStep<
     TPath extends string[],
     TProperties extends readonly string[]
 > implements Step {
+    private readonly items: Map<string, ItemState> = new Map();
     private readonly parentStates: Map<string, ParentState> = new Map();
     private readonly addedHandlers: AddedHandler[] = [];
     private readonly removedHandlers: RemovedHandler[] = [];
+    private readonly placedHandlers: PlacedHandler[] = [];
     private readonly modifiedHandlers: Map<string, ModifiedHandler[]> = new Map();
     private readonly cumulativePropertySet: Set<string>;
     private readonly orderByPropertySet: Set<string>;
@@ -108,12 +108,16 @@ export class CumulativeSumStep<
         this.cumulativePropertySet = new Set(this.properties);
         this.orderByPropertySet = new Set(this.orderBy);
 
-        this.input.onAdded(this.segmentPath, (keyPath, itemKey, immutableProps) => {
-            this.handleItemAdded(keyPath, itemKey, immutableProps);
+        this.input.onAdded(this.segmentPath, (parentKey, itemKey, immutableProps) => {
+            if (parentKey !== undefined) {
+                this.handleItemAdded(parentKey, itemKey, immutableProps);
+            }
         });
-
-        this.input.onRemoved(this.segmentPath, (keyPath, itemKey, immutableProps) => {
-            this.handleItemRemoved(keyPath, itemKey, immutableProps);
+        this.input.onRemoved(this.segmentPath, itemKey => {
+            this.handleItemRemoved(itemKey);
+        });
+        this.input.onPlaced(this.segmentPath, (itemKey, _oldParentKey, newParentKey) => {
+            this.handleItemPlaced(itemKey, newParentKey);
         });
 
         const listenedProperties = new Set<string>([
@@ -123,8 +127,8 @@ export class CumulativeSumStep<
         ]);
 
         listenedProperties.forEach(propertyName => {
-            this.input.onModified(this.segmentPath, propertyName, (keyPath, itemKey, oldValue, newValue) => {
-                this.handleItemModified(keyPath, itemKey, propertyName, oldValue, newValue);
+            this.input.onModified(this.segmentPath, propertyName, (itemKey, _oldValue, newValue) => {
+                this.handleItemModified(itemKey, propertyName, newValue);
             });
         });
     }
@@ -155,92 +159,118 @@ export class CumulativeSumStep<
         this.input.onModified(pathSegments, propertyName, handler);
     }
 
-    private handleItemAdded(parentKeyPath: string[], itemKey: string, immutableProps: ImmutableProps): void {
-        const parentState = this.getOrCreateParentState(parentKeyPath);
-        if (parentState.itemsByKey.has(itemKey)) {
-            this.handleItemRemoved(parentKeyPath, itemKey, immutableProps);
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        if (pathsMatch(pathSegments, this.segmentPath)) {
+            this.placedHandlers.push(handler);
+            return;
+        }
+        this.input.onPlaced(pathSegments, handler);
+    }
+
+    private handleItemAdded(parentKey: string, itemKey: string, immutableProps: ImmutableProps): void {
+        if (this.items.has(itemKey)) {
+            this.handleItemRemoved(itemKey);
         }
 
         const itemState: ItemState = {
             key: itemKey,
+            parentKey,
             currentProps: { ...immutableProps },
             orderValues: this.computeOrderValues(immutableProps),
             inputValues: this.computeInputValues(immutableProps),
             cumulativeValues: this.createZeroedValueRecord()
         };
+        this.items.set(itemKey, itemState);
 
+        const parentState = this.getOrCreateParentState(parentKey);
+        const insertionIndex = this.insertIntoOrder(parentState, itemState);
+
+        const emittedProps = this.composeOutputProps(itemState);
+        this.addedHandlers.forEach(handler => {
+            handler(parentKey, itemKey, emittedProps);
+        });
+
+        this.properties.forEach(propertyName => {
+            this.applyDeltaToSuffix(parentState, insertionIndex + 1, propertyName, itemState.inputValues[propertyName]);
+        });
+    }
+
+    private handleItemRemoved(itemKey: string): void {
+        const itemState = this.items.get(itemKey);
+        if (!itemState) {
+            return;
+        }
+
+        this.removeFromOrder(itemState);
+
+        const emittedProps = this.composeOutputProps(itemState);
+        this.removedHandlers.forEach(handler => {
+            handler(itemKey, emittedProps);
+        });
+
+        this.items.delete(itemKey);
+    }
+
+    /** Moves an item to another parent's order, recomputing prefix sums in both. */
+    private handleItemPlaced(itemKey: string, newParentKey: string): void {
+        const itemState = this.items.get(itemKey);
+        if (!itemState) {
+            return;
+        }
+        const oldParentKey = itemState.parentKey;
+        this.removeFromOrder(itemState);
+        itemState.parentKey = newParentKey;
+        this.placedHandlers.forEach(handler => handler(itemKey, oldParentKey, newParentKey));
+
+        const oldCumulativeValues = { ...itemState.cumulativeValues };
+        const parentState = this.getOrCreateParentState(newParentKey);
+        const insertionIndex = this.insertIntoOrder(parentState, itemState);
+        this.properties.forEach(propertyName => {
+            this.emitModified(itemKey, propertyName, oldCumulativeValues[propertyName], itemState.cumulativeValues[propertyName]);
+            this.applyDeltaToSuffix(parentState, insertionIndex + 1, propertyName, itemState.inputValues[propertyName]);
+        });
+    }
+
+    /** Inserts an item into its parent's order and sets its prefix sums from its predecessor. */
+    private insertIntoOrder(parentState: ParentState, itemState: ItemState): number {
         const insertionIndex = this.findInsertionIndex(parentState, itemState);
         const predecessor = insertionIndex > 0
-            ? parentState.itemsByKey.get(parentState.orderedKeys[insertionIndex - 1])
+            ? this.items.get(parentState.orderedKeys[insertionIndex - 1])
             : undefined;
-
         this.properties.forEach(propertyName => {
             const predecessorCumulative = predecessor ? predecessor.cumulativeValues[propertyName] : 0;
             itemState.cumulativeValues[propertyName] = predecessorCumulative + itemState.inputValues[propertyName];
         });
-
-        parentState.itemsByKey.set(itemKey, itemState);
-        parentState.orderedKeys.splice(insertionIndex, 0, itemKey);
-
-        const emittedProps = this.composeOutputProps(itemState);
-        this.addedHandlers.forEach(handler => {
-            handler(parentKeyPath, itemKey, emittedProps);
-        });
-
-        this.properties.forEach(propertyName => {
-            const delta = itemState.inputValues[propertyName];
-            this.applyDeltaToSuffix(parentState, parentKeyPath, insertionIndex + 1, propertyName, delta);
-        });
+        parentState.orderedKeys.splice(insertionIndex, 0, itemState.key);
+        return insertionIndex;
     }
 
-    private handleItemRemoved(parentKeyPath: string[], itemKey: string, _immutableProps: ImmutableProps): void {
-        const parentState = this.getParentState(parentKeyPath);
+    /** Removes an item from its parent's order and subtracts it from its successors. */
+    private removeFromOrder(itemState: ItemState): void {
+        const parentState = this.parentStates.get(itemState.parentKey);
         if (!parentState) {
             return;
         }
-
-        const itemState = parentState.itemsByKey.get(itemKey);
-        if (!itemState) {
-            return;
-        }
-
-        const index = parentState.orderedKeys.indexOf(itemKey);
+        const index = parentState.orderedKeys.indexOf(itemState.key);
         if (index === -1) {
             return;
         }
-
         this.properties.forEach(propertyName => {
-            const delta = -itemState.inputValues[propertyName];
-            this.applyDeltaToSuffix(parentState, parentKeyPath, index + 1, propertyName, delta);
+            this.applyDeltaToSuffix(parentState, index + 1, propertyName, -itemState.inputValues[propertyName]);
         });
-
-        const emittedProps = this.composeOutputProps(itemState);
-        this.removedHandlers.forEach(handler => {
-            handler(parentKeyPath, itemKey, emittedProps);
-        });
-
-        parentState.itemsByKey.delete(itemKey);
         parentState.orderedKeys.splice(index, 1);
-
         if (parentState.orderedKeys.length === 0) {
-            this.parentStates.delete(computeKeyPathHash(parentKeyPath));
+            this.parentStates.delete(itemState.parentKey);
         }
     }
 
-    private handleItemModified(
-        parentKeyPath: string[],
-        itemKey: string,
-        propertyName: string,
-        _oldValue: unknown,
-        newValue: unknown
-    ): void {
-        const parentState = this.getParentState(parentKeyPath);
-        if (!parentState) {
+    private handleItemModified(itemKey: string, propertyName: string, newValue: unknown): void {
+        const itemState = this.items.get(itemKey);
+        if (!itemState) {
             return;
         }
-
-        const itemState = parentState.itemsByKey.get(itemKey);
-        if (!itemState) {
+        const parentState = this.parentStates.get(itemState.parentKey);
+        if (!parentState) {
             return;
         }
 
@@ -250,20 +280,19 @@ export class CumulativeSumStep<
             const nextOrderValues = this.computeOrderValues(itemState.currentProps);
             const orderChanged = !this.areOrderTuplesEqual(itemState.orderValues, nextOrderValues);
             if (orderChanged) {
-                this.handleOrderByPropertyChange(parentState, parentKeyPath, itemState, propertyName, newValue, nextOrderValues);
+                this.handleOrderByPropertyChange(parentState, itemState, propertyName, newValue, nextOrderValues);
                 return;
             }
             itemState.orderValues = nextOrderValues;
         }
 
         if (this.cumulativePropertySet.has(propertyName)) {
-            this.handleCumulativePropertyChange(parentState, parentKeyPath, itemState, propertyName, newValue);
+            this.handleCumulativePropertyChange(parentState, itemState, propertyName, newValue);
         }
     }
 
     private handleCumulativePropertyChange(
         parentState: ParentState,
-        parentKeyPath: string[],
         itemState: ItemState,
         propertyName: string,
         newValue: unknown
@@ -282,12 +311,11 @@ export class CumulativeSumStep<
             return;
         }
 
-        this.applyDeltaToSuffix(parentState, parentKeyPath, index, propertyName, delta);
+        this.applyDeltaToSuffix(parentState, index, propertyName, delta);
     }
 
     private handleOrderByPropertyChange(
         parentState: ParentState,
-        parentKeyPath: string[],
         itemState: ItemState,
         changedProperty: string,
         newValue: unknown,
@@ -308,7 +336,7 @@ export class CumulativeSumStep<
         parentState.orderedKeys.splice(oldIndex, 1);
 
         this.properties.forEach(propertyName => {
-            this.applyDeltaToSuffix(parentState, parentKeyPath, oldIndex, propertyName, -oldInputValues[propertyName]);
+            this.applyDeltaToSuffix(parentState, oldIndex, propertyName, -oldInputValues[propertyName]);
         });
 
         itemState.orderValues = nextOrderValues;
@@ -317,24 +345,23 @@ export class CumulativeSumStep<
         parentState.orderedKeys.splice(newIndex, 0, itemState.key);
 
         const predecessor = newIndex > 0
-            ? parentState.itemsByKey.get(parentState.orderedKeys[newIndex - 1])
+            ? this.items.get(parentState.orderedKeys[newIndex - 1])
             : undefined;
 
         this.properties.forEach(propertyName => {
             const predecessorCumulative = predecessor ? predecessor.cumulativeValues[propertyName] : 0;
             const newCumulativeValue = predecessorCumulative + itemState.inputValues[propertyName];
             itemState.cumulativeValues[propertyName] = newCumulativeValue;
-            this.emitModified(parentKeyPath, itemState.key, propertyName, oldCumulativeValues[propertyName], newCumulativeValue);
+            this.emitModified(itemState.key, propertyName, oldCumulativeValues[propertyName], newCumulativeValue);
         });
 
         this.properties.forEach(propertyName => {
-            this.applyDeltaToSuffix(parentState, parentKeyPath, newIndex + 1, propertyName, itemState.inputValues[propertyName]);
+            this.applyDeltaToSuffix(parentState, newIndex + 1, propertyName, itemState.inputValues[propertyName]);
         });
     }
 
     private applyDeltaToSuffix(
         parentState: ParentState,
-        parentKeyPath: string[],
         startIndexInclusive: number,
         propertyName: string,
         delta: number
@@ -344,49 +371,34 @@ export class CumulativeSumStep<
         }
 
         for (let index = startIndexInclusive; index < parentState.orderedKeys.length; index += 1) {
-            const key = parentState.orderedKeys[index];
-            const itemState = parentState.itemsByKey.get(key);
+            const itemState = this.items.get(parentState.orderedKeys[index]);
             if (!itemState) {
                 continue;
             }
             const oldValue = itemState.cumulativeValues[propertyName];
             const newValue = oldValue + delta;
             itemState.cumulativeValues[propertyName] = newValue;
-            this.emitModified(parentKeyPath, itemState.key, propertyName, oldValue, newValue);
+            this.emitModified(itemState.key, propertyName, oldValue, newValue);
         }
     }
 
-    private emitModified(
-        keyPath: string[],
-        key: string,
-        propertyName: string,
-        oldValue: unknown,
-        newValue: unknown
-    ): void {
+    private emitModified(key: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
         if (Object.is(oldValue, newValue)) {
             return;
         }
         const handlers = this.modifiedHandlers.get(propertyName) ?? [];
         handlers.forEach(handler => {
-            handler(keyPath, key, oldValue, newValue);
+            handler(key, oldValue, newValue);
         });
     }
 
-    private getParentState(parentKeyPath: string[]): ParentState | undefined {
-        return this.parentStates.get(computeKeyPathHash(parentKeyPath));
-    }
-
-    private getOrCreateParentState(parentKeyPath: string[]): ParentState {
-        const parentKeyHash = computeKeyPathHash(parentKeyPath);
-        const existing = this.parentStates.get(parentKeyHash);
+    private getOrCreateParentState(parentKey: string): ParentState {
+        const existing = this.parentStates.get(parentKey);
         if (existing) {
             return existing;
         }
-        const created: ParentState = {
-            itemsByKey: new Map(),
-            orderedKeys: []
-        };
-        this.parentStates.set(parentKeyHash, created);
+        const created: ParentState = { orderedKeys: [] };
+        this.parentStates.set(parentKey, created);
         return created;
     }
 
@@ -423,7 +435,7 @@ export class CumulativeSumStep<
 
         while (low < high) {
             const mid = Math.floor((low + high) / 2);
-            const midItem = parentState.itemsByKey.get(parentState.orderedKeys[mid]);
+            const midItem = this.items.get(parentState.orderedKeys[mid]);
             if (!midItem) {
                 low = mid + 1;
                 continue;

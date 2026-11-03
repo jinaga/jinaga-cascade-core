@@ -342,9 +342,8 @@ Because class is a current-state attribute (from `enrich`, not temporal), reclas
 
 1. Class changes for an attendee → `enrich` emits `onModified` for `classInfo`.
 2. `defineProperty("effectiveClass")` recomputes → emits `onModified`.
-3. `groupBy(["effectiveClass"])` detects the mutable grouping property change → removes the attendee from the old class group (`onRemoved`), adds to the new class group (`onAdded`).
-4. `timelineAggregate` in the old class group processes the entity removal: removes all of that attendee's event contributions from affected time buckets.
-5. `timelineAggregate` in the new class group processes the entity addition: adds all of that attendee's event contributions to affected time buckets.
+3. `groupBy(["effectiveClass"])` detects the mutable grouping property change → moves the attendee to the new class group with one `onPlaced` event (see [Placement](placement.md)).
+4. `timelineAggregate` processes the move: removes all of that attendee's event contributions from the old class group's time buckets and adds them to the new class group's.
 
 All timeline points in both class groups are updated to reflect the reclassification. This is the correct behavior: the time series retroactively reflects the attendee's current class at every historical time point.
 

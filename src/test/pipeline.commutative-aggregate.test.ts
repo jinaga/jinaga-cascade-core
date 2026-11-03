@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createPipeline } from '../index';
-import type { ImmutableProps, Step, StepBuilder } from '../pipeline';
+import type { AddedHandler, ImmutableProps, ModifiedHandler, PlacedHandler, RemovedHandler, Step, StepBuilder } from '../pipeline';
 import { AddOperator, CommutativeAggregateStep, SubtractOperator } from '../steps/commutative-aggregate';
 import { PipelineBuilder } from '../builder';
 import { buildStepGraph } from '../step-builders';
@@ -11,51 +11,54 @@ type NumericAddOp = AddOperator<ImmutableProps, number>;
 type NumericSubtractOp = SubtractOperator<ImmutableProps, number>;
 
 class FakeInputStep implements Step {
-    private readonly addedHandlers: Map<string, Array<(keyPath: string[], key: string, immutableProps: ImmutableProps) => void>> = new Map();
-    private readonly removedHandlers: Map<string, Array<(keyPath: string[], key: string, immutableProps: ImmutableProps) => void>> = new Map();
-    private readonly modifiedHandlers: Map<string, Array<(keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void>> = new Map();
+    private readonly addedHandlers: Map<string, AddedHandler[]> = new Map();
+    private readonly removedHandlers: Map<string, RemovedHandler[]> = new Map();
+    private readonly modifiedHandlers: Map<string, ModifiedHandler[]> = new Map();
 
-    onAdded(pathSegments: string[], handler: (keyPath: string[], key: string, immutableProps: ImmutableProps) => void): void {
+    onAdded(pathSegments: string[], handler: AddedHandler): void {
         const pathKey = JSON.stringify(pathSegments);
         const handlers = this.addedHandlers.get(pathKey) ?? [];
         handlers.push(handler);
         this.addedHandlers.set(pathKey, handlers);
     }
 
-    onRemoved(pathSegments: string[], handler: (keyPath: string[], key: string, immutableProps: ImmutableProps) => void): void {
+    onRemoved(pathSegments: string[], handler: RemovedHandler): void {
         const pathKey = JSON.stringify(pathSegments);
         const handlers = this.removedHandlers.get(pathKey) ?? [];
         handlers.push(handler);
         this.removedHandlers.set(pathKey, handlers);
     }
 
-    onModified(pathSegments: string[], propertyName: string, handler: (keyPath: string[], key: string, oldValue: unknown, newValue: unknown) => void): void {
+    onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
         const registrationKey = `${JSON.stringify(pathSegments)}::${propertyName}`;
         const handlers = this.modifiedHandlers.get(registrationKey) ?? [];
         handlers.push(handler);
         this.modifiedHandlers.set(registrationKey, handlers);
     }
 
-    emitAdded(pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
-        const pathKey = JSON.stringify(pathSegments);
-        (this.addedHandlers.get(pathKey) ?? []).forEach(handler => handler(keyPath, key, immutableProps));
+    onPlaced(_pathSegments: string[], _handler: PlacedHandler): void {
+        // Items in these tests never move.
     }
 
-    emitRemoved(pathSegments: string[], keyPath: string[], key: string, immutableProps: ImmutableProps): void {
+    emitAdded(pathSegments: string[], parentKey: string | undefined, key: string, immutableProps: ImmutableProps): void {
         const pathKey = JSON.stringify(pathSegments);
-        (this.removedHandlers.get(pathKey) ?? []).forEach(handler => handler(keyPath, key, immutableProps));
+        (this.addedHandlers.get(pathKey) ?? []).forEach(handler => handler(parentKey, key, immutableProps));
+    }
+
+    emitRemoved(pathSegments: string[], key: string, immutableProps: ImmutableProps): void {
+        const pathKey = JSON.stringify(pathSegments);
+        (this.removedHandlers.get(pathKey) ?? []).forEach(handler => handler(key, immutableProps));
     }
 
     emitModified(
         pathSegments: string[],
         propertyName: string,
-        keyPath: string[],
         key: string,
         oldValue: unknown,
         newValue: unknown
     ): void {
         const registrationKey = `${JSON.stringify(pathSegments)}::${propertyName}`;
-        (this.modifiedHandlers.get(registrationKey) ?? []).forEach(handler => handler(keyPath, key, oldValue, newValue));
+        (this.modifiedHandlers.get(registrationKey) ?? []).forEach(handler => handler(key, oldValue, newValue));
     }
 }
 
@@ -82,9 +85,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalPrice', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ path: [...path], key, oldValue: oldValue as number | undefined, newValue: newValue as number });
+            const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified([], 'totalPrice', (key, oldValue, newValue) => {
+                modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             // Trigger add via the input pipeline
@@ -112,9 +115,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const addedEvents: Array<{ path: string[]; key: string; props: ImmutableProps }> = [];
-            aggregateStep.onAdded([], (path, key, props) => {
-                addedEvents.push({ path: [...path], key, props: { ...props } });
+            const addedEvents: Array<{ key: string; props: ImmutableProps }> = [];
+            aggregateStep.onAdded([], (_parentKey, key, props) => {
+                addedEvents.push({ key, props: { ...props } });
             });
             
             const inputPipeline = rootInput as { add: (key: string, props: any) => void };
@@ -145,7 +148,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalPrice', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'totalPrice', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -180,7 +183,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalPrice', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'totalPrice', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -222,7 +225,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'total', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -261,7 +264,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'total', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -302,7 +305,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalPrice', (_path, key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'totalPrice', (key, oldValue, newValue) => {
                 modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -340,7 +343,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'totalSalary', (_path, key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'totalSalary', (key, oldValue, newValue) => {
                 modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -391,9 +394,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified(['cities'], 'totalCapacity', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ path: [...path], key, oldValue: oldValue as number | undefined, newValue: newValue as number });
+            const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified(['cities'], 'totalCapacity', (key, oldValue, newValue) => {
+                modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = rootInput as { add: (key: string, props: any) => void };
@@ -423,9 +426,9 @@ describe('CommutativeAggregateStep', () => {
                 { add: addOp, subtract: subtractOp }
             );
             
-            const modifiedEvents: Array<{ path: string[]; key: string; oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified(['cities'], 'venueCount', (path, key, oldValue, newValue) => {
-                modifiedEvents.push({ path: [...path], key, oldValue: oldValue as number | undefined, newValue: newValue as number });
+            const modifiedEvents: Array<{ key: string; oldValue: number | undefined; newValue: number }> = [];
+            aggregateStep.onModified(['cities'], 'venueCount', (key, oldValue, newValue) => {
+                modifiedEvents.push({ key, oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
             const inputPipeline = rootInput as { add: (key: string, props: any) => void };
@@ -469,7 +472,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'sum', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'sum', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -561,7 +564,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: Stats | undefined; newValue: Stats }> = [];
-            aggregateStep.onModified([], 'stats', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'stats', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as Stats | undefined, newValue: newValue as Stats });
             });
             
@@ -595,7 +598,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'total', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -633,7 +636,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'total', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -666,7 +669,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'total', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'total', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -708,7 +711,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const addedProps: ImmutableProps[] = [];
-            aggregateStep.onAdded([], (_path, _key, props) => {
+            aggregateStep.onAdded([], (_parentKey, _key, props) => {
                 addedProps.push({ ...props });
             });
             
@@ -739,7 +742,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedNames: string[] = [];
-            aggregateStep.onModified([], 'myCustomAggregate', (_path, _key, _oldValue, _newValue) => {
+            aggregateStep.onModified([], 'myCustomAggregate', (_key, _oldValue, _newValue) => {
                 modifiedNames.push('myCustomAggregate'); // Property name is known at registration time
             });
             
@@ -770,11 +773,11 @@ describe('CommutativeAggregateStep', () => {
             const addedEvents: Array<{ props: ImmutableProps }> = [];
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
             
-            aggregateStep.onAdded([], (_path, _key, props) => {
+            aggregateStep.onAdded([], (_parentKey, _key, props) => {
                 addedEvents.push({ props: { ...props } });
             });
             
-            aggregateStep.onModified([], 'totalPrice', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'totalPrice', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -887,7 +890,7 @@ describe('CommutativeAggregateStep', () => {
             );
             
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'count', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'count', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
             
@@ -1317,12 +1320,12 @@ describe('CommutativeAggregateStep', () => {
             );
 
             const modifiedEvents: Array<{ oldValue: number | undefined; newValue: number }> = [];
-            aggregateStep.onModified([], 'weightedTotal', (_path, _key, oldValue, newValue) => {
+            aggregateStep.onModified([], 'weightedTotal', (_key, oldValue, newValue) => {
                 modifiedEvents.push({ oldValue: oldValue as number | undefined, newValue: newValue as number });
             });
 
-            fakeInput.emitAdded(['items'], [], 'row-1', { quantity: 2, unitPrice: 5 });
-            fakeInput.emitModified(['items'], 'quantity', [], 'row-1', 2, 3);
+            fakeInput.emitAdded(['items'], 'p1', 'row-1', { quantity: 2, unitPrice: 5 });
+            fakeInput.emitModified(['items'], 'quantity', 'row-1', 2, 3);
 
             expect(modifiedEvents).toEqual([
                 { oldValue: undefined, newValue: 10 },

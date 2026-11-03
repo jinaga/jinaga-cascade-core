@@ -5,22 +5,14 @@ import type {
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
+    PlacedHandler,
     RemovedHandler,
     ScalarDescriptor,
     StepBuilder,
     Step,
     TypeDescriptor
 } from '../pipeline.js';
-import { computeHash } from '../util/hash.js';
 import { pathsMatch, pathStartsWith } from '../util/path.js';
-
-function parentIdentity(outputKeyPath: string[], parentKey: string): string {
-    return JSON.stringify({ outputKeyPath, parentKey });
-}
-
-function compositeChildKey(parentKey: string, childKey: string): string {
-    return computeHash(JSON.stringify([parentKey, childKey]));
-}
 
 function mergeScalarsWithChildPrecedence(
     parentScalars: ScalarDescriptor[],
@@ -210,20 +202,37 @@ function transformFlattenDescriptor(
     };
 }
 
+interface ParentRecord {
+    /** Placement of the parent, which is also the placement of its flattened children. */
+    parentKey: string;
+    props: ImmutableProps;
+    childKeys: Set<string>;
+}
+
+interface ChildRecord {
+    parentKey: string;
+    props: ImmutableProps;
+}
+
+/**
+ * Replaces a parent array and its child array with one array of merged items, placed under
+ * the parent's own parent. A flattened item keeps its child's key, which is unique within its
+ * level, so the levels below it pass through unchanged. Child values win over parent values
+ * of the same name.
+ */
 export class FlattenStep implements Step {
     private readonly outputAddedHandlers: AddedHandler[] = [];
     private readonly outputRemovedHandlers: RemovedHandler[] = [];
+    private readonly outputPlacedHandlers: PlacedHandler[] = [];
     private readonly outputModifiedHandlersByProperty: Map<string, ModifiedHandler[]> = new Map();
 
-    private readonly parentScalarsByParentIdentity: Map<string, ImmutableProps> = new Map();
-    private readonly childKeysByParentIdentity: Map<string, Set<string>> = new Map();
-    private readonly childPropertyCountsByParentIdentity: Map<string, Map<string, number>> = new Map();
+    private readonly parents: Map<string, ParentRecord> = new Map();
+    private readonly childRecords: Map<string, ChildRecord> = new Map();
 
     private readonly scopePath: string[];
     private readonly parentArrayName: string;
     private readonly childArrayName: string;
     private readonly outputArrayName: string;
-    private readonly outputDepth: number;
     private readonly childScalarNames: Set<string>;
 
     constructor(
@@ -244,7 +253,6 @@ export class FlattenStep implements Step {
         this.parentArrayName = this.parentPath[this.parentPath.length - 1];
         this.childArrayName = this.childPath[this.childPath.length - 1];
         this.outputArrayName = this.outputPath[this.outputPath.length - 1];
-        this.outputDepth = this.outputPath.length;
         this.childScalarNames = getChildScalarNamesFromDescriptor(
             inputDescriptor,
             this.scopePath,
@@ -259,26 +267,35 @@ export class FlattenStep implements Step {
             this.outputArrayName
         );
 
-        this.input.onAdded(this.parentPath, (keyPath, key, immutableProps) => {
-            this.handleParentAdded(keyPath, key, immutableProps);
+        this.input.onAdded(this.parentPath, (parentKey, key, immutableProps) => {
+            if (parentKey !== undefined) {
+                this.parents.set(key, { parentKey, props: immutableProps, childKeys: new Set() });
+            }
         });
-        this.input.onRemoved(this.parentPath, (keyPath, key) => {
-            this.handleParentRemoved(keyPath, key);
+        this.input.onRemoved(this.parentPath, key => {
+            this.parents.delete(key);
         });
-        this.input.onAdded(this.childPath, (keyPath, key, immutableProps) => {
-            this.handleChildAdded(keyPath, key, immutableProps);
+        this.input.onPlaced(this.parentPath, (key, _oldParentKey, newParentKey) => {
+            this.handleParentPlaced(key, newParentKey);
         });
-        this.input.onRemoved(this.childPath, (keyPath, key, immutableProps) => {
-            this.handleChildRemoved(keyPath, key, immutableProps);
+        this.input.onAdded(this.childPath, (parentKey, key, immutableProps) => {
+            if (parentKey !== undefined) {
+                this.handleChildAdded(parentKey, key, immutableProps);
+            }
+        });
+        this.input.onRemoved(this.childPath, key => {
+            this.handleChildRemoved(key);
+        });
+        this.input.onPlaced(this.childPath, (key, _oldParentKey, newParentKey) => {
+            this.handleChildPlaced(key, newParentKey);
         });
 
-        const mutableProperties = inputDescriptor.mutableProperties;
-        for (const propertyName of mutableProperties) {
-            this.input.onModified(this.parentPath, propertyName, (keyPath, key, oldValue, newValue) => {
-                this.handleParentModified(keyPath, key, propertyName, oldValue, newValue);
+        for (const propertyName of inputDescriptor.mutableProperties) {
+            this.input.onModified(this.parentPath, propertyName, (key, oldValue, newValue) => {
+                this.handleParentModified(key, propertyName, oldValue, newValue);
             });
-            this.input.onModified(this.childPath, propertyName, (keyPath, key, oldValue, newValue) => {
-                this.handleChildModified(keyPath, key, propertyName, oldValue, newValue);
+            this.input.onModified(this.childPath, propertyName, (key, oldValue, newValue) => {
+                this.handleChildModified(key, propertyName, oldValue, newValue);
             });
         }
     }
@@ -288,19 +305,7 @@ export class FlattenStep implements Step {
             this.outputAddedHandlers.push(handler);
             return;
         }
-
-        if (this.isBelowOutputPath(pathSegments)) {
-            const translatedPath = this.translateOutputPathToChildPath(pathSegments);
-            this.input.onAdded(translatedPath, (keyPath, key, immutableProps) => {
-                const rewrittenKeyPath = this.rewriteNestedKeyPath(keyPath);
-                if (rewrittenKeyPath !== null) {
-                    handler(rewrittenKeyPath, key, immutableProps);
-                }
-            });
-            return;
-        }
-
-        this.input.onAdded(pathSegments, handler);
+        this.input.onAdded(this.toInputPath(pathSegments), handler);
     }
 
     onRemoved(pathSegments: string[], handler: RemovedHandler): void {
@@ -308,19 +313,7 @@ export class FlattenStep implements Step {
             this.outputRemovedHandlers.push(handler);
             return;
         }
-
-        if (this.isBelowOutputPath(pathSegments)) {
-            const translatedPath = this.translateOutputPathToChildPath(pathSegments);
-            this.input.onRemoved(translatedPath, (keyPath, key, immutableProps) => {
-                const rewrittenKeyPath = this.rewriteNestedKeyPath(keyPath);
-                if (rewrittenKeyPath !== null) {
-                    handler(rewrittenKeyPath, key, immutableProps);
-                }
-            });
-            return;
-        }
-
-        this.input.onRemoved(pathSegments, handler);
+        this.input.onRemoved(this.toInputPath(pathSegments), handler);
     }
 
     onModified(pathSegments: string[], propertyName: string, handler: ModifiedHandler): void {
@@ -330,211 +323,122 @@ export class FlattenStep implements Step {
             this.outputModifiedHandlersByProperty.set(propertyName, handlers);
             return;
         }
+        this.input.onModified(this.toInputPath(pathSegments), propertyName, handler);
+    }
 
-        if (this.isBelowOutputPath(pathSegments)) {
-            const translatedPath = this.translateOutputPathToChildPath(pathSegments);
-            this.input.onModified(translatedPath, propertyName, (keyPath, key, oldValue, newValue) => {
-                const rewrittenKeyPath = this.rewriteNestedKeyPath(keyPath);
-                if (rewrittenKeyPath !== null) {
-                    handler(rewrittenKeyPath, key, oldValue, newValue);
-                }
-            });
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        if (pathsMatch(pathSegments, this.outputPath)) {
+            this.outputPlacedHandlers.push(handler);
             return;
         }
-
-        this.input.onModified(pathSegments, propertyName, handler);
+        this.input.onPlaced(this.toInputPath(pathSegments), handler);
     }
 
-    private isBelowOutputPath(pathSegments: string[]): boolean {
-        return pathSegments.length > this.outputPath.length && pathStartsWith(pathSegments, this.outputPath);
-    }
-
-    private translateOutputPathToChildPath(pathSegments: string[]): string[] {
-        const suffix = pathSegments.slice(this.outputPath.length);
-        return [...this.childPath, ...suffix];
-    }
-
-    private rewriteNestedKeyPath(keyPath: string[]): string[] | null {
-        if (keyPath.length <= this.outputDepth + 1) {
-            return null;
+    /** Maps a path below the output array to the corresponding path below the child array. */
+    private toInputPath(pathSegments: string[]): string[] {
+        if (pathSegments.length > this.outputPath.length && pathStartsWith(pathSegments, this.outputPath)) {
+            return [...this.childPath, ...pathSegments.slice(this.outputPath.length)];
         }
-
-        const outputKeyPath = keyPath.slice(0, this.outputDepth);
-        const parentKey = keyPath[this.outputDepth];
-        const childKey = keyPath[this.outputDepth + 1];
-        if (parentKey === undefined || childKey === undefined) {
-            return null;
-        }
-
-        const suffix = keyPath.slice(this.outputDepth + 2);
-        const flatKey = compositeChildKey(parentKey, childKey);
-        return [...outputKeyPath, flatKey, ...suffix];
+        return pathSegments;
     }
 
-    private handleParentAdded(keyPath: string[], parentKey: string, immutableProps: ImmutableProps): void {
-        const id = parentIdentity(keyPath, parentKey);
-        this.parentScalarsByParentIdentity.set(id, immutableProps);
-        if (!this.childKeysByParentIdentity.has(id)) {
-            this.childKeysByParentIdentity.set(id, new Set<string>());
-        }
+    private merge(parentProps: ImmutableProps, childProps: ImmutableProps): ImmutableProps {
+        return { ...parentProps, ...childProps };
     }
 
-    private handleParentRemoved(keyPath: string[], parentKey: string): void {
-        const id = parentIdentity(keyPath, parentKey);
-        this.parentScalarsByParentIdentity.delete(id);
-        this.childKeysByParentIdentity.delete(id);
-        this.childPropertyCountsByParentIdentity.delete(id);
+    private emitModified(key: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
+        this.outputModifiedHandlersByProperty.get(propertyName)?.forEach(handler => handler(key, oldValue, newValue));
     }
 
-    private handleChildAdded(keyPath: string[], childKey: string, childProps: ImmutableProps): void {
-        if (keyPath.length <= this.outputDepth) {
+    private handleChildAdded(parentKey: string, childKey: string, childProps: ImmutableProps): void {
+        const parent = this.parents.get(parentKey);
+        if (!parent) {
             return;
         }
-
-        const outputKeyPath = keyPath.slice(0, this.outputDepth);
-        const parentKey = keyPath[this.outputDepth];
-        if (parentKey === undefined) {
-            return;
-        }
-        const id = parentIdentity(outputKeyPath, parentKey);
-        const parentProps = this.parentScalarsByParentIdentity.get(id) ?? {};
-
-        let childKeys = this.childKeysByParentIdentity.get(id);
-        if (!childKeys) {
-            childKeys = new Set<string>();
-            this.childKeysByParentIdentity.set(id, childKeys);
-        }
-        childKeys.add(childKey);
-
-        let propertyCounts = this.childPropertyCountsByParentIdentity.get(id);
-        if (!propertyCounts) {
-            propertyCounts = new Map<string, number>();
-            this.childPropertyCountsByParentIdentity.set(id, propertyCounts);
-        }
-        for (const propertyName of Object.keys(childProps)) {
-            propertyCounts.set(propertyName, (propertyCounts.get(propertyName) ?? 0) + 1);
-        }
-
-        const flatKey = compositeChildKey(parentKey, childKey);
-        const mergedProps = { ...parentProps, ...childProps };
-        this.outputAddedHandlers.forEach(handler => {
-            handler(outputKeyPath, flatKey, mergedProps);
-        });
+        this.childRecords.set(childKey, { parentKey, props: childProps });
+        parent.childKeys.add(childKey);
+        const mergedProps = this.merge(parent.props, childProps);
+        this.outputAddedHandlers.forEach(handler => handler(parent.parentKey, childKey, mergedProps));
     }
 
-    private handleChildRemoved(keyPath: string[], childKey: string, childProps: ImmutableProps): void {
-        if (keyPath.length <= this.outputDepth) {
+    private handleChildRemoved(childKey: string): void {
+        const child = this.childRecords.get(childKey);
+        if (!child) {
             return;
         }
+        const parent = this.parents.get(child.parentKey);
+        parent?.childKeys.delete(childKey);
+        this.childRecords.delete(childKey);
+        const mergedProps = this.merge(parent?.props ?? {}, child.props);
+        this.outputRemovedHandlers.forEach(handler => handler(childKey, mergedProps));
+    }
 
-        const outputKeyPath = keyPath.slice(0, this.outputDepth);
-        const parentKey = keyPath[this.outputDepth];
-        if (parentKey === undefined) {
+    private handleChildModified(childKey: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
+        const child = this.childRecords.get(childKey);
+        if (!child) {
             return;
         }
-        const id = parentIdentity(outputKeyPath, parentKey);
-        const parentProps = this.parentScalarsByParentIdentity.get(id) ?? {};
+        child.props = { ...child.props, [propertyName]: newValue };
+        this.emitModified(childKey, propertyName, oldValue, newValue);
+    }
 
-        const childKeys = this.childKeysByParentIdentity.get(id);
-        childKeys?.delete(childKey);
-        const propertyCounts = this.childPropertyCountsByParentIdentity.get(id);
-        if (propertyCounts) {
-            for (const propertyName of Object.keys(childProps)) {
-                const count = propertyCounts.get(propertyName);
-                if (!count) {
-                    continue;
-                }
-                if (count <= 1) {
-                    propertyCounts.delete(propertyName);
-                } else {
-                    propertyCounts.set(propertyName, count - 1);
-                }
-            }
-            if (propertyCounts.size === 0) {
-                this.childPropertyCountsByParentIdentity.delete(id);
+    /** A parent value reaches its flattened children unless the child has its own value of that name. */
+    private isShadowed(child: ChildRecord, propertyName: string): boolean {
+        return this.childScalarNames.has(propertyName) || Object.prototype.hasOwnProperty.call(child.props, propertyName);
+    }
+
+    private handleParentModified(parentKey: string, propertyName: string, oldValue: unknown, newValue: unknown): void {
+        const parent = this.parents.get(parentKey);
+        if (!parent) {
+            return;
+        }
+        parent.props = { ...parent.props, [propertyName]: newValue };
+        for (const childKey of parent.childKeys) {
+            const child = this.childRecords.get(childKey);
+            if (child && !this.isShadowed(child, propertyName)) {
+                this.emitModified(childKey, propertyName, oldValue, newValue);
             }
         }
-
-        const flatKey = compositeChildKey(parentKey, childKey);
-        const mergedProps = { ...parentProps, ...childProps };
-        this.outputRemovedHandlers.forEach(handler => {
-            handler(outputKeyPath, flatKey, mergedProps);
-        });
     }
 
-    private handleParentModified(
-        keyPath: string[],
-        parentKey: string,
-        propertyName: string,
-        oldValue: unknown,
-        newValue: unknown
-    ): void {
-        const id = parentIdentity(keyPath, parentKey);
-        // Child scalar values win on collision. Parent modifications for colliding names
-        // should not fan out to flattened children.
-        if (this.childScalarNames.has(propertyName) || this.parentHasChildProperty(id, propertyName)) {
+    /** The parent's children move with it. */
+    private handleParentPlaced(parentKey: string, newGrandparentKey: string): void {
+        const parent = this.parents.get(parentKey);
+        if (!parent) {
             return;
         }
-        const parentProps = this.parentScalarsByParentIdentity.get(id);
-        if (parentProps) {
-            this.parentScalarsByParentIdentity.set(id, {
-                ...parentProps,
-                [propertyName]: newValue
-            });
+        const oldGrandparentKey = parent.parentKey;
+        parent.parentKey = newGrandparentKey;
+        for (const childKey of parent.childKeys) {
+            this.outputPlacedHandlers.forEach(handler => handler(childKey, oldGrandparentKey, newGrandparentKey));
         }
-
-        const childKeys = this.childKeysByParentIdentity.get(id);
-        if (!childKeys || childKeys.size === 0) {
-            return;
-        }
-
-        const handlers = this.outputModifiedHandlersByProperty.get(propertyName);
-        if (!handlers || handlers.length === 0) {
-            return;
-        }
-
-        childKeys.forEach(childKey => {
-            const flatKey = compositeChildKey(parentKey, childKey);
-            handlers.forEach(handler => {
-                handler(keyPath, flatKey, oldValue, newValue);
-            });
-        });
     }
 
-    private parentHasChildProperty(parentId: string, propertyName: string): boolean {
-        const propertyCounts = this.childPropertyCountsByParentIdentity.get(parentId);
-        if (!propertyCounts) {
-            return false;
-        }
-        return (propertyCounts.get(propertyName) ?? 0) > 0;
-    }
-
-    private handleChildModified(
-        keyPath: string[],
-        childKey: string,
-        propertyName: string,
-        oldValue: unknown,
-        newValue: unknown
-    ): void {
-        if (keyPath.length <= this.outputDepth) {
+    /**
+     * A child that moves to another parent may move to another grandparent, and takes on the
+     * new parent's values.
+     */
+    private handleChildPlaced(childKey: string, newParentKey: string): void {
+        const child = this.childRecords.get(childKey);
+        const oldParent = child ? this.parents.get(child.parentKey) : undefined;
+        const newParent = this.parents.get(newParentKey);
+        if (!child || !oldParent || !newParent) {
             return;
         }
-
-        const handlers = this.outputModifiedHandlersByProperty.get(propertyName);
-        if (!handlers || handlers.length === 0) {
-            return;
+        oldParent.childKeys.delete(childKey);
+        newParent.childKeys.add(childKey);
+        child.parentKey = newParentKey;
+        if (oldParent.parentKey !== newParent.parentKey) {
+            this.outputPlacedHandlers.forEach(handler => handler(childKey, oldParent.parentKey, newParent.parentKey));
         }
-
-        const outputKeyPath = keyPath.slice(0, this.outputDepth);
-        const parentKey = keyPath[this.outputDepth];
-        if (parentKey === undefined) {
-            return;
+        const names = new Set([...Object.keys(oldParent.props), ...Object.keys(newParent.props)]);
+        for (const propertyName of names) {
+            const oldValue = oldParent.props[propertyName];
+            const newValue = newParent.props[propertyName];
+            if (!this.isShadowed(child, propertyName) && oldValue !== newValue) {
+                this.emitModified(childKey, propertyName, oldValue, newValue);
+            }
         }
-
-        const flatKey = compositeChildKey(parentKey, childKey);
-        handlers.forEach(handler => {
-            handler(outputKeyPath, flatKey, oldValue, newValue);
-        });
     }
 }
 

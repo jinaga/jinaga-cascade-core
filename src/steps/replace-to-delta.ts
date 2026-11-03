@@ -6,6 +6,7 @@ import type {
     DescriptorNode,
     ImmutableProps,
     ModifiedHandler,
+    PlacedHandler,
     RemovedHandler,
     Step,
     StepBuilder,
@@ -14,17 +15,15 @@ import type {
 import { pathsMatch } from '../util/path.js';
 
 interface EventRecord {
+    /** Key of the entity the event belongs to. */
+    parentKey: string;
     immutableProps: ImmutableProps;
     mutableValues: Map<string, unknown>;
 }
 
 interface EntityState {
-    eventsByKey: Map<string, EventRecord>;
+    /** Keys of the entity's events in sort order. */
     sortedEventKeys: string[];
-}
-
-function computeKeyPathHash(keyPath: string[]): string {
-    return keyPath.join('::');
 }
 
 function finiteNumericValue(value: unknown): number {
@@ -238,9 +237,11 @@ export class ReplaceToDeltaStep implements Step {
     private readonly outputPropertiesSet: Set<string>;
     private readonly orderBySet: Set<string>;
 
+    private readonly events: Map<string, EventRecord> = new Map();
     private readonly entities: Map<string, EntityState> = new Map();
     private readonly addedHandlers: AddedHandler[] = [];
     private readonly removedHandlers: RemovedHandler[] = [];
+    private readonly placedHandlers: PlacedHandler[] = [];
     private readonly modifiedHandlersByProperty: Map<string, ModifiedHandler[]> = new Map();
 
     constructor(
@@ -269,15 +270,20 @@ export class ReplaceToDeltaStep implements Step {
         this.outputPropertiesSet = new Set(this.outputProperties);
         this.orderBySet = new Set(this.orderBy);
 
-        this.input.onAdded(this.eventSegmentPath, (keyPath, key, immutableProps) => {
-            this.handleEventAdded(keyPath, key, immutableProps);
+        this.input.onAdded(this.eventSegmentPath, (parentKey, key, immutableProps) => {
+            if (parentKey !== undefined) {
+                this.handleEventAdded(parentKey, key, immutableProps);
+            }
         });
-        this.input.onRemoved(this.eventSegmentPath, (keyPath, key, immutableProps) => {
-            this.handleEventRemoved(keyPath, key, immutableProps);
+        this.input.onRemoved(this.eventSegmentPath, (key, immutableProps) => {
+            this.handleEventRemoved(key, immutableProps);
+        });
+        this.input.onPlaced(this.eventSegmentPath, (key, _oldParentKey, newParentKey) => {
+            this.handleEventPlaced(key, newParentKey);
         });
         for (const property of new Set([...this.properties, ...this.orderBy])) {
-            this.input.onModified(this.eventSegmentPath, property, (keyPath, key, oldValue, newValue) => {
-                this.handleTrackedPropertyModified(keyPath, key, property, oldValue, newValue);
+            this.input.onModified(this.eventSegmentPath, property, (key, oldValue, newValue) => {
+                this.handleTrackedPropertyModified(key, property, oldValue, newValue);
             });
         }
     }
@@ -308,99 +314,114 @@ export class ReplaceToDeltaStep implements Step {
         this.input.onModified(pathSegments, propertyName, handler);
     }
 
-    private handleEventAdded(parentKeyPath: string[], eventKey: string, immutableProps: ImmutableProps): void {
-        const entity = this.getOrCreateEntity(parentKeyPath);
-
-        const existingRecord = entity.eventsByKey.get(eventKey);
-        if (existingRecord) {
-            this.handleEventRemoved(parentKeyPath, eventKey, existingRecord.immutableProps);
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        if (pathsMatch(pathSegments, this.eventSegmentPath)) {
+            this.placedHandlers.push(handler);
+            return;
         }
-
-        const record: EventRecord = {
-            immutableProps,
-            mutableValues: new Map()
-        };
-        entity.eventsByKey.set(eventKey, record);
-
-        const insertIndex = this.insertEventKey(entity, eventKey);
-        const predecessor = insertIndex > 0
-            ? entity.eventsByKey.get(entity.sortedEventKeys[insertIndex - 1])
-            : undefined;
-        const successorKey = insertIndex < entity.sortedEventKeys.length - 1
-            ? entity.sortedEventKeys[insertIndex + 1]
-            : undefined;
-
-        const deltas = this.computeAllDeltas(record, predecessor);
-        this.emitAdded(parentKeyPath, eventKey, immutableProps, deltas);
-
-        if (successorKey) {
-            this.emitSuccessorDeltaChanges(parentKeyPath, successorKey, predecessor, record);
-        }
+        this.input.onPlaced(pathSegments, handler);
     }
 
-    private handleEventRemoved(parentKeyPath: string[], eventKey: string, immutableProps: ImmutableProps): void {
-        const entityHash = computeKeyPathHash(parentKeyPath);
-        const entity = this.entities.get(entityHash);
-        if (!entity) {
-            const fallbackRecord: EventRecord = {
-                immutableProps,
-                mutableValues: new Map()
-            };
-            this.emitRemoved(parentKeyPath, eventKey, immutableProps, this.computeAllDeltas(fallbackRecord, undefined));
-            return;
-        }
-
-        const eventIndex = entity.sortedEventKeys.indexOf(eventKey);
-        if (eventIndex < 0) {
-            const fallbackRecord: EventRecord = {
-                immutableProps,
-                mutableValues: new Map()
-            };
-            this.emitRemoved(parentKeyPath, eventKey, immutableProps, this.computeAllDeltas(fallbackRecord, undefined));
-            return;
-        }
-
-        const record = entity.eventsByKey.get(eventKey) ?? {
-            immutableProps,
-            mutableValues: new Map()
-        };
+    private neighbors(entity: EntityState, eventIndex: number): [EventRecord | undefined, string | undefined] {
         const predecessor = eventIndex > 0
-            ? entity.eventsByKey.get(entity.sortedEventKeys[eventIndex - 1])
+            ? this.events.get(entity.sortedEventKeys[eventIndex - 1])
             : undefined;
         const successorKey = eventIndex < entity.sortedEventKeys.length - 1
             ? entity.sortedEventKeys[eventIndex + 1]
             : undefined;
+        return [predecessor, successorKey];
+    }
 
+    /** Inserts an event into its entity's order and updates its successor's deltas. */
+    private attach(eventKey: string, record: EventRecord): Record<string, number> {
+        let entity = this.entities.get(record.parentKey);
+        if (!entity) {
+            entity = { sortedEventKeys: [] };
+            this.entities.set(record.parentKey, entity);
+        }
+        const insertIndex = this.insertEventKey(entity, eventKey);
+        const [predecessor, successorKey] = this.neighbors(entity, insertIndex);
         if (successorKey) {
-            this.emitSuccessorDeltaChanges(parentKeyPath, successorKey, record, predecessor);
+            this.emitSuccessorDeltaChanges(successorKey, predecessor, record);
         }
+        return this.computeAllDeltas(record, predecessor);
+    }
 
+    /** Removes an event from its entity's order and updates its successor's deltas. */
+    private detach(eventKey: string, record: EventRecord): Record<string, number> {
+        const entity = this.entities.get(record.parentKey);
+        const eventIndex = entity ? entity.sortedEventKeys.indexOf(eventKey) : -1;
+        if (!entity || eventIndex < 0) {
+            return this.computeAllDeltas(record, undefined);
+        }
+        const [predecessor, successorKey] = this.neighbors(entity, eventIndex);
+        if (successorKey) {
+            this.emitSuccessorDeltaChanges(successorKey, record, predecessor);
+        }
         entity.sortedEventKeys.splice(eventIndex, 1);
-        entity.eventsByKey.delete(eventKey);
         if (entity.sortedEventKeys.length === 0) {
-            this.entities.delete(entityHash);
+            this.entities.delete(record.parentKey);
+        }
+        return this.computeAllDeltas(record, predecessor);
+    }
+
+    private handleEventAdded(parentKey: string, eventKey: string, immutableProps: ImmutableProps): void {
+        const existingRecord = this.events.get(eventKey);
+        if (existingRecord) {
+            this.handleEventRemoved(eventKey, existingRecord.immutableProps);
         }
 
-        const deltas = this.computeAllDeltas(record, predecessor);
-        this.emitRemoved(parentKeyPath, eventKey, record.immutableProps, deltas);
+        const record: EventRecord = { parentKey, immutableProps, mutableValues: new Map() };
+        this.events.set(eventKey, record);
+        const deltas = this.attach(eventKey, record);
+        const augmentedProps: ImmutableProps = { ...immutableProps, ...deltas };
+        this.addedHandlers.forEach(handler => handler(parentKey, eventKey, augmentedProps));
+    }
+
+    private handleEventRemoved(eventKey: string, immutableProps: ImmutableProps): void {
+        const record = this.events.get(eventKey);
+        if (!record) {
+            const fallbackDeltas = this.computeAllDeltas({ parentKey: '', immutableProps, mutableValues: new Map() }, undefined);
+            this.emitRemoved(eventKey, immutableProps, fallbackDeltas);
+            return;
+        }
+        const deltas = this.detach(eventKey, record);
+        this.events.delete(eventKey);
+        this.emitRemoved(eventKey, record.immutableProps, deltas);
+    }
+
+    /** Moves an event to another entity: its deltas are recomputed against its new predecessor. */
+    private handleEventPlaced(eventKey: string, newParentKey: string): void {
+        const record = this.events.get(eventKey);
+        if (!record) {
+            return;
+        }
+        const oldParentKey = record.parentKey;
+        const oldDeltas = this.detach(eventKey, record);
+        record.parentKey = newParentKey;
+        this.placedHandlers.forEach(handler => handler(eventKey, oldParentKey, newParentKey));
+        const newDeltas = this.attach(eventKey, record);
+        for (const outputProperty of this.outputProperties) {
+            if (!Object.is(oldDeltas[outputProperty], newDeltas[outputProperty])) {
+                this.emitModified(eventKey, outputProperty, oldDeltas[outputProperty], newDeltas[outputProperty]);
+            }
+        }
     }
 
     private handleTrackedPropertyModified(
-        parentKeyPath: string[],
         eventKey: string,
         propertyName: string,
         oldValue: unknown,
         newValue: unknown
     ): void {
         if (this.orderBySet.has(propertyName)) {
-            this.handleOrderByPropertyModified(parentKeyPath, eventKey, propertyName, newValue);
+            this.handleOrderByPropertyModified(eventKey, propertyName, newValue);
             return;
         }
-        this.handleValuePropertyModified(parentKeyPath, eventKey, propertyName, oldValue, newValue);
+        this.handleValuePropertyModified(eventKey, propertyName, oldValue, newValue);
     }
 
     private handleValuePropertyModified(
-        parentKeyPath: string[],
         eventKey: string,
         propertyName: string,
         oldValue: unknown,
@@ -410,27 +431,20 @@ export class ReplaceToDeltaStep implements Step {
         if (!outputProperty) {
             return;
         }
-
-        const entity = this.entities.get(computeKeyPathHash(parentKeyPath));
-        if (!entity) {
-            return;
-        }
-        const record = entity.eventsByKey.get(eventKey);
+        const record = this.events.get(eventKey);
         if (!record) {
             return;
         }
-
+        const entity = this.entities.get(record.parentKey);
+        if (!entity) {
+            return;
+        }
         const eventIndex = entity.sortedEventKeys.indexOf(eventKey);
         if (eventIndex < 0) {
             return;
         }
 
-        const predecessor = eventIndex > 0
-            ? entity.eventsByKey.get(entity.sortedEventKeys[eventIndex - 1])
-            : undefined;
-        const successorKey = eventIndex < entity.sortedEventKeys.length - 1
-            ? entity.sortedEventKeys[eventIndex + 1]
-            : undefined;
+        const [predecessor, successorKey] = this.neighbors(entity, eventIndex);
 
         const predecessorValue = predecessor
             ? this.getNumericPropertyValue(predecessor, propertyName)
@@ -441,11 +455,11 @@ export class ReplaceToDeltaStep implements Step {
         record.mutableValues.set(propertyName, newValue);
 
         if (!Object.is(oldDelta, newDelta)) {
-            this.emitModified(parentKeyPath, eventKey, outputProperty, oldDelta, newDelta);
+            this.emitModified(eventKey, outputProperty, oldDelta, newDelta);
         }
 
         if (successorKey) {
-            const successor = entity.eventsByKey.get(successorKey);
+            const successor = this.events.get(successorKey);
             if (!successor) {
                 return;
             }
@@ -453,23 +467,18 @@ export class ReplaceToDeltaStep implements Step {
             const oldSuccessorDelta = successorValue - finiteNumericValue(oldValue);
             const newSuccessorDelta = successorValue - finiteNumericValue(newValue);
             if (!Object.is(oldSuccessorDelta, newSuccessorDelta)) {
-                this.emitModified(parentKeyPath, successorKey, outputProperty, oldSuccessorDelta, newSuccessorDelta);
+                this.emitModified(successorKey, outputProperty, oldSuccessorDelta, newSuccessorDelta);
             }
         }
     }
 
-    private handleOrderByPropertyModified(
-        parentKeyPath: string[],
-        eventKey: string,
-        propertyName: string,
-        newValue: unknown
-    ): void {
-        const entity = this.entities.get(computeKeyPathHash(parentKeyPath));
-        if (!entity) {
+    private handleOrderByPropertyModified(eventKey: string, propertyName: string, newValue: unknown): void {
+        const record = this.events.get(eventKey);
+        if (!record) {
             return;
         }
-        const record = entity.eventsByKey.get(eventKey);
-        if (!record) {
+        const entity = this.entities.get(record.parentKey);
+        if (!entity) {
             return;
         }
         const eventIndex = entity.sortedEventKeys.indexOf(eventKey);
@@ -484,20 +493,15 @@ export class ReplaceToDeltaStep implements Step {
         this.insertEventKey(entity, eventKey);
 
         const nextSnapshot = this.snapshotEntityDeltas(entity);
-        this.emitDeltaSnapshotChanges(parentKeyPath, previousSnapshot, nextSnapshot);
+        this.emitDeltaSnapshotChanges(previousSnapshot, nextSnapshot);
     }
 
     private emitSuccessorDeltaChanges(
-        parentKeyPath: string[],
         successorKey: string,
         oldPredecessor: EventRecord | undefined,
         newPredecessor: EventRecord | undefined
     ): void {
-        const entity = this.entities.get(computeKeyPathHash(parentKeyPath));
-        if (!entity) {
-            return;
-        }
-        const successorRecord = entity.eventsByKey.get(successorKey);
+        const successorRecord = this.events.get(successorKey);
         if (!successorRecord) {
             return;
         }
@@ -507,59 +511,26 @@ export class ReplaceToDeltaStep implements Step {
             const oldDelta = this.computeDeltaForProperty(successorRecord, oldPredecessor, propertyName);
             const newDelta = this.computeDeltaForProperty(successorRecord, newPredecessor, propertyName);
             if (!Object.is(oldDelta, newDelta)) {
-                this.emitModified(parentKeyPath, successorKey, outputProperty, oldDelta, newDelta);
+                this.emitModified(successorKey, outputProperty, oldDelta, newDelta);
             }
         });
     }
 
-    private emitAdded(
-        parentKeyPath: string[],
-        eventKey: string,
-        immutableProps: ImmutableProps,
-        deltas: Record<string, number>
-    ): void {
-        const augmentedProps: ImmutableProps = {
-            ...immutableProps,
-            ...deltas
-        };
-        this.addedHandlers.forEach(handler => {
-            handler(parentKeyPath, eventKey, augmentedProps);
-        });
+    private emitRemoved(eventKey: string, immutableProps: ImmutableProps, deltas: Record<string, number>): void {
+        const augmentedProps: ImmutableProps = { ...immutableProps, ...deltas };
+        this.removedHandlers.forEach(handler => handler(eventKey, augmentedProps));
     }
 
-    private emitRemoved(
-        parentKeyPath: string[],
-        eventKey: string,
-        immutableProps: ImmutableProps,
-        deltas: Record<string, number>
-    ): void {
-        const augmentedProps: ImmutableProps = {
-            ...immutableProps,
-            ...deltas
-        };
-        this.removedHandlers.forEach(handler => {
-            handler(parentKeyPath, eventKey, augmentedProps);
-        });
-    }
-
-    private emitModified(
-        parentKeyPath: string[],
-        eventKey: string,
-        outputProperty: string,
-        oldValue: number,
-        newValue: number
-    ): void {
+    private emitModified(eventKey: string, outputProperty: string, oldValue: number, newValue: number): void {
         const handlers = this.modifiedHandlersByProperty.get(outputProperty) ?? [];
-        handlers.forEach(handler => {
-            handler(parentKeyPath, eventKey, oldValue, newValue);
-        });
+        handlers.forEach(handler => handler(eventKey, oldValue, newValue));
     }
 
     private snapshotEntityDeltas(entity: EntityState): Map<string, Record<string, number>> {
         const snapshot = new Map<string, Record<string, number>>();
         let predecessor: EventRecord | undefined;
         for (const key of entity.sortedEventKeys) {
-            const record = entity.eventsByKey.get(key);
+            const record = this.events.get(key);
             if (!record) {
                 continue;
             }
@@ -570,7 +541,6 @@ export class ReplaceToDeltaStep implements Step {
     }
 
     private emitDeltaSnapshotChanges(
-        parentKeyPath: string[],
         previousSnapshot: Map<string, Record<string, number>>,
         nextSnapshot: Map<string, Record<string, number>>
     ): void {
@@ -583,24 +553,10 @@ export class ReplaceToDeltaStep implements Step {
                 const oldValue = previousDeltas[outputProperty];
                 const newValue = nextDeltas[outputProperty];
                 if (!Object.is(oldValue, newValue)) {
-                    this.emitModified(parentKeyPath, key, outputProperty, oldValue, newValue);
+                    this.emitModified(key, outputProperty, oldValue, newValue);
                 }
             }
         }
-    }
-
-    private getOrCreateEntity(parentKeyPath: string[]): EntityState {
-        const entityHash = computeKeyPathHash(parentKeyPath);
-        const existing = this.entities.get(entityHash);
-        if (existing) {
-            return existing;
-        }
-        const created: EntityState = {
-            eventsByKey: new Map(),
-            sortedEventKeys: []
-        };
-        this.entities.set(entityHash, created);
-        return created;
     }
 
     private insertEventKey(entity: EntityState, eventKey: string): number {
@@ -610,8 +566,7 @@ export class ReplaceToDeltaStep implements Step {
 
         while (low < high) {
             const mid = Math.floor((low + high) / 2);
-            const midKey = sortedEventKeys[mid];
-            const comparison = this.compareEvents(entity, eventKey, midKey);
+            const comparison = this.compareEvents(eventKey, sortedEventKeys[mid]);
             if (comparison < 0) {
                 high = mid;
             } else {
@@ -623,9 +578,9 @@ export class ReplaceToDeltaStep implements Step {
         return low;
     }
 
-    private compareEvents(entity: EntityState, leftKey: string, rightKey: string): number {
-        const leftRecord = entity.eventsByKey.get(leftKey);
-        const rightRecord = entity.eventsByKey.get(rightKey);
+    private compareEvents(leftKey: string, rightKey: string): number {
+        const leftRecord = this.events.get(leftKey);
+        const rightRecord = this.events.get(rightKey);
         if (!leftRecord || !rightRecord) {
             return leftKey.localeCompare(rightKey);
         }

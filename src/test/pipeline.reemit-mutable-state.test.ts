@@ -2,16 +2,13 @@
 /**
  * Issue #29 and its generalization.
  *
- * Two steps re-emit an existing item as a fresh `onAdded` when a mutable value changes:
- *   - GroupByStep moves an item to a new group when a mutable grouping key changes.
- *   - FilterStep admits an item when a mutable predicate input changes.
+ * Two steps used to re-emit an existing item as a fresh add carrying only its add-time
+ * payload: GroupByStep when a mutable grouping key changed, and FilterStep when a mutable
+ * predicate input changed. Values that had arrived via `onModified`, and the item's
+ * descendants, were lost at the new position.
  *
- * The re-emitted add carries only the add-time payload. Mutable values that already
- * arrived via `onModified`, and the item's descendants, are not replayed to the new
- * path. Downstream steps and the output store then see a stale or missing value.
- *
- * Every test here compares against the result that does not depend on arrival order.
- * They are marked `it.failing` until the bug is fixed; remove `.failing` when they pass.
+ * GroupBy now moves the item with `onPlaced`, and FilterStep adds admitted items with their
+ * current values and subtree. Each test checks the result that does not depend on arrival order.
  */
 import { createPipeline } from '../index';
 import { createTestPipeline } from './helpers';
@@ -77,15 +74,15 @@ describe('issue #29: enrich → groupBy → sum depends on arrival order', () =>
         expect(getOutput()).toEqual([{ effectiveClass: 'virtual-angel', t1: 50000 }]);
     });
 
-    it.failing('allocation row first', () => {
+    it('allocation row first', () => {
         const [pipeline, getOutput] = createTestPipeline(issuePipeline);
         pipeline.add('x', allocation);
         pipeline.sources.attendeeClasses.add('AE|a', classRow);
-        expect(getOutput()).toEqual([{ effectiveClass: 'virtual-angel', t1: 50000 }]); // observed t1: 0
+        expect(getOutput()).toEqual([{ effectiveClass: 'virtual-angel', t1: 50000 }]);
     });
 });
 
-describe('groupBy regroup on a mutable key loses mutable values and descendants', () => {
+describe('groupBy regroup on a mutable key keeps values and descendants', () => {
     it('control: immutable aggregated property survives a regroup', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             withEnrichedKey(createPipeline()).groupBy(['cl'], 'g').sum('items', 'v', 't').dropProperty('items')
@@ -95,28 +92,28 @@ describe('groupBy regroup on a mutable key loses mutable values and descendants'
         expect(getOutput()).toEqual([{ cl: 'vip', t: 5 }]);
     });
 
-    it.failing.each(['sum', 'min', 'max', 'average'])('%s of a mutable property after a regroup', agg => {
+    it.each(['sum', 'min', 'max', 'average'])('%s of a mutable property after a regroup', agg => {
         const [pipeline, getOutput] = createTestPipeline(() => enrichedRows()[agg]('rows', 'a1', 'r').dropProperty('rows'));
         pipeline.add('x', { id: 1, k: 'K', v: 5 });
         addClass(pipeline);
-        expect(getOutput()).toEqual([{ cl: 'vip', r: 5 }]); // observed: r missing
+        expect(getOutput()).toEqual([{ cl: 'vip', r: 5 }]);
     });
 
-    it.failing('pickByMax of a mutable property after a regroup', () => {
+    it('pickByMax of a mutable property after a regroup', () => {
         const [pipeline, getOutput] = createTestPipeline(() => enrichedRows().pickByMax('rows', 'a1', 'r').dropProperty('rows'));
         pipeline.add('x', { id: 1, k: 'K', v: 5 });
         addClass(pipeline);
         expect(getOutput()).toEqual([{ cl: 'vip', r: { id: 1, a1: 5 } }]);
     });
 
-    it.failing('output keeps the mutable value of a regrouped item', () => {
+    it('output keeps the mutable value of a regrouped item', () => {
         const [pipeline, getOutput] = createTestPipeline(enrichedRows);
         pipeline.add('x', { id: 1, k: 'K', v: 5 });
         addClass(pipeline);
-        expect(getOutput()).toEqual([{ cl: 'vip', rows: [{ id: 1, a1: 5 }] }]); // observed: a1 missing, cl leaked
+        expect(getOutput()).toEqual([{ cl: 'vip', rows: [{ id: 1, a1: 5 }] }]);
     });
 
-    it.failing('later changes to the mutable value reach the new group', () => {
+    it('later changes to the mutable value reach the new group', () => {
         const [pipeline, getOutput] = createTestPipeline(() => enrichedRows().sum('rows', 'a1', 'r').dropProperty('rows'));
         pipeline.add('x', { id: 1, k: 'K', v: 5 });
         addClass(pipeline);
@@ -124,27 +121,27 @@ describe('groupBy regroup on a mutable key loses mutable values and descendants'
         expect(getOutput()).toEqual([{ cl: 'vip', r: 12 }]);
     });
 
-    it.failing('removing the row after a regroup does not throw', () => {
+    it('removing the row after a regroup does not throw', () => {
         const [pipeline, getOutput] = createTestPipeline(() => enrichedRows().sum('rows', 'a1', 'r').dropProperty('rows'));
         pipeline.add('x', { id: 1, k: 'K', v: 5 });
         addClass(pipeline);
-        pipeline.remove('x', { id: 1, k: 'K', v: 5 }); // observed: "No aggregate value for parent"
+        pipeline.remove('x', { id: 1, k: 'K', v: 5 });
         expect(getOutput()).toEqual([]);
     });
 
-    it.failing('regrouping back when the enrichment is removed does not throw', () => {
+    it('regrouping back when the enrichment is removed does not throw', () => {
         const [pipeline, getOutput] = createTestPipeline(() => enrichedRows().sum('rows', 'a1', 'r').dropProperty('rows'));
         pipeline.add('x', { id: 1, k: 'K', v: 5 });
         addClass(pipeline);
-        removeClass(pipeline); // observed: "No aggregate value for parent"
+        removeClass(pipeline);
         expect(getOutput()).toEqual([{ cl: 'general', r: 5 }]);
     });
 
-    it.failing('regrouped item does not carry the grouping property into the child', () => {
+    it('regrouped item does not carry the grouping property into the child', () => {
         const [pipeline, getOutput] = createTestPipeline(() => withEnrichedKey(createPipeline()).groupBy(['cl'], 'g'));
         pipeline.add('x', { k: 'K', v: 5 });
         addClass(pipeline);
-        expect(getOutput()).toEqual([{ cl: 'vip', items: [{ k: 'K', v: 5 }] }]); // observed: child has cl
+        expect(getOutput()).toEqual([{ cl: 'vip', items: [{ k: 'K', v: 5 }] }]);
     });
 
     describe('without enrich: key derived from an aggregate', () => {
@@ -165,20 +162,20 @@ describe('groupBy regroup on a mutable key loses mutable values and descendants'
             expect(getOutput()).toEqual([{ tier: 'lo', tierTotal: 30 }]);
         });
 
-        it.failing('sum after crossing the threshold', () => {
+        it('sum after crossing the threshold', () => {
             const [pipeline, getOutput] = createTestPipeline(tiers);
             pipeline.add('1', { item: 'i', v: 30 });
             pipeline.add('2', { item: 'i', v: 40 });
-            expect(getOutput()).toEqual([{ tier: 'hi', tierTotal: 70 }]); // observed: tierTotal missing
-        });
-
-        it.failing('a single row whose first value flips the key', () => {
-            const [pipeline, getOutput] = createTestPipeline(tiers);
-            pipeline.add('1', { item: 'i', v: 70 }); // observed: throws "No aggregate value for parent"
             expect(getOutput()).toEqual([{ tier: 'hi', tierTotal: 70 }]);
         });
 
-        it.failing('child array and its aggregate survive a regroup', () => {
+        it('a single row whose first value flips the key', () => {
+            const [pipeline, getOutput] = createTestPipeline(tiers);
+            pipeline.add('1', { item: 'i', v: 70 });
+            expect(getOutput()).toEqual([{ tier: 'hi', tierTotal: 70 }]);
+        });
+
+        it('child array and its aggregate survive a regroup', () => {
             const [pipeline, getOutput] = createTestPipeline(() =>
                 createPipeline()
                     .groupBy(['item'], 'groups')
@@ -191,8 +188,8 @@ describe('groupBy regroup on a mutable key loses mutable values and descendants'
             pipeline.add('1', { item: 'i', v: 30 });
             pipeline.add('2', { item: 'i', v: 40 });
             const [group] = getOutput()[0].groups;
-            expect(group.lineSum).toBe(70); // observed: 40
-            expect(group.items).toHaveLength(2); // observed: only the line added after the regroup
+            expect(group.lineSum).toBe(70);
+            expect(group.items).toHaveLength(2);
         });
     });
 });
@@ -215,7 +212,7 @@ describe('filter admitting an item on a mutable predicate', () => {
         expect(getOutput()).toEqual([{ cat: 'c', item: 'i', total: 70 }]);
     });
 
-    it.failing('downstream sum of the predicate property counts the change once', () => {
+    it('downstream sum of the predicate property counts the change once', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline()
                 .groupBy(['cat', 'item'], 'groups')
@@ -227,10 +224,10 @@ describe('filter admitting an item on a mutable predicate', () => {
                 .dropProperty('groups')
         );
         lines(pipeline);
-        expect(getOutput()).toEqual([{ cat: 'c', tSum: 70 }]); // observed: 110
+        expect(getOutput()).toEqual([{ cat: 'c', tSum: 70 }]);
     });
 
-    it.failing('downstream sum of another mutable property sees its current value', () => {
+    it('downstream sum of another mutable property sees its current value', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline()
                 .groupBy(['cat', 'item'], 'groups')
@@ -243,6 +240,6 @@ describe('filter admitting an item on a mutable predicate', () => {
                 .dropProperty('groups')
         );
         lines(pipeline);
-        expect(getOutput()).toEqual([{ cat: 'c', nSum: 2 }]); // observed: nSum missing
+        expect(getOutput()).toEqual([{ cat: 'c', nSum: 2 }]);
     });
 });
