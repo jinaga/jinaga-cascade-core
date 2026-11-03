@@ -620,6 +620,26 @@ type ParentNonArrayProps<ParentItem> = {
     [K in keyof ParentItem as ParentItem[K] extends KeyedArray<unknown> ? never : K]: ParentItem[K]
 };
 
+/**
+ * The parent properties a flattened child would hide: the parent's names that the child also
+ * has. A flatten whose child and parent share a name is rejected, so that each name in a
+ * flattened row means one thing.
+ */
+type FlattenCollisions<ParentItem, ChildArrayName extends string> =
+    ChildArrayName extends keyof ParentItem
+        ? ParentItem[ChildArrayName] extends KeyedArray<infer ChildItem>
+            ? Extract<AnyMemberNonArrayKey<ParentItem>, AnyMemberKey<ChildItem>>
+            : never
+        : never;
+
+/** The keys of any member of a union: `keyof` of a union keeps only the keys they all share. */
+type AnyMemberKey<T> = T extends unknown ? keyof T : never;
+
+/** The non-array keys of any member of a union. */
+type AnyMemberNonArrayKey<T> = T extends unknown
+    ? { [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? never : K }[keyof T]
+    : never;
+
 type FlattenMergedItem<ParentItem, ChildArrayName extends string> =
     ChildArrayName extends keyof ParentItem
         ? ParentItem[ChildArrayName] extends KeyedArray<infer ChildItem>
@@ -842,7 +862,8 @@ export class PipelineBuilder<
         FlattenedItem extends FlattenMergedItem<ParentItem, ChildArrayName> = FlattenMergedItem<ParentItem, ChildArrayName>
     >(
         parentArrayName: ParentArrayName,
-        childArrayName: ChildArrayName,
+        childArrayName: ChildArrayName &
+            ([FlattenCollisions<ParentItem, ChildArrayName>] extends [never] ? unknown : never),
         outputArrayName: OutputArrayName & SingleName<OutputArrayName> &
             (OutputArrayName extends keyof NavigateToPath<T, Path> ? never : unknown)
     ): PipelineBuilder<

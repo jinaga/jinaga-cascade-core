@@ -1,4 +1,4 @@
-import { createPipeline } from '../index';
+import { createPipeline, type KeyedArray, type SourceArrayDescriptor } from '../index';
 import { createTestPipeline } from './helpers';
 
 type VenueRow = {
@@ -46,12 +46,16 @@ describe('pipeline flatten', () => {
         ]));
     });
 
-    it('should prefer child scalar values when parent and child scalar names collide', () => {
+    // The types reject a flatten whose parent and child share a name. When the descriptor does not
+    // declare the child's name, the runtime cannot see the collision either; an untyped caller then
+    // gets the child's value.
+    it('an untyped caller whose child has an undeclared name of the parent\'s gets the child\'s value', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ state: string; city: string; label: string; venue: string; seats: number }>()
                 .groupBy(['state'], 'states')
                 .in('items').groupBy(['city'], 'cities')
                 .in('cities').defineProperty('label', city => `parent-${city.city}`)
+                // @ts-expect-error The parent and the child both have `label`.
                 .flatten('cities', 'items', 'flatVenues')
         );
 
@@ -62,12 +66,13 @@ describe('pipeline flatten', () => {
         expect(output[0].flatVenues[0].label).toBe('child-label');
     });
 
-    it('should not overwrite child-colliding scalar values when parent scalar with same name changes', () => {
+    it('an untyped caller keeps the child\'s value when the parent\'s value of the same name changes', () => {
         const [pipeline, getOutput] = createTestPipeline(() =>
             createPipeline<{ state: string; city: string; score: number; one: number }>()
                 .groupBy(['state'], 'states')
                 .in('items').groupBy(['city'], 'cities')
                 .in('cities').sum('items', 'one', 'score')
+                // @ts-expect-error The parent and the child both have `score`.
                 .flatten('cities', 'items', 'flatRows')
         );
 
@@ -224,6 +229,23 @@ describe('pipeline flatten', () => {
             // @ts-expect-error A city has no `missing` array.
             .flatten('cities', 'missing', 'flatVenues'))
             .toThrow();
+    });
+
+    it('rejects a parent and child that both declare a name', () => {
+        // Each item's total is absent until it has a line; each group has a total too. Before this
+        // was rejected, the flattened rows' totals depended on the order the items arrived.
+        const lines: SourceArrayDescriptor = {
+            name: 'lines',
+            type: { arrays: [], collectionKey: [], scalars: [{ name: 'n', type: 'number' }], objects: [] }
+        };
+        expect(() => createPipeline<{ cat: string; grp: string; v: number }, 'items', { lines: KeyedArray<{ n: number }> }>('items', [], [lines])
+            .sum('lines', 'n', 'total')
+            .groupBy(['cat', 'grp'], 'groups')
+            .sum('items', 'v', 'total')
+            .groupBy(['cat'], 'cats')
+            // @ts-expect-error The groups and the items both have `total`.
+            .flatten('groups', 'items', 'flat')
+        ).toThrow('"total"');
     });
 
     it('should reject flatten configuration when output array collides at current scope', () => {

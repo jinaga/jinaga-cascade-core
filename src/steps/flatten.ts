@@ -96,6 +96,25 @@ function assertValidFlattenConfiguration(
     if (scopeNode.arrays.some(arrayDescriptor => arrayDescriptor.name === outputArrayName)) {
         throw new Error(`flatten output array already exists at current scope: "${outputArrayName}"`);
     }
+
+    // A flattened row would show only the child's value of a name both declare. Reject it, so
+    // that each name in a flattened row means one thing. The types reject every such name; this
+    // check sees only the names the descriptors declare.
+    const childNames = new Set([
+        ...childArray.type.scalars.map(scalar => scalar.name),
+        ...childArray.type.objects.map(objectDescriptor => objectDescriptor.name),
+        ...childArray.type.arrays.map(arrayDescriptor => arrayDescriptor.name)
+    ]);
+    const collisions = [
+        ...parentArray.type.scalars.map(scalar => scalar.name),
+        ...parentArray.type.objects.map(objectDescriptor => objectDescriptor.name)
+    ].filter(name => childNames.has(name));
+    if (collisions.length > 0) {
+        throw new Error(
+            `flatten would hide the parent's ${collisions.map(name => `"${name}"`).join(', ')} behind the child's ` +
+            `property of the same name: rename one of them before flattening`
+        );
+    }
 }
 
 function getChildScalarNamesFromDescriptor(
@@ -220,8 +239,9 @@ interface ChildRecord {
 /**
  * Replaces a parent array and its child array with one array of merged items, placed under
  * the parent's own parent. A flattened item keeps its child's key, which is unique within its
- * level, so the levels below it pass through unchanged. Child values win over parent values
- * of the same name.
+ * level, so the levels below it pass through unchanged. A parent and child may not share a
+ * declared name (`assertValidFlattenConfiguration`); for a name only the payloads carry, the
+ * child's value wins.
  */
 export class FlattenStep implements Step {
     private readonly outputAddedHandlers: AddedHandler[] = [];
