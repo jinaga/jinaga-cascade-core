@@ -628,9 +628,17 @@ type ParentNonArrayProps<ParentItem> = {
 type FlattenCollisions<ParentItem, ChildArrayName extends string> =
     ChildArrayName extends keyof ParentItem
         ? ParentItem[ChildArrayName] extends KeyedArray<infer ChildItem>
-            ? Extract<keyof ParentNonArrayProps<ParentItem>, keyof ChildItem>
+            ? Extract<AnyMemberNonArrayKey<ParentItem>, AnyMemberKey<ChildItem>>
             : never
         : never;
+
+/** The keys of any member of a union: `keyof` of a union keeps only the keys they all share. */
+type AnyMemberKey<T> = T extends unknown ? keyof T : never;
+
+/** The non-array keys of any member of a union. */
+type AnyMemberNonArrayKey<T> = T extends unknown
+    ? { [K in keyof T]-?: T[K] extends KeyedArray<unknown> ? never : K }[keyof T]
+    : never;
 
 type FlattenMergedItem<ParentItem, ChildArrayName extends string> =
     ChildArrayName extends keyof ParentItem

@@ -49,3 +49,16 @@ type NestedInput = {
     expectError(byCity().in('cities').defineProperty('label', c => c.city).flatten('cities', 'items', 'flat'));
     byCity().in('cities').defineProperty('cityLabel', c => c.city).flatten('cities', 'items', 'flat');
 }
+
+// A name shared with only one member of a union collides too.
+{
+    type Child = { kind: 'a'; label: string } | { kind: 'b'; value: number };
+    type Parent = { label: string; children: KeyedArray<Child> };
+    type Input = { parents: KeyedArray<Parent> };
+    expectError(createPipeline<Input>().flatten('parents', 'children', 'flat'));
+
+    type ParentUnion = { label: string; children: KeyedArray<{ value: number }> } | { other: string; children: KeyedArray<{ value: number }> };
+    type ChildLabelled = { label: string; children: KeyedArray<{ label: string }> } | { other: string; children: KeyedArray<{ label: string }> };
+    expectError(createPipeline<{ parents: KeyedArray<ChildLabelled> }>().flatten('parents', 'children', 'flat'));
+    createPipeline<{ parents: KeyedArray<ParentUnion> }>().flatten('parents', 'children', 'flat');
+}
