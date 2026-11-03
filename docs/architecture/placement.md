@@ -55,6 +55,17 @@ How each kind of step meets the obligations:
 - **`groupBy`** keeps each item's placement and grouping values, and the members of each group. A change to either moves the item: add the new group if needed, emit `onPlaced`, then remove the old group if it is empty. Nothing below the item level is re-emitted.
 - **`filter`** is a membership step. A hidden item is not in the output, so the step keeps the complete current state of every node at or below its scope. An item that becomes visible is added with its current values, followed by its subtree. An item that becomes hidden has its subtree removed, children first. The change that triggered either transition is not forwarded, because the add already carries it.
 - **`flatten`** keys flattened items by the child's key. When a parent moves, its flattened children move with it. When a child moves, it takes on the new parent's values.
+
+## Which items can move
+
+A node's placement is a value, and like any value the type descriptor says whether it can change after the node is added. Each nested array's `ArrayDescriptor` has `mutablePlacement`. The root has no parent, so it has no flag. Two steps make items movable, and every other step passes the flag through:
+
+- **`groupBy`**: an item can move to another group when one of its grouping values is mutable, or when the item it is grouped within can move. Groups never move, because a group's key includes its parent's key.
+- **`flatten`**: a flattened item can move when its parent can (the parent's children go with it) or when its child can.
+
+Source arrays never move, so a source array declares no flag (`SourceArrayDescriptor`), and the input sets it to `false`.
+
+`flatten` reads the flag. A flattened item inherits its parent's values, so when the child array's items can move, the inherited values can change: `flatten` records them as mutable. Without this, the output and downstream steps did not listen for those values, and a flattened item kept its old parent's values after a move (#30). The tests check the flag against the steps: every `onPlaced` a pipeline emits is at a level whose array is declared to move.
 - **`cumulativeSum`, `replaceToDelta`** keep one sorted order per parent. A move removes the item from one order and inserts it into another, updating the successors in both.
 - **Output store** keeps a `PlacementIndex` so it can locate a node. Each operation is located when it is queued, so applying a batch is a pure function of the state.
 

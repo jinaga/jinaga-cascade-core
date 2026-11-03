@@ -138,6 +138,13 @@ export interface DescriptorNode {
 export interface TypeDescriptor extends DescriptorNode {
     rootCollectionName: string;
 }
+
+export interface ArrayDescriptor {
+    name: string;
+    type: DescriptorNode;
+    /** Whether an item of this array can move to another parent after it is added. */
+    mutablePlacement: boolean;
+}
 ```
 
 Every step must return a `TypeDescriptor` describing the shape of data it produces. Downstream steps and the runtime (`build()`) use this to:
@@ -146,6 +153,8 @@ Every step must return a `TypeDescriptor` describing the shape of data it produc
 - Wire up the correct `onAdded`/`onRemoved`/`onModified` registrations
 
 **Key rule:** If a step produces a computed/aggregate property that can change after the initial `onAdded`, it must appear in `mutableProperties`. Otherwise downstream steps won't register `onModified` handlers for it.
+
+**Placement rule:** A step that emits `onPlaced` at a level must set `mutablePlacement: true` on that level's `ArrayDescriptor`. A step that only forwards moves must keep the flag: rebuild an array with `{ ...arrayDesc, type }`, never `{ name, type }`. A value that depends on a node's parent (as `flatten`'s inherited values do) is mutable when that node's array has `mutablePlacement`. See `docs/architecture/placement.md`.
 
 ---
 

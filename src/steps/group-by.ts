@@ -3,12 +3,17 @@ import { canonicalizeGroupingProperties, computeChildKey, computeGroupKey } from
 import { pathsMatch, pathStartsWith } from "../util/path.js";
 import { emptyDescriptorNode } from '../util/descriptor-transform.js';
 
+/**
+ * Groups never move: a group's key includes its parent's key. An item moves to another group
+ * when one of its grouping values changes, or when the item it is grouped within moves.
+ */
 function transformDescriptorAtPathWithParentName(
     descriptor: DescriptorNode,
     remainingSegments: string[],
     groupingProperties: string[],
     parentArrayName: string,
-    childArrayName: string
+    childArrayName: string,
+    groupingValueMutable: boolean
 ): DescriptorNode {
     if (remainingSegments.length === 0) {
         return descriptor;
@@ -41,21 +46,24 @@ function transformDescriptorAtPathWithParentName(
                                     ...arrayDesc.type,
                                     scalars: childScalars,
                                     collectionKey: arrayDesc.type.collectionKey.filter(k => !groupingKey.includes(k))
-                                }
+                                },
+                                mutablePlacement: groupingValueMutable || arrayDesc.mutablePlacement
                             }
                         ]
-                    }
+                    },
+                    mutablePlacement: false
                 };
             }
 
             return {
-                name: arrayDesc.name,
+                ...arrayDesc,
                 type: transformDescriptorAtPathWithParentName(
                     arrayDesc.type,
                     remainingSegmentsAfter,
                     groupingProperties,
                     parentArrayName,
-                    childArrayName
+                    childArrayName,
+                    groupingValueMutable
                 )
             };
         })
@@ -70,6 +78,7 @@ function transformGroupByDescriptor(
     scopeSegments: string[]
 ): TypeDescriptor {
     const groupingKey = groupingProperties;
+    const groupingValueMutable = groupingProperties.some(p => inputDescriptor.mutableProperties.includes(p));
     const parentScalars = inputDescriptor.scalars.filter(s => groupingKey.includes(s.name));
     const childScalars = inputDescriptor.scalars.filter(s => !groupingKey.includes(s.name));
 
@@ -87,7 +96,8 @@ function transformGroupByDescriptor(
             arrays: [
                 {
                     name: childArrayName,
-                    type: childDescriptor
+                    type: childDescriptor,
+                    mutablePlacement: groupingValueMutable
                 }
             ],
             mutableProperties: [...inputDescriptor.mutableProperties],
@@ -101,7 +111,8 @@ function transformGroupByDescriptor(
             [...scopeSegments],
             groupingProperties,
             parentArrayName,
-            childArrayName
+            childArrayName,
+            groupingValueMutable
         ),
         rootCollectionName: inputDescriptor.rootCollectionName,
         mutableProperties: [...inputDescriptor.mutableProperties],

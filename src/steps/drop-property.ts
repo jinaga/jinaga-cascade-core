@@ -62,7 +62,7 @@ function transformDescriptorRemovingArray(
         arrays: descriptor.arrays.map(arrayDesc => {
             if (arrayDesc.name === currentSegment) {
                 return {
-                    name: arrayDesc.name,
+                    ...arrayDesc,
                     type: transformDescriptorRemovingArray(arrayDesc.type, remainingSegmentsAfter)
                 };
             }
