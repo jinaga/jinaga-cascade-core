@@ -231,8 +231,9 @@ export class FilterStep<T> implements Step {
         if (!record) {
             return;
         }
+        // Downstream received the node's subtree, so it gets the matching removes, children first.
         if (this.isVisible(level, key)) {
-            this.levelHandlers(level).removed.forEach(handler => handler(key, record.props));
+            this.evict(level, key);
         }
         this.unlinkChild(level, record.parentKey, key);
         this.forget(level, key);

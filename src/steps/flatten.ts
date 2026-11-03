@@ -273,7 +273,7 @@ export class FlattenStep implements Step {
             }
         });
         this.input.onRemoved(this.parentPath, key => {
-            this.parents.delete(key);
+            this.handleParentRemoved(key);
         });
         this.input.onPlaced(this.parentPath, (key, _oldParentKey, newParentKey) => {
             this.handleParentPlaced(key, newParentKey);
@@ -361,6 +361,21 @@ export class FlattenStep implements Step {
         this.outputAddedHandlers.forEach(handler => handler(parent.parentKey, childKey, mergedProps));
     }
 
+    /**
+     * Flattened children live under the grandparent, so removing their parent does not
+     * remove them from the output. Remove them here.
+     */
+    private handleParentRemoved(parentKey: string): void {
+        const parent = this.parents.get(parentKey);
+        if (!parent) {
+            return;
+        }
+        for (const childKey of [...parent.childKeys]) {
+            this.handleChildRemoved(childKey);
+        }
+        this.parents.delete(parentKey);
+    }
+
     private handleChildRemoved(childKey: string): void {
         const child = this.childRecords.get(childKey);
         if (!child) {
@@ -435,7 +450,7 @@ export class FlattenStep implements Step {
         for (const propertyName of names) {
             const oldValue = oldParent.props[propertyName];
             const newValue = newParent.props[propertyName];
-            if (!this.isShadowed(child, propertyName) && oldValue !== newValue) {
+            if (!this.isShadowed(child, propertyName) && !Object.is(oldValue, newValue)) {
                 this.emitModified(childKey, propertyName, oldValue, newValue);
             }
         }

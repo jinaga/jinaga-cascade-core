@@ -380,3 +380,48 @@ describe('review regressions', () => {
         expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([{ name: 'nine', files: [] }]);
     });
 });
+
+describe('removing a parent before its children', () => {
+    const filesPipeline = () =>
+        createPipeline('folders', [{ name: 'name', type: 'string' }], [
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }
+        ]);
+
+    it('filter removes the admitted subtree of a removed item', () => {
+        const removed: string[] = [];
+        const builder = filesPipeline().filter(() => true, []);
+        const graph = (builder as any).lastBuilder.buildGraph({});
+        graph.rootInput.setSources(graph.sources);
+        graph.lastStep.onRemoved(['files'], key => removed.push('file:' + key));
+        graph.lastStep.onRemoved([], key => removed.push('folder:' + key));
+        graph.rootInput.add('F1', { name: 'one' });
+        graph.rootInput.addAt(['files'], ['F1'], '1', { size: 10 });
+        graph.rootInput.remove('F1', { name: 'one' });
+        expect(removed).toHaveLength(2);
+        expect(removed[0]).toMatch(/^file:/);
+        expect(removed[1]).toBe('folder:F1');
+    });
+
+    it('flatten removes flattened children when their parent is removed', () => {
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline('roots', [{ name: 'r', type: 'string' }], [
+                {
+                    name: 'folders',
+                    type: {
+                        arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }],
+                        collectionKey: [],
+                        scalars: [{ name: 'name', type: 'string' }],
+                        objects: [],
+                        mutableProperties: []
+                    }
+                }
+            ]).flatten('folders', 'files', 'allFiles')
+        );
+        pipeline.add('R', { r: 'root' });
+        pipeline.collection('folders').add('R', 'F1', { name: 'one' });
+        pipeline.collection('folders', 'files').add(['R', 'F1'], '1', { size: 10 });
+        expect(getOutput()).toEqual([{ r: 'root', allFiles: [{ name: 'one', size: 10 }] }]);
+        pipeline.collection('folders').remove('R', 'F1', { name: 'one' });
+        expect(getOutput()).toEqual([{ r: 'root', allFiles: [] }]);
+    });
+});
