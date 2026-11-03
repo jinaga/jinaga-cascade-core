@@ -698,6 +698,42 @@ describe('mutable placement (#30)', () => {
         ]);
     });
 
+    it('a child object of the same name does not shadow an inherited value', () => {
+        // groupBy copies the source object's descriptor to the group level, which has no value for it.
+        const emptyNode = { arrays: [], collectionKey: [], scalars: [], objects: [], mutableProperties: [] };
+        const [pipeline, getOutput] = createTestPipeline(() =>
+            createPipeline('rows', [], [], [{ name: 'label', type: emptyNode }])
+                .groupBy(['cat', 'item'], 'groups')
+                .sum('rows', 'v', 'total')
+                .defineProperty('tier', tierOf, ['total'])
+                .groupBy(['cat', 'tier'], 'tiers')
+                .defineProperty('label', t => t.tier.toUpperCase())
+                .groupBy(['cat'], 'cats')
+                .flatten('tiers', 'groups', 'flat')
+        );
+        pipeline.add('1', { cat: 'c', item: 'a', v: 30 });
+        pipeline.add('2', { cat: 'c', item: 'a', v: 40 });
+        expect(getOutput()[0].flat[0].label).toBe('HI');
+    });
+
+    it('dropping an array keeps the placement of the levels around it', () => {
+        const builder = () => createPipeline()
+            .groupBy(['cat', 'item'], 'groups')
+            .sum('items', 'v', 'total')
+            .defineProperty('tier', tierOf, ['total'])
+            .groupBy(['cat', 'tier'], 'tiers')
+            .defineProperty('label', t => t.tier.toUpperCase())
+            .in('groups')
+            .dropProperty('items')
+            .groupBy(['cat'], 'cats')
+            .flatten('tiers', 'groups', 'flat');
+        expect(arrayAt(builder().getTypeDescriptor(), ['flat']).mutablePlacement).toBe(true);
+        const [pipeline, getOutput] = createTestPipeline(builder);
+        pipeline.add('1', { cat: 'c', item: 'a', v: 30 });
+        pipeline.add('2', { cat: 'c', item: 'a', v: 40 });
+        expect(getOutput()).toEqual([{ cat: 'c', flat: [{ tier: 'hi', label: 'HI', item: 'a', total: 70 }] }]);
+    });
+
     it('records which arrays have items that can move', () => {
         const descriptor = tiersByCategory().getTypeDescriptor();
         expect(arrayAt(descriptor, ['tiers']).mutablePlacement).toBe(false);

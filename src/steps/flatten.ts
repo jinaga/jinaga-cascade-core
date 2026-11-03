@@ -205,10 +205,9 @@ function inheritedMutableProperties(
     if (!parentArray || !childArray || !childArray.mutablePlacement) {
         return [];
     }
-    const shadowed = new Set([
-        ...childArray.type.scalars.map(scalar => scalar.name),
-        ...childArray.type.objects.map(objectDescriptor => objectDescriptor.name)
-    ]);
+    // As in `FlattenStep.isShadowed`: only a child's declared scalars shadow a parent value.
+    // A child may declare an object it has no value for, so objects do not.
+    const shadowed = new Set(childArray.type.scalars.map(scalar => scalar.name));
     return [
         ...parentArray.type.scalars.map(scalar => scalar.name),
         ...parentArray.type.objects.map(objectDescriptor => objectDescriptor.name)
