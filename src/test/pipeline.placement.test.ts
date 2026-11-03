@@ -425,3 +425,90 @@ describe('removing a parent before its children', () => {
         expect(getOutput()).toEqual([{ r: 'root', allFiles: [] }]);
     });
 });
+
+describe('second review regressions', () => {
+    const treePipeline = () =>
+        createPipeline('roots', [{ name: 'r', type: 'string' }], [
+            {
+                name: 'folders',
+                type: {
+                    arrays: [{ name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }],
+                    collectionKey: [],
+                    scalars: [{ name: 'name', type: 'string' }],
+                    objects: [],
+                    mutableProperties: []
+                }
+            }
+        ]);
+
+    it('removing a row removes its remaining children first', () => {
+        const removed: string[] = [];
+        const graph = (treePipeline() as any).lastBuilder.buildGraph({});
+        graph.lastStep.onRemoved([], key => removed.push(`root:${key}`));
+        graph.lastStep.onRemoved(['folders'], () => removed.push('folder'));
+        graph.lastStep.onRemoved(['folders', 'files'], () => removed.push('file'));
+        graph.rootInput.add('R', { r: 'root' });
+        graph.rootInput.addAt(['folders'], ['R'], 'F1', { name: 'one' });
+        graph.rootInput.addAt(['folders', 'files'], ['R', 'F1'], '1', { size: 10 });
+        graph.rootInput.remove('R', { r: 'root' });
+        expect(removed).toEqual(['file', 'folder', 'root:R']);
+        // Removing a child that went with its parent is a no-op.
+        graph.rootInput.removeAt(['folders', 'files'], ['R', 'F1'], '1', { size: 10 });
+        expect(removed).toHaveLength(3);
+    });
+
+    it('a nested filter does not replay a subtree removed with its ancestor', () => {
+        const [pipeline, getOutput] = createTestPipeline(() => treePipeline().in('folders').filter(() => true, []));
+        pipeline.add('R', { r: 'root' });
+        pipeline.collection('folders').add('R', 'F1', { name: 'one' });
+        pipeline.collection('folders', 'files').add(['R', 'F1'], '1', { size: 10 });
+        pipeline.remove('R', { r: 'root' });
+        pipeline.add('R', { r: 'root' });
+        pipeline.collection('folders').add('R', 'F1', { name: 'one' });
+        expect(getOutput()).toEqual([{ r: 'root', folders: [{ name: 'one', files: [] }] }]);
+    });
+
+    it('filter keeps a scope item visible when a descendant with the same key is removed', () => {
+        const handlers = { added: new Map(), removed: new Map() };
+        const fakeInput = {
+            onAdded: (path, h) => handlers.added.set(JSON.stringify(path), h),
+            onRemoved: (path, h) => handlers.removed.set(JSON.stringify(path), h),
+            onModified: () => {},
+            onPlaced: () => {}
+        };
+        const descriptor = {
+            rootCollectionName: 'items', collectionKey: [], scalars: [], objects: [], mutableProperties: [],
+            arrays: [{ name: 'children', type: { arrays: [], collectionKey: [], scalars: [], objects: [], mutableProperties: [] } }]
+        };
+        const { FilterStep } = require('../steps/filter');
+        const step = new FilterStep(fakeInput, () => true, [], [], descriptor);
+        const removed: string[] = [];
+        step.onRemoved([], key => removed.push(key));
+        handlers.added.get('[]')(undefined, 'X', {});
+        handlers.added.get('["children"]')('X', 'X', {});
+        handlers.removed.get('["children"]')('X', {});
+        handlers.removed.get('[]')('X', {});
+        expect(removed).toEqual(['X']);
+    });
+
+    it('a subscriber that reacts to a synchronous flush can add a child of the row it just saw', () => {
+        const diagnostics: string[] = [];
+        const builder = createPipeline('folders', [{ name: 'name', type: 'string' }], [
+            { name: 'files', type: { arrays: [], collectionKey: [], scalars: [{ name: 'size', type: 'number' }], objects: [], mutableProperties: [] } }
+        ]);
+        let state = [];
+        let pipeline;
+        let reacted = false;
+        pipeline = builder.build(t => {
+            state = t(state);
+            if (!reacted && state.length === 1) {
+                reacted = true;
+                pipeline.collection('files').add('F1', '1', { size: 10 });
+            }
+        }, { batchSize: 1, onDiagnostic: d => diagnostics.push(d.code) });
+        pipeline.add('F1', { name: 'one' });
+        pipeline.flush();
+        expect(diagnostics).toEqual([]);
+        expect(toPipelinePlainOutput(state, builder.getTypeDescriptor())).toEqual([{ name: 'one', files: [{ size: 10 }] }]);
+    });
+});

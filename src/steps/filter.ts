@@ -249,7 +249,9 @@ export class FilterStep<T> implements Step {
             byParent.delete(key);
         }
         this.nodes.get(levelId(level))!.delete(key);
-        this.visible.delete(key);
+        if (this.isScope(level)) {
+            this.visible.delete(key);
+        }
     }
 
     private handleModified(level: string[], propertyName: string, key: string, newValue: unknown): void {

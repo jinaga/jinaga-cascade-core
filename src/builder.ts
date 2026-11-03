@@ -293,9 +293,10 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         if (keyPath === undefined) {
             return;
         }
-        if (this.enqueueOperation({ type: 'add', epoch: this.epoch, segmentPath, keyPath, key, immutableProps })) {
-            this.placements.set(segmentPath, key, parentKey);
-        }
+        this.enqueueOperation(
+            { type: 'add', epoch: this.epoch, segmentPath, keyPath, key, immutableProps },
+            () => this.placements.set(segmentPath, key, parentKey)
+        );
     }
 
     enqueueRemove(segmentPath: string[], key: string): void {
@@ -307,9 +308,10 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         if (keyPath === undefined) {
             return;
         }
-        if (this.enqueueOperation({ type: 'remove', epoch: this.epoch, segmentPath, keyPath, key })) {
-            this.placements.delete(segmentPath, key);
-        }
+        this.enqueueOperation(
+            { type: 'remove', epoch: this.epoch, segmentPath, keyPath, key },
+            () => this.placements.delete(segmentPath, key)
+        );
     }
 
     enqueueModify(segmentPath: string[], key: string, name: string, value: unknown): void {
@@ -326,9 +328,10 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         if (keyPath === undefined || toKeyPath === undefined) {
             return;
         }
-        if (this.enqueueOperation({ type: 'move', epoch: this.epoch, segmentPath, keyPath, toKeyPath, key })) {
-            this.placements.set(segmentPath, key, newParentKey);
-        }
+        this.enqueueOperation(
+            { type: 'move', epoch: this.epoch, segmentPath, keyPath, toKeyPath, key },
+            () => this.placements.set(segmentPath, key, newParentKey)
+        );
     }
 
     private locateOrReport(
@@ -475,14 +478,18 @@ class PipelineRuntimeSessionImpl<TState extends object, TStart, TSources extends
         return this.closed;
     }
 
-    private enqueueOperation(operation: PendingOperation): boolean {
+    /**
+     * Queues an operation. `recordPlacement` runs before any flush, so a subscriber that
+     * reacts to a synchronous flush sees the placement of the node it was just told about.
+     */
+    private enqueueOperation(operation: PendingOperation, recordPlacement: () => void = () => {}): void {
         if (!this.shouldAcceptOperation(operation)) {
-            return false;
+            return;
         }
 
+        recordPlacement();
         this.pendingOperations.push(operation);
         this.scheduleFlush();
-        return true;
     }
 
     private shouldAcceptOperation(operation: PendingOperation): boolean {

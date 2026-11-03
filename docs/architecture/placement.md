@@ -34,6 +34,8 @@ Every key below the root is unique within its level by construction:
 
 A node's descendants are addressed by their own identity, so a move is a single event, and an ancestor's move never changes a descendant's address.
 
+A node is removed only after its descendants. The input step guarantees this: removing a row first removes the children it received through `collection()`, deepest first. Steps that create nodes keep it too: `groupBy` removes a group only when it is empty, `filter` removes a hidden subtree children first, and `flatten` removes flattened children with their parent. No step ever sees a parent leave while it still has children.
+
 ## Proof obligation per step
 
 Let `S` be the current set of input rows. Each step holds state `σ` and must satisfy:

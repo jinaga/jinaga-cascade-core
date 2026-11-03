@@ -122,8 +122,15 @@ class FakeStep implements Step {
         this.modifiedHandlers.set(key, handlers);
     }
 
-    onPlaced(_pathSegments: string[], _handler: PlacedHandler): void {
-        // Events in these tests never move.
+    private readonly placedHandlers = new Map<string, PlacedHandler[]>();
+
+    onPlaced(pathSegments: string[], handler: PlacedHandler): void {
+        const key = JSON.stringify(pathSegments);
+        this.placedHandlers.set(key, [...(this.placedHandlers.get(key) ?? []), handler]);
+    }
+
+    emitPlaced(pathSegments: string[], key: string, oldParentKey: string, newParentKey: string): void {
+        (this.placedHandlers.get(JSON.stringify(pathSegments)) ?? []).forEach(handler => handler(key, oldParentKey, newParentKey));
     }
 
     emitAdded(pathSegments: string[], parentKey: string | undefined, key: string, immutableProps: ImmutableProps): void {
@@ -493,5 +500,43 @@ describe('ReplaceToDeltaStep internals', () => {
 
         expect(modifiedEvents).toContainEqual({ key: 'event-2', oldValue: 5, newValue: 15 });
         expect(modifiedEvents).toContainEqual({ key: 'event-1', oldValue: 10, newValue: -5 });
+    });
+
+    it('should recompute deltas in both entities when an event moves between them', () => {
+        const fakeInput = new FakeStep(fakeDescriptorForReplaceToDelta(['id']));
+        const step = new ReplaceToDeltaStep(
+            fakeInput,
+            ['entities'],
+            'events',
+            ['time', 'id'],
+            ['amount'],
+            ['delta'],
+            fakeInput.descriptor
+        );
+
+        const deltas = new Map<string, unknown>();
+        step.onAdded(['entities', 'events'], (_parentKey, key, props) => deltas.set(key, props.delta));
+        step.onModified(['entities', 'events'], 'delta', (key, _oldValue, newValue) => deltas.set(key, newValue));
+        const placed: Array<[string, string, string]> = [];
+        step.onPlaced(['entities', 'events'], (key, from, to) => placed.push([key, from, to]));
+
+        fakeInput.emitAdded(['entities', 'events'], 'E1', 'a1', { time: 1, id: 'a1', amount: 10 });
+        fakeInput.emitAdded(['entities', 'events'], 'E1', 'a2', { time: 2, id: 'a2', amount: 15 });
+        fakeInput.emitAdded(['entities', 'events'], 'E1', 'a3', { time: 3, id: 'a3', amount: 18 });
+        fakeInput.emitAdded(['entities', 'events'], 'E2', 'b1', { time: 1, id: 'b1', amount: 100 });
+        fakeInput.emitAdded(['entities', 'events'], 'E2', 'b3', { time: 3, id: 'b3', amount: 130 });
+        expect(Object.fromEntries(deltas)).toEqual({ a1: 10, a2: 5, a3: 3, b1: 100, b3: 30 });
+
+        fakeInput.emitPlaced(['entities', 'events'], 'a2', 'E1', 'E2');
+        expect(placed).toEqual([['a2', 'E1', 'E2']]);
+        // E1: a1, a3. E2: b1, a2, b3.
+        expect(Object.fromEntries(deltas)).toEqual({ a1: 10, a2: -85, a3: 8, b1: 100, b3: 115 });
+
+        fakeInput.emitModified(['entities', 'events'], 'amount', 'a2', 15, 20);
+        expect(Object.fromEntries(deltas)).toEqual({ a1: 10, a2: -80, a3: 8, b1: 100, b3: 110 });
+
+        step.onRemoved(['entities', 'events'], key => deltas.delete(key));
+        fakeInput.emitRemoved(['entities', 'events'], 'a2', { time: 2, id: 'a2', amount: 20 });
+        expect(Object.fromEntries(deltas)).toEqual({ a1: 10, a3: 8, b1: 100, b3: 30 });
     });
 });
