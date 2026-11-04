@@ -80,7 +80,7 @@ describe('pipeline enrich nested sources', () => {
 
         expect(getOutput()[0].customerStatus.loyaltySnapshot).toEqual({
             customerId: 'c-1',
-            loyalty: [{ key: 'tier-1', value: { tier: 'platinum' } }]
+            loyalty: [{ tier: 'platinum' }]
         });
     });
 
@@ -116,7 +116,7 @@ describe('pipeline enrich nested sources', () => {
 
         expect(getOutput()[0].customerStatus.loyaltySnapshot).toEqual({
             customerId: 'c-2',
-            loyalty: [{ key: 'tier-early', value: { tier: 'gold' } }]
+            loyalty: [{ tier: 'gold' }]
         });
     });
 });

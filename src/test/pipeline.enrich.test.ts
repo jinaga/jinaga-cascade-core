@@ -84,7 +84,7 @@ describe('pipeline enrich', () => {
                 total: 125,
                 customerStatus: {
                     customerId: 'c-1',
-                    customerStatuses: [{ key: 'status-1', value: { status: 'gold' } }]
+                    customerStatuses: [{ status: 'gold' }]
                 }
             }
         ]);
@@ -126,7 +126,7 @@ describe('pipeline enrich', () => {
                 total: 50,
                 customerStatus: {
                     customerId: 'c-1',
-                    customerStatuses: [{ key: 'status-c1', value: { status: 'silver' } }]
+                    customerStatuses: [{ status: 'silver' }]
                 }
             },
             {

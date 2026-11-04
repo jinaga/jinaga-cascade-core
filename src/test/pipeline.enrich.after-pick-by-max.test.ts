@@ -74,7 +74,7 @@ describe('enrich after pickByMax (secondary joins after primary)', () => {
         for (const r of rows) {
             expect(r.classInfo).toEqual({
                 attendeeEventId: 'ev-1',
-                attendeeClasses: [{ key: 'class-ev-1', value: { investorFlag: 1 } }]
+                attendeeClasses: [{ investorFlag: 1 }]
             });
         }
     });
