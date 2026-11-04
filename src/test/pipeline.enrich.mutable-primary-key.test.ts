@@ -19,18 +19,18 @@ interface CompositeBucketSource {
 }
 
 function bucketLabelFromEnrichment(bucketInfo: unknown): string | undefined {
-    const row = bucketInfo as { buckets?: Array<{ value?: { label?: string } }> } | undefined;
-    return row?.buckets?.[0]?.value?.label;
+    const row = bucketInfo as { buckets?: Array<{ label?: string }> } | undefined;
+    return row?.buckets?.[0]?.label;
 }
 
 function regionTagFromEnrichment(regionInfo: unknown): string | undefined {
-    const row = regionInfo as { regions?: Array<{ value?: { tag?: string } }> } | undefined;
-    return row?.regions?.[0]?.value?.tag;
+    const row = regionInfo as { regions?: Array<{ tag?: string }> } | undefined;
+    return row?.regions?.[0]?.tag;
 }
 
 function compositeLabel(extra: unknown): string | undefined {
-    const row = extra as { rows?: Array<{ value?: { label?: string } }> } | undefined;
-    return row?.rows?.[0]?.value?.label;
+    const row = extra as { rows?: Array<{ label?: string }> } | undefined;
+    return row?.rows?.[0]?.label;
 }
 
 describe('enrich — primary join key changes after add (expected failures until reindex)', () => {

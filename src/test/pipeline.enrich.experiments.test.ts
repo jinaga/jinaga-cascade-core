@@ -178,7 +178,7 @@ describe('enrich experiments (hypothesis checks)', () => {
 
         expect(getOutput()[0].classInfo).toEqual({
             attendeeEventId: 'ev-1',
-            attendeeClasses: [{ key: 'class-ev-1', value: { investorFlag: 1 } }]
+            attendeeClasses: [{ investorFlag: 1 }]
         });
     });
 });
