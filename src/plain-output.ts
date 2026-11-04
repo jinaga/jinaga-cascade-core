@@ -26,12 +26,11 @@ function extractRow<T extends object>(
     node: DescriptorNode
 ): PipelinePlainOutputShape<T> {
     const valueRecord = item.value as Record<string, unknown>;
-    const arrays: Record<string, unknown> = {};
-    for (const arrayDescriptor of node.arrays) {
-        const nested = valueRecord[arrayDescriptor.name];
-        const keyed = nested as KeyedArray<object> | undefined;
-        arrays[arrayDescriptor.name] = keyed ? extractKeyedArray(keyed, arrayDescriptor.type) : [];
-    }
+    // Object.fromEntries defines own properties, even one named `__proto__`.
+    const arrays = Object.fromEntries(node.arrays.map(arrayDescriptor => [
+        arrayDescriptor.name,
+        extractKeyedArray((valueRecord[arrayDescriptor.name] as KeyedArray<object> | undefined) ?? [], arrayDescriptor.type)
+    ]));
     return { ...valueRecord, ...arrays, ...extractObjects(valueRecord, node) } as PipelinePlainOutputShape<T>;
 }
 
@@ -41,23 +40,20 @@ function extractRow<T extends object>(
  * carries are converted.
  */
 function extractObjects(valueRecord: Record<string, unknown>, node: DescriptorNode): Record<string, unknown> {
-    const objects: Record<string, unknown> = {};
-    for (const objectDescriptor of node.objects) {
+    return Object.fromEntries(node.objects.flatMap(objectDescriptor => {
         const nested = valueRecord[objectDescriptor.name];
-        if (nested !== null && typeof nested === 'object') {
-            objects[objectDescriptor.name] = extractObject(nested as Record<string, unknown>, objectDescriptor.type);
-        }
-    }
-    return objects;
+        return nested !== null && typeof nested === 'object'
+            ? [[objectDescriptor.name, extractObject(nested as Record<string, unknown>, objectDescriptor.type)]]
+            : [];
+    }));
 }
 
 function extractObject(valueRecord: Record<string, unknown>, node: DescriptorNode): Record<string, unknown> {
-    const arrays: Record<string, unknown> = {};
-    for (const arrayDescriptor of node.arrays) {
+    const arrays = Object.fromEntries(node.arrays.flatMap(arrayDescriptor => {
         const nested = valueRecord[arrayDescriptor.name];
-        if (Array.isArray(nested)) {
-            arrays[arrayDescriptor.name] = extractKeyedArray(nested as KeyedArray<object>, arrayDescriptor.type);
-        }
-    }
+        return Array.isArray(nested)
+            ? [[arrayDescriptor.name, extractKeyedArray(nested as KeyedArray<object>, arrayDescriptor.type)]]
+            : [];
+    }));
     return { ...valueRecord, ...arrays, ...extractObjects(valueRecord, node) };
 }

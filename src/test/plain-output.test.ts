@@ -61,6 +61,21 @@ describe('toPipelinePlainOutput', () => {
         ]);
     });
 
+    it('converts an object property named __proto__', () => {
+        const secondary = createPipeline<{ sku: string; price: number }, 'prices'>('prices', [
+            { name: 'sku', type: 'string' },
+            { name: 'price', type: 'number' }
+        ]).groupBy(['sku'], 'skus');
+        const builder = createPipeline<{ sku: string }, 'orders'>('orders', [
+            { name: 'sku', type: 'string' }
+        ]).enrich('catalog', secondary, ['sku'], '__proto__');
+        const product: Record<string, unknown> = { sku: 'a', prices: [{ key: 'p2', value: { price: 7 } }] };
+        const value: Record<string, unknown> = { sku: 'a' };
+        Object.defineProperty(value, '__proto__', { value: product, enumerable: true });
+        const [row] = toPipelinePlainOutput([{ key: 'o1', value }], builder.getTypeDescriptor()) as object[];
+        expect(Object.getOwnPropertyDescriptor(row, '__proto__')?.value).toEqual({ sku: 'a', prices: [{ price: 7 }] });
+    });
+
     it('leaves an object without its arrays as it is', () => {
         type Item = { price: number; parts: KeyedArray<{ name: string }> };
         const builder = createPipeline<{ category: string }, 'categories', { items: KeyedArray<Item> }>('categories', [
