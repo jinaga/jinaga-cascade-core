@@ -166,6 +166,19 @@ File: `src/index.ts` — Export the step class and any public types if the step 
 - Test composition with upstream mutable properties (e.g., after `pickByMax` or `defineProperty`).
 - If the step emits O(K) modifications per input event, document the performance profile.
 
+### 9. Check against jinaga-spec
+
+[jinaga/jinaga-spec](https://github.com/jinaga/jinaga-spec) models every step in Lean and proves it correct and independent of arrival order (`JinagaSpec/Cascade/`). It also generates the vectors in `vectors/cascade/`, and its `scripts/verify.sh` runs them against a sibling checkout of this repository. The proofs assume this library behaves as the model does. Nothing here checks that, so run the vectors before opening a PR:
+
+```bash
+cd ../jinaga-spec/ports/typescript && npm ci --silent
+CASCADE_CORE=../../../jinaga-cascade-core npm run --silent cascade
+```
+
+- **All pass:** you're done.
+- **An existing vector fails:** this library and the model disagree. Treat it as a regression in this change unless the model is wrong. In that case, open a jinaga-spec issue that says how the model is wrong, and don't edit the vector.
+- **A new step, or a change to event propagation, identity or placement (`onPlaced`):** the model doesn't cover it yet. Open a jinaga-spec issue asking for a model and vectors for the step, and link it from the PR. A step with no model has no proof that it doesn't depend on arrival order, so the commutativity tests in step 8 are its only check until then.
+
 ## Key Files
 
 | File | Contains |

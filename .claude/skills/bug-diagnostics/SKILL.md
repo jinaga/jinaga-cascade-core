@@ -32,6 +32,9 @@ If a test cannot be written yet, say why and use the smallest alternative repro 
 - Read the implementation of the suspected code path; cite file paths when reporting.
 - Grep or search for related patterns (`getTypeDescriptor`, event handlers, aggregates).
 - One minimal pipeline or unit test that isolates the failure.
+- If the bug depends on the order things arrive in, or involves identity, placement or nesting, run jinaga-spec's cascade vectors first (`cd ../jinaga-spec/ports/typescript && CASCADE_CORE=../../../jinaga-cascade-core npm run --silent cascade`).
+  - A failing vector is a ready-made red test, and its Lean model in `JinagaSpec/Cascade/` says what the output should be.
+  - If every vector passes, check whether any vector covers the shape at all. If none does, that gap is worth reporting to jinaga-spec too.
 - Avoid new modes, flags, or alternate APIs unless the user requests them.
 
 ## What to avoid
